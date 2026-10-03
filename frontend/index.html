@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rota & Staff Management</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      if (window.location.protocol === "file:") {
+        document.getElementById("root").innerHTML = `
+          <main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#f5f7fb;font-family:system-ui,sans-serif;color:#172033">
+            <section style="max-width:520px;background:#fff;border:1px solid #e3e8f0;border-radius:14px;padding:32px;box-shadow:0 20px 60px #17203318">
+              <h1 style="margin:0 0 10px">Start the Rota app server</h1>
+              <p style="color:#69778d;line-height:1.6">This React app cannot run by opening index.html directly. Open PowerShell in the frontend folder and run:</p>
+              <pre style="padding:14px;border-radius:8px;background:#111b31;color:#dbe5ff;overflow:auto">npm install
+npm run dev</pre>
+              <p style="color:#69778d;line-height:1.6">Then open <strong>http://127.0.0.1:5173</strong> in your browser.</p>
+            </section>
+          </main>`;
+      }
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
