@@ -181,3 +181,102 @@ button { cursor: pointer; }
 
 @media (max-width: 900px) { .guard-home-grid { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .guard-heading { align-items: flex-start; }.guard-hero { align-items: flex-start; flex-direction: column; padding: 19px; }.guard-hero-actions { width: 100%; justify-content: stretch; }.guard-hero-actions button { flex: 1; }.guard-rota-status { align-items: flex-start; flex-direction: column; }.guard-rota-status button { width: 100%; }.guard-week-picker { width: 100%; }.guard-week-picker input { width: 100%; }.guard-rota-board { margin-right: -17px; padding-right: 17px; }.attendance-timeline { grid-template-columns: 1fr; } }
+
+/* Final responsive pass: keep every workspace usable from phone to large desktop. */
+html, body, #root { width: 100%; max-width: 100%; overflow-x: hidden; }
+img, svg, video, canvas { max-width: 100%; }
+textarea, select, input { max-width: 100%; }
+.main-area, .page-content, .client-portal-content { min-width: 0; }
+.table-wrap, .arrival-table-wrap, .employee-overview-wrap { -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.page-heading-actions, .coverage-actions, .toolbar, .site-roster-toolbar, .site-roster-detail-header { flex-wrap: wrap; }
+.page-heading-actions > button, .page-heading-actions > a { white-space: nowrap; }
+.modal-card { max-height: calc(100dvh - 30px); overflow-y: auto; }
+
+@media (min-width: 1500px) {
+  .page-content, .client-portal-content { max-width: 1440px; padding-left: 50px; padding-right: 50px; }
+}
+
+@media (max-width: 1100px) {
+  .sidebar { width: 232px; }
+  .topbar { padding-left: 28px; padding-right: 28px; }
+  .page-content { padding-left: 28px; padding-right: 28px; }
+  .client-portal-header { padding-left: 24px; padding-right: 24px; }
+  .client-portal-content { padding-left: 28px; padding-right: 28px; }
+  .coverage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .planning-columns { grid-template-columns: minmax(0, 1fr) 230px; }
+}
+
+@media (max-width: 900px) {
+  .page-heading { align-items: flex-start; }
+  .page-heading-actions { width: 100%; justify-content: flex-start; }
+  .page-heading-actions .primary-button { margin-left: auto; }
+  .toolbar, .document-toolbar, .coverage-toolbar, .report-filters { align-items: stretch; flex-wrap: wrap; }
+  .toolbar .search-box, .document-toolbar .search-box { flex: 1 1 260px; }
+  .document-toolbar select, .coverage-toolbar select, .report-filters input { flex: 1 1 150px; }
+  .coverage-actions { justify-content: flex-start; }
+  .coverage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .coverage-slot-grid { grid-template-columns: 1fr; }
+  .rota-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .profile-layout, .planning-columns { grid-template-columns: 1fr; }
+  .unfilled-queue { max-height: 280px; }
+  .attendance-instructions, .confirmation-banner { align-items: flex-start; flex-wrap: wrap; }
+  .attendance-instructions .primary-button, .confirmation-banner .primary-button { margin-left: auto; }
+}
+
+@media (max-width: 680px) {
+  .topbar { min-height: 62px; height: auto; padding-top: 12px; padding-bottom: 12px; }
+  .breadcrumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .page-heading-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .page-heading-actions > * { width: 100%; }
+  .page-heading-actions .primary-button { margin-left: 0; }
+  .toolbar, .document-toolbar, .coverage-toolbar, .report-filters { display: grid; grid-template-columns: 1fr; width: 100%; }
+  .toolbar .search-box, .document-toolbar .search-box, .document-toolbar select, .coverage-toolbar select, .report-filters input, .report-filters button { width: 100%; min-width: 0; }
+  .coverage-actions { display: grid; grid-template-columns: 1fr; width: 100%; }
+  .coverage-actions select, .coverage-actions button { width: 100%; }
+  .coverage-grid, .rota-summary-grid { grid-template-columns: 1fr; }
+  .coverage-card { padding: 12px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .full-width { grid-column: auto; }
+  .modal-backdrop { padding: 12px; align-items: end; }
+  .modal-card { width: 100%; max-height: calc(100dvh - 24px); padding: 19px; border-radius: 13px 13px 0 0; }
+  .modal-actions { flex-direction: column-reverse; }
+  .modal-actions button { width: 100%; }
+  .invite-link-box { align-items: stretch; flex-direction: column; }
+  .invite-link-box .primary-button { width: 100%; }
+  .saved-report-row, .confirmation-row, .notification-row, .guard-assignment-row { align-items: flex-start; flex-direction: column; }
+  .saved-report-row a, .confirmation-row button, .guard-assignment-row button { align-self: stretch; width: 100%; text-align: center; }
+  .pagination-bar { align-items: stretch; flex-direction: column; gap: 10px; }
+  .pagination-bar > div { width: 100%; }
+  .pagination-bar button { flex: 1; }
+  .attendance-shift-header { align-items: flex-start; flex-direction: column; }
+  .attendance-shift-header .status-pill { align-self: flex-start; }
+  .attendance-instructions .primary-button, .confirmation-banner .primary-button { margin-left: 0; width: 100%; }
+  .client-portal-header { min-height: 64px; padding: 12px 15px; }
+  .client-portal-user { gap: 8px; }
+  .client-portal-content { padding: 24px 15px 42px; }
+  .client-portal-stats { grid-template-columns: 1fr 1fr; }
+  .client-portal-stats article { min-width: 0; padding: 13px; }
+  .client-portal-stats strong { font-size: 22px; }
+  .guard-hero-actions { display: grid; grid-template-columns: 1fr; }
+  .guard-hero-actions button { width: 100%; }
+  .guard-quick-action { min-height: 50px; }
+  .document-checklist-card { min-width: 0; }
+  .document-file-input input { font-size: 9px; }
+  .rota-board, .guard-rota-board { margin-right: -17px; padding-right: 17px; }
+  .site-roster-toolbar, .site-roster-detail-header { gap: 10px; }
+  .site-roster-toolbar > *, .site-roster-detail-header > * { width: 100%; }
+  .site-roster-metrics { justify-content: flex-start; flex-wrap: wrap; }
+  .bulk-employee-list { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 420px) {
+  .login-shell { padding: 12px; }
+  .login-card { padding: 25px 19px; border-radius: 13px; }
+  .login-card h1 { font-size: 26px; }
+  .page-content { padding-left: 13px; padding-right: 13px; }
+  .panel { padding: 14px; }
+  .page-heading-actions { grid-template-columns: 1fr; }
+  .client-portal-stats { gap: 8px; }
+  .client-portal-stats article { padding: 11px; }
+  .client-portal-stats strong { font-size: 20px; }
+}
