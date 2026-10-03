@@ -52,8 +52,9 @@ const navItems = [
 ];
 
 function Login({ onLogin, guardMode = false, clientMode = false }) {
-  const [username, setUsername] = useState("admin@rota.local");
-  const [password, setPassword] = useState("Admin123!");
+  const showDemo = import.meta.env.DEV && !guardMode && !clientMode;
+  const [username, setUsername] = useState(showDemo ? "admin@rota.local" : "");
+  const [password, setPassword] = useState(showDemo ? "Admin123!" : "");
   const [error, setError] = useState("");
   const submit = async (event) => {
     event.preventDefault();
@@ -67,7 +68,7 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
       onLogin(data.user);
     } catch (err) { setError(err.message); }
   };
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">Sign in</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the employee ID supplied by your office.</p> : <p className="login-hint">Demo: admin@rota.local / Admin123!</p>}</section></main>;
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">Sign in</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the employee ID supplied by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
 }
 
 function ActivationPage({ token, onActivated }) {
