@@ -1,15 +1,38 @@
 # Deployment Runbook
 
-The project is deployment-ready but is not published automatically. Use the included `render.yaml` as a starting point for a backend web service and a static frontend service.
+The project is prepared for a two-service Railway deployment: a Django API and a React frontend, backed by PostgreSQL. The included render.yaml is retained for Render users but is not required by Railway.
+
+## Railway service commands
+
+Backend service:
+
+~~~text
+Build:       pip install -r backend/requirements.txt && python backend/manage.py collectstatic --noinput
+Pre-deploy:  python backend/manage.py migrate
+Start:       gunicorn --chdir backend config.wsgi:application --bind 0.0.0.0:$PORT
+Health:      /health/
+~~~
+
+Frontend service (root directory frontend):
+
+~~~text
+Build:  npm ci && npm run build
+Start:  npm start
+~~~
+
+The frontend server serves the Vite dist directory and falls back to index.html for /guard and /client client-side routes.
+
+Railway is configured from the dashboard using the commands above; the included render.yaml is retained only for Render deployments.
 
 ## Required production settings
 
-1. Copy `backend/.env.example` into the hosting provider's environment settings.
+1. Add a strong `DJANGO_SECRET_KEY` in the hosting provider's environment settings.
 2. Set a strong `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, and `CORS_ALLOWED_ORIGINS`.
-3. Configure PostgreSQL values with `DB_ENGINE=postgres`.
+3. Configure PostgreSQL with Railway's `DATABASE_URL` reference, or the `DB_*` variables supported by the backend.
 4. Set the frontend `VITE_API_BASE_URL` to the deployed backend `/api` URL.
-5. Run migrations and `collectstatic` during the backend build.
-6. Run `python backend/manage.py seed_demo` only for a non-production demo environment; never use the demo password in production.
+5. Run migrations as the backend pre-deploy command and `collectstatic` during the backend build.
+6. Configure persistent media storage before accepting real employee documents or attendance photos.
+7. Run `python backend/manage.py seed_demo` only for a non-production demo environment; never use the demo password in production.
 
 ## Local production checks
 
