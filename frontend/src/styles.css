@@ -70,6 +70,12 @@ button { cursor: pointer; }
 .site-roster-toolbar { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
 .site-roster-toolbar .search-box { flex: 1; max-width: 420px; }
 .site-roster-toolbar select { border: 1px solid #dfe5ee; border-radius: 8px; padding: 9px 10px; color: #34435d; background: #fff; font-size: 11px; min-width: 220px; }
+.site-name-buttons { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 9px; }
+.site-name-button { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 64px; border: 1px solid #e2e8f1; border-radius: 9px; padding: 12px; color: #526079; background: #fbfcff; text-align: left; transition: border-color .15s, background .15s, box-shadow .15s; }
+.site-name-button:hover, .site-name-button.selected { border-color: #8ea9ee; background: #f4f7ff; box-shadow: 0 4px 12px #4d76de14; }
+.site-name-button > span:first-child { display: grid; gap: 5px; min-width: 0; }
+.site-name-button strong { overflow: hidden; color: #34435d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.site-name-button small { color: #8b98aa; font-size: 10px; }
 .site-roster-overview { min-width: 820px; }
 .site-roster-overview tr { transition: background .15s; }
 .site-roster-overview tr.selected-row { background: #f4f7ff; }
