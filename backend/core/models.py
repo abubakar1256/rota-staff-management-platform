@@ -131,6 +131,23 @@ class ShiftType(models.Model):
         return f"{self.name} ({self.start_time:%H:%M}-{self.end_time:%H:%M})"
 
 
+class SiteShiftRequirement(models.Model):
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name="shift_requirements")
+    shift_type = models.ForeignKey(ShiftType, on_delete=models.CASCADE, related_name="site_requirements")
+    weekday = models.PositiveSmallIntegerField(choices=[(index, label) for index, label in enumerate(("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))])
+    required_guards = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["weekday", "shift_type__start_time"]
+        constraints = [
+            models.UniqueConstraint(fields=["site", "shift_type", "weekday"], name="unique_site_shift_requirement_day"),
+        ]
+
+    def __str__(self):
+        return f"{self.site.name} · {self.get_weekday_display()} · {self.shift_type.name}: {self.required_guards}"
+
+
 class RotaWeek(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -175,6 +192,8 @@ class RotaAssignment(models.Model):
     rota_week = models.ForeignKey(RotaWeek, on_delete=models.CASCADE, related_name="assignments")
     work_date = models.DateField()
     shift_type = models.ForeignKey(ShiftType, on_delete=models.PROTECT, related_name="assignments")
+    scheduled_start = models.TimeField(null=True, blank=True)
+    scheduled_end = models.TimeField(null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="rota_assignments", null=True, blank=True)
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="rota_assignments")
     notes = models.CharField(max_length=250, blank=True)
@@ -192,6 +211,31 @@ class RotaAssignment(models.Model):
     def __str__(self):
         employee = self.employee.name if self.employee else "Unfilled"
         return f"{self.work_date} - {self.shift_type.name} - {self.site.name} - {employee}"
+
+
+class SiteInduction(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "PLANNED", "Planned"
+        COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name="inductions")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="site_inductions")
+    induction_date = models.DateField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
+    notes = models.CharField(max_length=250, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_site_inductions")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["induction_date", "site__name", "employee__name"]
+        constraints = [
+            models.UniqueConstraint(fields=["site", "employee"], name="unique_site_employee_induction"),
+        ]
+
+    def __str__(self):
+        return f"{self.site.name} · {self.employee.name} · {self.induction_date}"
 
 
 class LeaveRecord(models.Model):

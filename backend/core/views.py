@@ -26,9 +26,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, Timesheet, UserProfile
+from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
-from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteSerializer, TimesheetSerializer, UserSerializer
+from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
 User = get_user_model()
@@ -164,6 +164,7 @@ def sync_rota_date_operations(rota_week, selected_date, user):
     updated = 0
     sites = Site.objects.filter(is_active=True)
     shifts = list(ShiftType.objects.filter(is_active=True))
+    requirements = {(item.site_id, item.shift_type_id): item.required_guards for item in SiteShiftRequirement.objects.filter(site__in=sites, weekday=selected_date.weekday())}
     for site in sites:
         for shift in shifts:
             slot_assignments = assignments_by_slot.get((site.id, shift.id), [])
@@ -179,7 +180,8 @@ def sync_rota_date_operations(rota_week, selected_date, user):
                 else:
                     DailyOperation.objects.create(operation_date=selected_date, site=site, shift_type=shift, employee=assignment.employee, status=DailyOperation.Status.UNCONFIRMED, created_by=user)
                     created += 1
-            missing = max(site.required_guards - len(assigned), 0)
+            required = requirements.get((site.id, shift.id), site.required_guards)
+            missing = max(required - len(assigned), 0)
             unfilled_operations = [item for item in operations if item.employee_id is None]
             for index in range(missing):
                 if index < len(unfilled_operations):
@@ -495,6 +497,66 @@ class ShiftTypeViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
+class SiteShiftRequirementViewSet(viewsets.ModelViewSet):
+    serializer_class = SiteShiftRequirementSerializer
+    permission_classes = [IsAdminOrManager]
+
+    def get_queryset(self):
+        queryset = SiteShiftRequirement.objects.select_related("site", "shift_type")
+        site_id = self.request.query_params.get("site")
+        if site_id:
+            queryset = queryset.filter(site_id=site_id)
+        if role_of(self.request.user) == "MANAGER":
+            queryset = queryset.filter(site__manager_profiles__user=self.request.user)
+        return queryset
+
+    def _check_site(self, site):
+        if role_of(self.request.user) == "MANAGER" and not self.request.user.profile.managed_sites.filter(pk=site.pk).exists():
+            raise PermissionDenied("This site is outside your assigned management scope.")
+
+    def perform_create(self, serializer):
+        self._check_site(serializer.validated_data["site"])
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_site(serializer.validated_data.get("site", serializer.instance.site))
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_site(instance.site)
+        instance.delete()
+
+
+class SiteInductionViewSet(viewsets.ModelViewSet):
+    serializer_class = SiteInductionSerializer
+    permission_classes = [IsAdminOrManager]
+
+    def get_queryset(self):
+        queryset = SiteInduction.objects.select_related("site", "employee", "created_by")
+        site_id = self.request.query_params.get("site")
+        if site_id:
+            queryset = queryset.filter(site_id=site_id)
+        if role_of(self.request.user) == "MANAGER":
+            queryset = queryset.filter(site__manager_profiles__user=self.request.user)
+        return queryset
+
+    def _check_site(self, site):
+        if role_of(self.request.user) == "MANAGER" and not self.request.user.profile.managed_sites.filter(pk=site.pk).exists():
+            raise PermissionDenied("This site is outside your assigned management scope.")
+
+    def perform_create(self, serializer):
+        self._check_site(serializer.validated_data["site"])
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        self._check_site(serializer.validated_data.get("site", serializer.instance.site))
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_site(instance.site)
+        instance.delete()
+
+
 class RotaWeekViewSet(viewsets.ModelViewSet):
     serializer_class = RotaWeekSerializer
     permission_classes = [IsAdminManagerOrEmployeeRota]
@@ -617,12 +679,13 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         if role_of(request.user) == "MANAGER":
             sites = sites.filter(manager_profiles__user=request.user)
         shifts = ShiftType.objects.filter(is_active=True).order_by("start_time", "name")
+        requirements = {(item.site_id, item.shift_type_id): item.required_guards for item in SiteShiftRequirement.objects.filter(site__in=sites, weekday=selected_date.weekday())}
         slots = []
         for site in sites:
             for shift in shifts:
                 slot_assignments = by_slot.get((site.id, shift.id), [])
                 assigned = [assignment for assignment in slot_assignments if assignment.employee_id]
-                required = site.required_guards
+                required = requirements.get((site.id, shift.id), site.required_guards)
                 slots.append({
                     "site": site.id,
                     "site_code": site.site_id,
@@ -680,6 +743,8 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
                 rota_week=target,
                 work_date=assignment.work_date + timedelta(days=offset),
                 shift_type=assignment.shift_type,
+                scheduled_start=assignment.scheduled_start,
+                scheduled_end=assignment.scheduled_end,
                 employee=assignment.employee,
                 site=assignment.site,
                 notes=assignment.notes,

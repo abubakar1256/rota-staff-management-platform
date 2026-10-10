@@ -6,7 +6,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, Timesheet, UserProfile
+from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -196,7 +196,7 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         model = RotaAssignment
         fields = [
             "id", "rota_week", "work_date", "shift_type", "shift_name", "employee", "employee_name", "employee_code",
-            "site", "site_name", "notes", "replaced_assignment", "created_at", "updated_at",
+            "site", "site_name", "scheduled_start", "scheduled_end", "notes", "replaced_assignment", "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
 
@@ -206,6 +206,8 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         work_date = attrs.get("work_date", getattr(self.instance, "work_date", None))
         shift_type = attrs.get("shift_type", getattr(self.instance, "shift_type", None))
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
+        scheduled_start = attrs.get("scheduled_start", getattr(self.instance, "scheduled_start", None)) or shift_type.start_time
+        scheduled_end = attrs.get("scheduled_end", getattr(self.instance, "scheduled_end", None)) or shift_type.end_time
 
         if rota_week and work_date:
             week_end = rota_week.week_start + __import__("datetime").timedelta(days=6)
@@ -218,7 +220,7 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         if employee and work_date and shift_type:
             if LeaveRecord.objects.filter(employee=employee, status=LeaveRecord.Status.APPROVED, start_date__lte=work_date, end_date__gte=work_date).exists():
                 raise serializers.ValidationError({"employee": f"{employee.name} is on approved leave on this date."})
-            assignments = RotaAssignment.objects.filter(employee=employee, work_date=work_date).select_related("shift_type")
+            assignments = RotaAssignment.objects.filter(employee=employee, work_date=work_date).select_related("shift_type", "site")
             if self.instance:
                 assignments = assignments.exclude(pk=self.instance.pk)
             duplicate_slot = RotaAssignment.objects.filter(
@@ -233,21 +235,29 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
             if duplicate_slot.exists():
                 raise serializers.ValidationError({"employee": f"{employee.name} is already assigned to this site and shift."})
             for assignment in assignments:
-                if self._shifts_overlap(shift_type, assignment.shift_type):
-                    raise serializers.ValidationError({"employee": f"{employee.name} already has an overlapping {assignment.shift_type.name} shift on this date."})
+                existing_start = assignment.scheduled_start or assignment.shift_type.start_time
+                existing_end = assignment.scheduled_end or assignment.shift_type.end_time
+                if shift_type.id != assignment.shift_type_id and (self._crosses_midnight(scheduled_start, scheduled_end) or self._crosses_midnight(existing_start, existing_end)):
+                    raise serializers.ValidationError({"employee": f"{employee.name} cannot work a day and night shift on the same date."})
+                if self._times_overlap(scheduled_start, scheduled_end, existing_start, existing_end):
+                    raise serializers.ValidationError({"employee": f"{employee.name} is already assigned at {assignment.site.name} during this time."})
         return attrs
 
     @staticmethod
-    def _shifts_overlap(first, second):
-        def interval(shift):
-            start = shift.start_time.hour * 60 + shift.start_time.minute
-            end = shift.end_time.hour * 60 + shift.end_time.minute
+    def _crosses_midnight(start_time, end_time):
+        return end_time <= start_time
+
+    @classmethod
+    def _times_overlap(cls, first_start_time, first_end_time, second_start_time, second_end_time):
+        def interval(start_time, end_time):
+            start = start_time.hour * 60 + start_time.minute
+            end = end_time.hour * 60 + end_time.minute
             if end <= start:
                 end += 24 * 60
             return start, end
 
-        first_start, first_end = interval(first)
-        second_start, second_end = interval(second)
+        first_start, first_end = interval(first_start_time, first_end_time)
+        second_start, second_end = interval(second_start_time, second_end_time)
         return first_start < second_end and second_start < first_end
 
 
@@ -275,6 +285,32 @@ class RotaConfirmationSerializer(serializers.ModelSerializer):
         model = RotaConfirmation
         fields = ["id", "rota_week", "employee", "employee_name", "employee_code", "status", "confirmed_at", "updated_at"]
         read_only_fields = ["status", "confirmed_at", "updated_at"]
+
+
+class SiteShiftRequirementSerializer(serializers.ModelSerializer):
+    site_name = serializers.CharField(source="site.name", read_only=True)
+    shift_name = serializers.CharField(source="shift_type.name", read_only=True)
+
+    class Meta:
+        model = SiteShiftRequirement
+        fields = ["id", "site", "site_name", "shift_type", "shift_name", "weekday", "required_guards", "updated_at"]
+        read_only_fields = ["updated_at"]
+
+
+class SiteInductionSerializer(serializers.ModelSerializer):
+    site_name = serializers.CharField(source="site.name", read_only=True)
+    employee_name = serializers.CharField(source="employee.name", read_only=True)
+    employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
+
+    class Meta:
+        model = SiteInduction
+        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "status", "notes", "created_by", "created_at", "updated_at"]
+        read_only_fields = ["created_by", "created_at", "updated_at"]
+
+    def validate_employee(self, value):
+        if value.status != Employee.Status.ACTIVE:
+            raise serializers.ValidationError("Only active guards can be inducted at a site.")
+        return value
 
 
 class LeaveRecordSerializer(serializers.ModelSerializer):
