@@ -142,6 +142,7 @@ function Rota() {
   const [bulkEmployeeIds, setBulkEmployeeIds] = useState([]);
   const [bulkForm, setBulkForm] = useState({ work_date: selectedDate, shift_type: "", site: "" });
   const [siteRequirements, setSiteRequirements] = useState([]);
+  const [allSiteRequirements, setAllSiteRequirements] = useState([]);
   const [requirementDraft, setRequirementDraft] = useState({});
   const [siteInductions, setSiteInductions] = useState([]);
   const [inductionForm, setInductionForm] = useState({ employee: "", induction_date: selectedDate, status: "PLANNED", notes: "" });
@@ -170,6 +171,7 @@ function Rota() {
   useEffect(() => {
     api("/employees/?status=ACTIVE").then(setEmployees).catch(() => {});
     api("/sites/").then(setSites).catch(() => {});
+    api("/site-requirements/").then(setAllSiteRequirements).catch(() => {});
     api("/shift-types/").then((items) => {
       setShiftTypes(items.filter((shift) => shift.is_active !== false));
       setShiftLoadError("");
@@ -182,6 +184,7 @@ function Rota() {
     if (!selectedRosterSite) return;
     Promise.all([api(`/site-requirements/?site=${selectedRosterSite}`), api(`/site-inductions/?site=${selectedRosterSite}`)]).then(([requirements, inductions]) => {
       setSiteRequirements(requirements);
+      setAllSiteRequirements((current) => [...current.filter((item) => String(item.site) !== String(selectedRosterSite)), ...requirements]);
       setRequirementDraft(Object.fromEntries(requirements.map((item) => [`${item.weekday}-${item.shift_type}`, item.required_guards])));
       setSiteInductions(inductions);
     }).catch((err) => setError(err.message));
@@ -398,8 +401,16 @@ function Rota() {
     }, 0);
     const dayCount = siteAssignments.filter((assignment) => { const shift = shiftTypes.find((item) => item.id === assignment.shift_type); return shift && !shift.name.toLowerCase().includes("night"); }).length;
     const nightCount = siteAssignments.length - dayCount;
-    const requiredSlots = site.required_guards * Math.max(shiftTypes.length, 1) * 7;
-    return { site, assignments: siteAssignments, assigned: siteAssignments.length, requiredSlots, unfilled: Math.max(requiredSlots - siteAssignments.length, 0), weeklyHours, dayCount, nightCount };
+    const requirementMap = new Map(allSiteRequirements.filter((item) => item.site === site.id).map((item) => [`${item.weekday}-${item.shift_type}`, Number(item.required_guards)]));
+    let requiredSlots = 0;
+    let unfilled = 0;
+    days.forEach((day, weekday) => shiftTypes.forEach((shift) => {
+      const required = requirementMap.has(`${weekday}-${shift.id}`) ? requirementMap.get(`${weekday}-${shift.id}`) : Number(site.required_guards || 0);
+      const assigned = siteAssignments.filter((assignment) => assignment.work_date === day && assignment.shift_type === shift.id).length;
+      requiredSlots += required;
+      unfilled += Math.max(required - assigned, 0);
+    }));
+    return { site, assignments: siteAssignments, assigned: siteAssignments.length, requiredSlots, unfilled, weeklyHours, dayCount, nightCount };
   });
   const selectedRoster = rosterSiteRows.find((row) => String(row.site.id) === String(selectedRosterSite));
   const inductedEmployeeIds = new Set(siteInductions.filter((induction) => induction.status === "COMPLETED").map((induction) => induction.employee));

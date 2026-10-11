@@ -170,6 +170,29 @@ button { cursor: pointer; }
   .rota-form { grid-template-columns: 1fr; }
   .rota-form .primary-button { grid-column: auto; }
 }
+
+/* Keep the staffing requirements editor compact and landscape-oriented. */
+.site-rota-tools { display: block; margin-bottom: 18px; }
+.site-rota-tools .panel { padding: 16px 18px; }
+.site-rota-tools .panel-header { margin-bottom: 11px; align-items: center; }
+.site-rota-tools .panel-header h3 { font-size: 14px; }
+.site-rota-tools .requirements-table { min-width: 0; table-layout: fixed; }
+.site-rota-tools .requirements-table thead tr,
+.site-rota-tools .requirements-table tbody tr { grid-template-columns: minmax(145px, 1.35fr) minmax(135px, 1.2fr) minmax(72px, .65fr) minmax(70px, .6fr) minmax(85px, .75fr); }
+.site-rota-tools .requirements-table thead tr { display: grid; }
+.site-rota-tools .requirements-table tbody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
+.site-rota-tools .requirements-table tbody tr { display: grid; align-items: center; border: 1px solid #e6ebf2; border-radius: 7px; background: #fbfcff; }
+.site-rota-tools .requirements-table th,
+.site-rota-tools .requirements-table td { padding: 7px 8px; font-size: 10px; }
+.site-rota-tools .requirements-table th { font-size: 8px; }
+.site-rota-tools .requirements-table td { border-bottom: 0; }
+.site-rota-tools .requirements-table td strong { font-size: 10px; }
+.site-rota-tools .requirements-table td small { font-size: 8px; }
+.site-rota-tools .requirements-table input { width: 54px; padding: 5px; font-size: 10px; }
+
+@media (max-width: 780px) {
+  .site-rota-tools .requirements-table tbody { grid-template-columns: 1fr; }
+}
 .coverage-slot strong { color: #52617a; font-size: 11px; }
 .coverage-slot small, .coverage-slot span { color: #8793a8; font-size: 10px; }
 .coverage-slot.needs-attention { border-color: #f3dfb2; background: #fffaf0; }
