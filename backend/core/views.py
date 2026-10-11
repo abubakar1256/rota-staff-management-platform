@@ -854,6 +854,61 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
         sync_rota_date_operations(rota_week, report_date, self.request.user)
         generate_daily_arrival_reports(report_date, self.request.user)
 
+    @action(detail=True, methods=["post"])
+    def move_to_site(self, request, pk=None):
+        assignment = self.get_object()
+        if assignment.rota_week.status == RotaWeek.Status.PUBLISHED:
+            return Response({"detail": "Published rotas cannot be changed. Reopen the rota before moving an assignment."}, status=status.HTTP_400_BAD_REQUEST)
+        target_site_id = request.data.get("site")
+        if not target_site_id:
+            return Response({"detail": "A destination site is required."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            target_site = Site.objects.get(pk=target_site_id)
+        except (Site.DoesNotExist, TypeError, ValueError):
+            return Response({"detail": "The destination site was not found."}, status=status.HTTP_400_BAD_REQUEST)
+        if role_of(request.user) == "MANAGER" and not request.user.profile.managed_sites.filter(pk=target_site.pk).exists():
+            raise PermissionDenied("This site is outside your assigned management scope.")
+        if target_site.pk == assignment.site_id:
+            return Response(RotaAssignmentSerializer(assignment).data)
+        if assignment.employee_id and not SiteInduction.objects.filter(site=target_site, employee=assignment.employee, status=SiteInduction.Status.COMPLETED).exists():
+            return Response({"detail": f"{assignment.employee.name} must have a completed site induction for {target_site.name} before moving this assignment."}, status=status.HTTP_400_BAD_REQUEST)
+
+        scheduled_start = assignment.scheduled_start or assignment.shift_type.start_time
+        scheduled_end = assignment.scheduled_end or assignment.shift_type.end_time
+        conflicts = []
+        if assignment.employee_id:
+            for other in RotaAssignment.objects.filter(employee=assignment.employee, work_date=assignment.work_date).exclude(pk=assignment.pk).select_related("site", "shift_type"):
+                other_start = other.scheduled_start or other.shift_type.start_time
+                other_end = other.scheduled_end or other.shift_type.end_time
+                if RotaAssignmentSerializer._times_overlap(scheduled_start, scheduled_end, other_start, other_end):
+                    conflicts.append(other)
+        if conflicts and not request.data.get("replace_conflicts"):
+            return Response({
+                "detail": f"{assignment.employee.name} is already assigned during this time.",
+                "conflicts": [{"id": item.id, "site_name": item.site.name, "shift_name": item.shift_type.name} for item in conflicts],
+            }, status=status.HTTP_409_CONFLICT)
+
+        with transaction.atomic():
+            previous_date = assignment.work_date
+            previous_site_id = assignment.site_id
+            previous_shift_id = assignment.shift_type_id
+            previous_employee_id = assignment.employee_id
+            if conflicts:
+                for conflict in conflicts:
+                    DailyOperation.objects.filter(
+                        operation_date=conflict.work_date,
+                        site_id=conflict.site_id,
+                        shift_type_id=conflict.shift_type_id,
+                        employee_id=conflict.employee_id,
+                    ).delete()
+                RotaAssignment.objects.filter(pk__in=[item.pk for item in conflicts]).delete()
+            assignment.site = target_site
+            assignment.save(update_fields=["site", "updated_at"])
+            DailyOperation.objects.filter(operation_date=previous_date, site_id=previous_site_id, shift_type_id=previous_shift_id, employee_id=previous_employee_id).delete()
+            sync_rota_date_operations(assignment.rota_week, assignment.work_date, request.user)
+            generate_daily_arrival_reports(assignment.work_date, request.user)
+        return Response(RotaAssignmentSerializer(assignment).data)
+
 
 class LeaveRecordViewSet(viewsets.ModelViewSet):
     serializer_class = LeaveRecordSerializer
