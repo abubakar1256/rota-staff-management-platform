@@ -402,6 +402,8 @@ textarea, select, input { max-width: 100%; }
 .attendance-photo-input .live-photo-input { display: none; }
 .document-save-all { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e9edf3; }
 .document-save-all .muted { font-size: 11px; }
+.guard-nav-entry { display: grid; gap: 4px; }
+.sidebar-section-label { padding: 12px 12px 3px; color: #6f7f9c; font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 @media (max-width: 680px) {
   .sidebar-backdrop { position: fixed; inset: 0; z-index: 9; display: block; border: 0; background: #0b143566; }
   .attendance-step { grid-template-columns: 28px minmax(0, 1fr); }
