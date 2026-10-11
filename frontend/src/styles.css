@@ -379,7 +379,7 @@ textarea, select, input { max-width: 100%; }
 /* Keep the navigation in place while the page scrolls. It only moves when the
    user explicitly opens it on a small screen or scrolls inside the sidebar. */
 @media (min-width: 681px) {
-  .sidebar { position: sticky; top: 0; height: 100vh; max-height: 100vh; overflow-y: auto; align-self: flex-start; overscroll-behavior: contain; }
+  .sidebar { position: sticky; top: 0; height: 100vh; max-height: 100vh; overflow: visible; align-self: flex-start; }
 }
 .sidebar-backdrop { display: none; }
 .attendance-step-list { display: grid; gap: 8px; padding: 3px 0; }
