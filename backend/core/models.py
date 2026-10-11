@@ -222,6 +222,7 @@ class SiteInduction(models.Model):
     site = models.ForeignKey(Site, on_delete=models.CASCADE, related_name="inductions")
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="site_inductions")
     induction_date = models.DateField()
+    induction_time = models.TimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
     notes = models.CharField(max_length=250, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_site_inductions")

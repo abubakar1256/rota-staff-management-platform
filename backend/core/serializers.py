@@ -206,6 +206,7 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         work_date = attrs.get("work_date", getattr(self.instance, "work_date", None))
         shift_type = attrs.get("shift_type", getattr(self.instance, "shift_type", None))
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
+        site = attrs.get("site", getattr(self.instance, "site", None))
         scheduled_start = attrs.get("scheduled_start", getattr(self.instance, "scheduled_start", None)) or shift_type.start_time
         scheduled_end = attrs.get("scheduled_end", getattr(self.instance, "scheduled_end", None)) or shift_type.end_time
 
@@ -215,6 +216,8 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"work_date": "Assignment date must fall inside the selected rota week."})
         if employee and employee.status != Employee.Status.ACTIVE:
             raise serializers.ValidationError({"employee": "Only active employees can be assigned to a new rota."})
+        if employee and site and not SiteInduction.objects.filter(site=site, employee=employee).exclude(status=SiteInduction.Status.CANCELLED).exists():
+            raise serializers.ValidationError({"employee": f"{employee.name} must have a site induction record for {site.name} before assignment."})
         if rota_week and rota_week.status == RotaWeek.Status.PUBLISHED:
             raise serializers.ValidationError("Published rotas cannot be changed. Create a new draft week or unpublish it first.")
         if employee and work_date and shift_type:
@@ -304,7 +307,7 @@ class SiteInductionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SiteInduction
-        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "status", "notes", "created_by", "created_at", "updated_at"]
+        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "induction_time", "status", "notes", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "created_at", "updated_at"]
 
     def validate_employee(self, value):
