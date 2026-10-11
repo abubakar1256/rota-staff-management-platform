@@ -739,6 +739,12 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         target.assignments.all().delete()
         offset = (target_date - source.week_start).days
         for assignment in source.assignments.all():
+            if assignment.employee_id and not SiteInduction.objects.filter(
+                site=assignment.site,
+                employee=assignment.employee,
+                status=SiteInduction.Status.COMPLETED,
+            ).exists():
+                continue
             RotaAssignment.objects.create(
                 rota_week=target,
                 work_date=assignment.work_date + timedelta(days=offset),
