@@ -1118,9 +1118,20 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         if event_type == ShiftAttendanceEvent.EventType.HOURLY and operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_OFF).exists():
             return Response({"detail": "This shift is already booked off."}, status=status.HTTP_400_BAD_REQUEST)
         if event_type == ShiftAttendanceEvent.EventType.HOURLY:
-            last_checkpoint = operation.attendance_events.filter(event_type__in=[ShiftAttendanceEvent.EventType.BOOK_ON, ShiftAttendanceEvent.EventType.HOURLY]).order_by("-captured_at").first()
-            if last_checkpoint and timezone.now() - last_checkpoint.captured_at < timedelta(minutes=50):
-                return Response({"detail": "Hourly check-in is only available once per hour."}, status=status.HTTP_400_BAD_REQUEST)
+            hourly_count = operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.HOURLY).count()
+            expected_hourly = DailyOperationSerializer().get_expected_hourly_checkins(operation)
+            if hourly_count >= expected_hourly:
+                return Response({"detail": "All scheduled hourly check-ins for this shift are complete."}, status=status.HTTP_400_BAD_REQUEST)
+            current_timezone = timezone.get_current_timezone()
+            shift_start = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
+            sequence = hourly_count + 1
+            due_at = shift_start + timedelta(hours=sequence)
+            deadline_at = due_at + timedelta(minutes=30)
+            now = timezone.now()
+            if now < due_at:
+                return Response({"detail": f"Hourly check-in {sequence} is available from {due_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
+            if now > deadline_at:
+                return Response({"detail": f"Hourly check-in {sequence} expired at {deadline_at.astimezone(current_timezone).strftime('%H:%M')}. Contact the office if you missed it."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             latitude = float(request.data.get("latitude")) if request.data.get("latitude") not in (None, "") else None
             longitude = float(request.data.get("longitude")) if request.data.get("longitude") not in (None, "") else None

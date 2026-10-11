@@ -139,16 +139,27 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return round(sum(bool(value) for value in fields) / len(fields) * 100)
 
     def get_documents_completion(self, obj):
-        required_types = {
+        required_types = [
             "Passport (First 2 pages)",
-            "SIA Card (Front & Back)",
+            "SIA Card (Front)",
+            "SIA Card (Back)",
             "Proof of Address 1 (last 3 months)",
             "Proof of Address 2 (last 3 months)",
             "Share Code",
             "National Insurance Number (NI)",
             "Personal Photograph",
-        }
-        completed = obj.documents.filter(document_type__in=required_types).values("document_type").distinct().count()
+            "CSCS Card (Front)",
+            "CSCS Card (Back)",
+            "Driving License (Front)",
+            "Driving License (Back)",
+            "PPAC Code",
+        ]
+        document_types = set(obj.documents.values_list("document_type", flat=True))
+        completed = sum(document_type in document_types for document_type in required_types)
+        # Older records used one combined SIA entry. Keep those guards compliant
+        # until an administrator replaces it with the separate front/back files.
+        if "SIA Card (Front & Back)" in document_types:
+            completed += sum(document_type not in document_types for document_type in ("SIA Card (Front)", "SIA Card (Back)"))
         return {"completed": completed, "required": len(required_types), "percentage": round(completed / len(required_types) * 100)}
 
     def get_has_portal_account(self, obj):
@@ -410,11 +421,12 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     arrival_status = serializers.SerializerMethodField()
     attendance_events = ShiftAttendanceEventSerializer(many=True, read_only=True)
     expected_hourly_checkins = serializers.SerializerMethodField()
+    hourly_checkins = serializers.SerializerMethodField()
     attendance_status = serializers.SerializerMethodField()
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "expected_hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):
@@ -440,6 +452,27 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         end = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
         duration = end - start if end > start else end + 24 * 60 - start
         return max(0, ceil(duration / 60) - 1)
+
+    def get_hourly_checkins(self, obj):
+        expected = self.get_expected_hourly_checkins(obj)
+        current_timezone = timezone.get_current_timezone()
+        shift_start = timezone.make_aware(datetime.combine(obj.operation_date, obj.shift_type.start_time), current_timezone)
+        events = {event.sequence: event for event in obj.attendance_events.all() if event.event_type == ShiftAttendanceEvent.EventType.HOURLY}
+        now = timezone.now()
+        result = []
+        for sequence in range(1, expected + 1):
+            due_at = shift_start + timedelta(hours=sequence)
+            deadline_at = due_at + timedelta(minutes=30)
+            event = events.get(sequence)
+            result.append({
+                "sequence": sequence,
+                "due_at": due_at.isoformat(),
+                "deadline_at": deadline_at.isoformat(),
+                "status": "COMPLETED" if event else "EXPIRED" if now > deadline_at else "AVAILABLE" if now >= due_at else "UPCOMING",
+                "captured_at": event.captured_at.isoformat() if event else None,
+                "photo_url": self.context.get("request").build_absolute_uri(event.photo.url) if event and event.photo and self.context.get("request") else event.photo.url if event and event.photo else None,
+            })
+        return result
 
     def get_attendance_status(self, obj):
         events = list(obj.attendance_events.all())
