@@ -119,6 +119,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     has_portal_account = serializers.SerializerMethodField(read_only=True)
     portal_status = serializers.SerializerMethodField(read_only=True)
     documents_completion = serializers.SerializerMethodField(read_only=True)
+    profile_photo_url = serializers.SerializerMethodField(read_only=True)
 
     def validate_name(self, value):
         normalized = " ".join(value.split())
@@ -131,7 +132,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "has_portal_account", "portal_status", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "created_at", "updated_at"]
         read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
@@ -161,6 +162,14 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if "SIA Card (Front & Back)" in document_types:
             completed += sum(document_type not in document_types for document_type in ("SIA Card (Front)", "SIA Card (Back)"))
         return {"completed": completed, "required": len(required_types), "percentage": round(completed / len(required_types) * 100)}
+
+    def get_profile_photo_url(self, obj):
+        document = obj.documents.filter(document_type__iexact="Personal Photograph").first()
+        if not document or not document.file:
+            return None
+        request = self.context.get("request")
+        path = f"/api/media/document/{document.pk}/"
+        return request.build_absolute_uri(path) if request else path
 
     def get_has_portal_account(self, obj):
         return bool(obj.user_id)
@@ -332,6 +341,7 @@ class SiteInductionSerializer(serializers.ModelSerializer):
 class LeaveRecordSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     approved_by_name = serializers.SerializerMethodField()
+    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all(), required=False)
 
     class Meta:
         model = LeaveRecord
@@ -341,6 +351,10 @@ class LeaveRecordSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if attrs.get("end_date") and attrs.get("start_date") and attrs["end_date"] < attrs["start_date"]:
             raise serializers.ValidationError({"end_date": "End date cannot be before start date."})
+        request = self.context.get("request")
+        role = getattr(getattr(request, "user", None), "profile", None)
+        if attrs.get("employee") is None and getattr(role, "role", None) != "EMPLOYEE":
+            raise serializers.ValidationError({"employee": "Select a guard for this leave request."})
         return attrs
 
     def get_approved_by_name(self, obj):
@@ -350,11 +364,19 @@ class LeaveRecordSerializer(serializers.ModelSerializer):
 class EmployeeDocumentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     status = serializers.ReadOnlyField()
+    secure_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeDocument
-        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "notes", "status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "status", "created_at", "updated_at"]
+
+    def get_secure_file_url(self, obj):
+        if not obj.file:
+            return None
+        request = self.context.get("request")
+        path = f"/api/media/document/{obj.pk}/"
+        return request.build_absolute_uri(path) if request else path
 
     def validate(self, attrs):
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
@@ -408,7 +430,8 @@ class ShiftAttendanceEventSerializer(serializers.ModelSerializer):
         if not obj.photo:
             return None
         request = self.context.get("request")
-        return request.build_absolute_uri(obj.photo.url) if request else obj.photo.url
+        path = f"/api/media/attendance/{obj.pk}/"
+        return request.build_absolute_uri(path) if request else path
 
 
 class DailyOperationSerializer(serializers.ModelSerializer):
@@ -470,7 +493,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
                 "deadline_at": deadline_at.isoformat(),
                 "status": "COMPLETED" if event else "EXPIRED" if now > deadline_at else "AVAILABLE" if now >= due_at else "UPCOMING",
                 "captured_at": event.captured_at.isoformat() if event else None,
-                "photo_url": self.context.get("request").build_absolute_uri(event.photo.url) if event and event.photo and self.context.get("request") else event.photo.url if event and event.photo else None,
+                "photo_url": self.context.get("request").build_absolute_uri(f"/api/media/attendance/{event.pk}/") if event and event.photo and self.context.get("request") else f"/api/media/attendance/{event.pk}/" if event and event.photo else None,
             })
         return result
 
@@ -496,7 +519,8 @@ class DailyArrivalReportSerializer(serializers.ModelSerializer):
         if not obj.pdf_file:
             return None
         request = self.context.get("request")
-        return request.build_absolute_uri(obj.pdf_file.url) if request else obj.pdf_file.url
+        path = f"/api/media/report/daily/{obj.pk}/"
+        return request.build_absolute_uri(path) if request else path
 
 
 class ClientArrivalReportSerializer(serializers.ModelSerializer):
@@ -512,7 +536,8 @@ class ClientArrivalReportSerializer(serializers.ModelSerializer):
         if not obj.pdf_file:
             return None
         request = self.context.get("request")
-        return request.build_absolute_uri(obj.pdf_file.url) if request else obj.pdf_file.url
+        path = f"/api/media/report/client/{obj.pk}/"
+        return request.build_absolute_uri(path) if request else path
 
 
 class NotificationSerializer(serializers.ModelSerializer):

@@ -129,3 +129,17 @@ class IsAdminManagerOrEmployeeOperation(BasePermission):
         if is_operator(request.user):
             return getattr(view, "action", None) in {"list", "retrieve", "mark_reached"}
         return is_guard(request.user) and getattr(view, "action", None) in {"list", "retrieve", "attendance"}
+
+
+class IsAdminManagerOrEmployeeLeave(BasePermission):
+    message = "Guards can only manage their own leave requests."
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        role = role_of(request.user)
+        if role in {"SUPER_ADMIN", "ADMIN", "MANAGER"}:
+            return True
+        if is_operator(request.user):
+            return request.method in ("GET", "HEAD", "OPTIONS") and read_only_action(view)
+        return is_guard(request.user) and getattr(view, "action", None) in {"list", "retrieve", "create"}

@@ -31,7 +31,7 @@ Railway is configured from the dashboard using the commands above; the included 
 3. Configure PostgreSQL with Railway's `DATABASE_URL` reference, or the `DB_*` variables supported by the backend.
 4. Set the frontend `VITE_API_BASE_URL` to the deployed backend `/api` URL.
 5. Run migrations as the backend pre-deploy command and `collectstatic` during the backend build.
-6. Configure persistent media storage before accepting real employee documents or attendance photos.
+6. Configure persistent media storage before accepting real employee documents or attendance photos. On Railway, attach a Volume to the backend service at `/data` and set `DJANGO_MEDIA_ROOT=/data/media`. The application already reads this setting and serves uploaded files through authenticated media endpoints, so documents and attendance photos are not lost on redeploy and are not publicly exposed.
 7. Run `python backend/manage.py seed_demo` only for a non-production demo environment; never use the demo password in production.
 
 ## Local production checks
@@ -44,3 +44,12 @@ python manage.py collectstatic --noinput
 ```
 
 The report print endpoint is intentionally print-friendly so users can choose **Print / Save as PDF** in the browser without adding a server-side PDF dependency. CSV exports open directly in Excel and other spreadsheet applications.
+
+## Guard portal requirements
+
+The live guard attendance camera and GPS APIs require the deployed HTTPS URL. Before using Book On, hourly check-ins, or Book Off on a phone:
+
+1. Open the guard portal using the Railway HTTPS domain.
+2. Allow camera and location permissions in the browser.
+3. Configure latitude and longitude for each site in the admin portal.
+4. Keep the Railway Volume mounted at `/data`; otherwise uploaded photos, documents, and generated reports will disappear after a redeploy.

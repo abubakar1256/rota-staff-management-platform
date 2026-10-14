@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, client_login, client_me, client_portal_summary, dashboard, guard_login, guard_me, login, me, report_print, reports_summary, rota_csv, timesheets_csv
+from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, client_login, client_me, client_portal_summary, dashboard, guard_login, guard_me, login, me, report_print, reports_summary, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
 
 
 router = DefaultRouter()
@@ -36,5 +36,9 @@ urlpatterns = [
     path("exports/timesheets.csv", timesheets_csv, name="timesheets-csv"),
     path("exports/rota.csv", rota_csv, name="rota-csv"),
     path("exports/report-print/", report_print, name="report-print"),
+    path("media/document/<int:pk>/", secure_document_media, name="secure-document-media"),
+    path("media/attendance/<int:pk>/", secure_attendance_media, name="secure-attendance-media"),
+    path("media/report/daily/<int:pk>/", secure_daily_report_media, name="secure-daily-report-media"),
+    path("media/report/client/<int:pk>/", secure_client_report_media, name="secure-client-report-media"),
     path("", include(router.urls)),
 ]

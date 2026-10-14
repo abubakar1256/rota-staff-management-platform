@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 import csv
 import hashlib
+import mimetypes
 from math import asin, cos, radians, sin, sqrt
 import os
 import re
@@ -12,7 +13,8 @@ from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch, Q
-from django.http import HttpResponse
+from django.http import FileResponse, HttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
@@ -27,7 +29,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
-from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
+from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
@@ -912,7 +914,7 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
 
 class LeaveRecordViewSet(viewsets.ModelViewSet):
     serializer_class = LeaveRecordSerializer
-    permission_classes = [IsAdminOrManager]
+    permission_classes = [IsAdminManagerOrEmployeeLeave]
 
     def get_queryset(self):
         queryset = LeaveRecord.objects.select_related("employee", "approved_by")
@@ -921,9 +923,19 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_filter)
         if role_of(self.request.user) == "MANAGER":
             queryset = queryset.filter(employee__rota_assignments__site__manager_profiles__user=self.request.user).distinct()
+        elif role_of(self.request.user) == "EMPLOYEE":
+            queryset = queryset.filter(employee__user=self.request.user)
         return queryset
 
     def perform_create(self, serializer):
+        if role_of(self.request.user) == "EMPLOYEE":
+            employee = getattr(self.request.user, "employee_record", None)
+            if not employee:
+                raise PermissionDenied("Your guard profile is not linked to this account.")
+            serializer.save(employee=employee, status=LeaveRecord.Status.PENDING, created_by=self.request.user)
+            Notification.objects.create(user=None, notification_type=Notification.Type.INFO, title="New guard leave request", message=f"{employee.name} submitted a leave or replacement request.", link="leave")
+            AuditLog.objects.create(user=self.request.user, action="CREATE", model_name="LeaveRecord", object_id=str(employee.id), summary=f"{employee.name} submitted a leave request")
+            return
         serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"])
@@ -1140,6 +1152,10 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Location coordinates must be valid numbers."}, status=status.HTTP_400_BAD_REQUEST)
         if (latitude is None) != (longitude is None):
             return Response({"detail": "Both latitude and longitude are required together."}, status=status.HTTP_400_BAD_REQUEST)
+        if role_of(request.user) == "EMPLOYEE" and (latitude is None or longitude is None):
+            return Response({"detail": "Set your GPS location before submitting attendance."}, status=status.HTTP_400_BAD_REQUEST)
+        if role_of(request.user) == "EMPLOYEE" and (operation.site.latitude is None or operation.site.longitude is None):
+            return Response({"detail": "This site does not have GPS coordinates configured. Ask the office to update the site first."}, status=status.HTTP_400_BAD_REQUEST)
         distance_m = None
         if latitude is not None and operation.site.latitude is not None and operation.site.longitude is not None:
             distance_m = round(haversine_distance_m(latitude, longitude, operation.site.latitude, operation.site.longitude), 2)
@@ -1181,6 +1197,61 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         generate_daily_arrival_reports(operation.operation_date, request.user)
         AuditLog.objects.create(user=request.user, action="UPDATE", model_name="DailyOperation", object_id=operation.pk, summary=f"Marked {operation.employee.name} reached at {operation.site.name}")
         return Response(self.get_serializer(operation).data)
+
+
+def _private_media_response(request, file_field):
+    if not file_field:
+        return HttpResponse("File not found.", status=status.HTTP_404_NOT_FOUND)
+    try:
+        file_handle = file_field.open("rb")
+    except (FileNotFoundError, OSError):
+        return HttpResponse("File not found.", status=status.HTTP_404_NOT_FOUND)
+    content_type = mimetypes.guess_type(file_field.name or "")[0] or "application/octet-stream"
+    response = FileResponse(file_handle, content_type=content_type)
+    response["Content-Disposition"] = "inline"
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _is_internal_media_viewer(user):
+    return role_of(user) in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def secure_document_media(request, pk):
+    document = get_object_or_404(EmployeeDocument.objects.select_related("employee__user"), pk=pk)
+    if not _is_internal_media_viewer(request.user) and document.employee.user_id != request.user.id:
+        return Response({"detail": "You do not have access to this document."}, status=status.HTTP_403_FORBIDDEN)
+    return _private_media_response(request, document.file)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def secure_attendance_media(request, pk):
+    event = get_object_or_404(ShiftAttendanceEvent.objects.select_related("operation__employee__user"), pk=pk)
+    if not _is_internal_media_viewer(request.user) and event.operation.employee.user_id != request.user.id:
+        return Response({"detail": "You do not have access to this attendance photo."}, status=status.HTTP_403_FORBIDDEN)
+    return _private_media_response(request, event.photo)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def secure_daily_report_media(request, pk):
+    report = get_object_or_404(DailyArrivalReport, pk=pk)
+    if not _is_internal_media_viewer(request.user):
+        return Response({"detail": "You do not have access to this report."}, status=status.HTTP_403_FORBIDDEN)
+    return _private_media_response(request, report.pdf_file)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def secure_client_report_media(request, pk):
+    report = get_object_or_404(ClientArrivalReport.objects.select_related("client"), pk=pk)
+    profile = getattr(request.user, "profile", None)
+    if not _is_internal_media_viewer(request.user) and not (role_of(request.user) == "CLIENT_ADMIN" and profile and profile.client_id == report.client_id):
+        return Response({"detail": "You do not have access to this report."}, status=status.HTTP_403_FORBIDDEN)
+    return _private_media_response(request, report.pdf_file)
 
 
 class DailyArrivalReportViewSet(viewsets.ReadOnlyModelViewSet):
