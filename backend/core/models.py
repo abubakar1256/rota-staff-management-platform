@@ -270,6 +270,11 @@ class LeaveRecord(models.Model):
 
 
 class EmployeeDocument(models.Model):
+    class VerificationStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending review"
+        VERIFIED = "VERIFIED", "Verified"
+        REJECTED = "REJECTED", "Rejected"
+
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="documents")
     document_type = models.CharField(max_length=100)
     document_number = models.CharField(max_length=100, blank=True)
@@ -278,6 +283,10 @@ class EmployeeDocument(models.Model):
     file_url = models.URLField(blank=True)
     file = models.FileField(upload_to="employee-documents/%Y/%m/", blank=True, null=True)
     notes = models.TextField(blank=True)
+    verification_status = models.CharField(max_length=20, choices=VerificationStatus.choices, default=VerificationStatus.PENDING)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="reviewed_employee_documents", null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_documents")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -12,6 +12,43 @@ from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, D
 User = get_user_model()
 
 
+def _document_for_type(documents, *document_types):
+    wanted = {value.casefold() for value in document_types}
+    return next((document for document in documents if document.document_type.casefold() in wanted), None)
+
+
+def employee_compliance_issues(employee):
+    """Return the critical compliance blockers for assigning a guard to a rota."""
+    documents = list(employee.documents.all())
+    issues = []
+    critical_documents = [
+        ("Passport", ("Passport (First 2 pages)",)),
+        ("Share Code", ("Share Code",)),
+    ]
+    for label, aliases in critical_documents:
+        document = _document_for_type(documents, *aliases)
+        if not document:
+            issues.append(f"{label} is missing")
+            continue
+        if document.verification_status != EmployeeDocument.VerificationStatus.VERIFIED:
+            issues.append(f"{label} is awaiting verification")
+        if document.expiry_date and document.expiry_date < timezone.localdate():
+            issues.append(f"{label} has expired")
+
+    combined_sia = _document_for_type(documents, "SIA Card (Front & Back)")
+    sia_front = _document_for_type(documents, "SIA Card (Front)")
+    sia_back = _document_for_type(documents, "SIA Card (Back)")
+    sia_documents = [document for document in (combined_sia or sia_front, None if combined_sia else sia_back) if document]
+    if not combined_sia and not (sia_front and sia_back):
+        issues.append("SIA Card front and back are required")
+    for document in sia_documents:
+        if document.verification_status != EmployeeDocument.VerificationStatus.VERIFIED:
+            issues.append("SIA Card is awaiting verification")
+        if document.expiry_date and document.expiry_date < timezone.localdate():
+            issues.append("SIA Card has expired")
+    return list(dict.fromkeys(issues))
+
+
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
@@ -238,6 +275,10 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"employee": "Only active employees can be assigned to a new rota."})
         if employee and site and not SiteInduction.objects.filter(site=site, employee=employee, status=SiteInduction.Status.COMPLETED).exists():
             raise serializers.ValidationError({"employee": f"{employee.name} must have a completed site induction for {site.name} before assignment."})
+        if employee:
+            compliance_issues = employee_compliance_issues(employee)
+            if compliance_issues:
+                raise serializers.ValidationError({"employee": f"{employee.name} cannot be assigned until critical documents are verified: {'; '.join(compliance_issues[:4])}."})
         if rota_week and rota_week.status == RotaWeek.Status.PUBLISHED:
             raise serializers.ValidationError("Published rotas cannot be changed. Create a new draft week or unpublish it first.")
         if employee and work_date and shift_type:
@@ -365,11 +406,12 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     status = serializers.ReadOnlyField()
     secure_file_url = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeDocument
-        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "created_by", "created_at", "updated_at"]
-        read_only_fields = ["created_by", "status", "created_at", "updated_at"]
+        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_by", "created_at", "updated_at"]
+        read_only_fields = ["created_by", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_at", "updated_at"]
 
     def get_secure_file_url(self, obj):
         if not obj.file:
@@ -377,6 +419,34 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         path = f"/api/media/document/{obj.pk}/"
         return request.build_absolute_uri(path) if request else path
+
+    def get_reviewed_by_name(self, obj):
+        return (obj.reviewed_by.get_full_name() or obj.reviewed_by.username) if obj.reviewed_by else None
+
+    def validate_file(self, value):
+        max_size = 10 * 1024 * 1024
+        if value.size > max_size:
+            raise serializers.ValidationError("Each document must be 10 MB or smaller.")
+        extension = value.name.lower().rsplit(".", 1)[-1] if "." in value.name else ""
+        allowed_extensions = {"pdf", "jpg", "jpeg", "png", "webp"}
+        if extension not in allowed_extensions:
+            raise serializers.ValidationError("Only PDF, JPG, JPEG, PNG or WEBP files are allowed.")
+        content_type = getattr(value, "content_type", "")
+        allowed_types = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+        if content_type and content_type not in allowed_types:
+            raise serializers.ValidationError("The uploaded file type is not supported.")
+        header = value.read(16)
+        value.seek(0)
+        signatures = {
+            "pdf": header.startswith(b"%PDF-"),
+            "jpg": header.startswith(b"\xff\xd8\xff"),
+            "jpeg": header.startswith(b"\xff\xd8\xff"),
+            "png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+            "webp": header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+        }
+        if not signatures.get(extension, False):
+            raise serializers.ValidationError("The file content does not match its extension.")
+        return value
 
     def validate(self, attrs):
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
@@ -394,6 +464,19 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
             today = timezone.localdate()
             if issue_date > today or issue_date < today - timedelta(days=92):
                 raise serializers.ValidationError({"issue_date": "Proof of address must be dated within the last 3 months."})
+        issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
+        expiry_date = attrs.get("expiry_date", getattr(self.instance, "expiry_date", None))
+        if issue_date and issue_date > timezone.localdate():
+            raise serializers.ValidationError({"issue_date": "Issue date cannot be in the future."})
+        if issue_date and expiry_date and expiry_date < issue_date:
+            raise serializers.ValidationError({"expiry_date": "Expiry date cannot be before the issue date."})
+        expiry_types = {"Passport (First 2 pages)", "SIA Card (Front)", "SIA Card (Front & Back)", "Share Code", "ACT certificate", "CSCS Card (Front)"}
+        if document_type in expiry_types and (self.instance is None or "file" in attrs or "expiry_date" in attrs) and not expiry_date:
+            raise serializers.ValidationError({"expiry_date": "This document requires an expiry date."})
+        code_types = {"Share Code", "National Insurance Number (NI)", "PPAC Code"}
+        notes = attrs.get("notes", getattr(self.instance, "notes", ""))
+        if document_type in code_types and not attrs.get("file") and not notes.strip():
+            raise serializers.ValidationError({"notes": "Enter the code/number or upload supporting evidence."})
         return attrs
 
 

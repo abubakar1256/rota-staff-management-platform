@@ -966,7 +966,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminManagerOrEmployeeDocument]
 
     def get_queryset(self):
-        queryset = EmployeeDocument.objects.select_related("employee")
+        queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -981,6 +981,10 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30))
             elif status_filter == "VALID":
                 queryset = queryset.filter(Q(expiry_date__isnull=True) | Q(expiry_date__gt=today + timedelta(days=30)))
+            elif status_filter == "REVIEW_REQUIRED":
+                queryset = queryset.filter(verification_status=EmployeeDocument.VerificationStatus.PENDING)
+            elif status_filter == "REJECTED":
+                queryset = queryset.filter(verification_status=EmployeeDocument.VerificationStatus.REJECTED)
         return queryset
 
     def perform_update(self, serializer):
@@ -991,7 +995,75 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             next_type = serializer.validated_data.get("document_type", serializer.instance.document_type)
             if not own_employee or serializer.instance.employee.user_id != self.request.user.id or next_employee.pk != own_employee.pk or next_type != serializer.instance.document_type:
                 raise PermissionDenied("You can only update the file or notes of your own document.")
+        if "file" in serializer.validated_data:
+            document = serializer.save(
+                verification_status=EmployeeDocument.VerificationStatus.PENDING,
+                reviewed_by=None,
+                reviewed_at=None,
+                rejection_reason="",
+            )
+            AuditLog.objects.create(
+                user=self.request.user,
+                action="UPDATE",
+                model_name="EmployeeDocument",
+                object_id=document.pk,
+                summary=f"Re-uploaded {document.document_type} for {document.employee.name}; review reset to pending",
+            )
+            return
         serializer.save()
+
+    @action(detail=True, methods=["post"])
+    def verify(self, request, pk=None):
+        document = self.get_object()
+        document.verification_status = EmployeeDocument.VerificationStatus.VERIFIED
+        document.reviewed_by = request.user
+        document.reviewed_at = timezone.now()
+        document.rejection_reason = ""
+        document.save(update_fields=["verification_status", "reviewed_by", "reviewed_at", "rejection_reason", "updated_at"])
+        AuditLog.objects.create(
+            user=request.user,
+            action="VERIFY",
+            model_name="EmployeeDocument",
+            object_id=document.pk,
+            summary=f"Verified {document.document_type} for {document.employee.name}",
+        )
+        if document.employee.user_id:
+            Notification.objects.create(
+                user=document.employee.user,
+                notification_type=Notification.Type.SUCCESS,
+                title="Document verified",
+                message=f"Your {document.document_type} has been verified by the office.",
+                link="documents",
+            )
+        return Response(self.get_serializer(document).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response({"reason": "A rejection reason is required."}, status=status.HTTP_400_BAD_REQUEST)
+        document = self.get_object()
+        document.verification_status = EmployeeDocument.VerificationStatus.REJECTED
+        document.reviewed_by = request.user
+        document.reviewed_at = timezone.now()
+        document.rejection_reason = reason
+        document.save(update_fields=["verification_status", "reviewed_by", "reviewed_at", "rejection_reason", "updated_at"])
+        AuditLog.objects.create(
+            user=request.user,
+            action="REJECT",
+            model_name="EmployeeDocument",
+            object_id=document.pk,
+            summary=f"Rejected {document.document_type} for {document.employee.name}: {reason}",
+        )
+        if document.employee.user_id:
+            Notification.objects.create(
+                user=document.employee.user,
+                notification_type=Notification.Type.WARNING,
+                title="Document needs attention",
+                message=f"Your {document.document_type} was rejected. {reason}",
+                link="documents",
+            )
+        return Response(self.get_serializer(document).data)
 
     def destroy(self, request, *args, **kwargs):
         if getattr(getattr(request.user, "profile", None), "role", None) == "EMPLOYEE":
@@ -1012,7 +1084,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             employees = employees.filter(rota_assignments__site__manager_profiles__user=request.user).distinct()
         if query:
             employees = employees.filter(Q(name__icontains=query) | Q(employee_id__icontains=query))
-        document_queryset = EmployeeDocument.objects.select_related("employee").order_by("expiry_date", "document_type")
+        document_queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by").order_by("expiry_date", "document_type")
         employees = employees.prefetch_related(Prefetch("documents", queryset=document_queryset, to_attr="summary_documents"))
 
         summaries = []
@@ -1023,7 +1095,13 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             expired = [document for document in documents if document.expiry_date and document.expiry_date < today]
             expiring = [document for document in documents if document.expiry_date and today <= document.expiry_date <= soon_limit]
             valid = len(documents) - len(expired) - len(expiring)
-            if not documents:
+            pending = [document for document in documents if document.verification_status == EmployeeDocument.VerificationStatus.PENDING]
+            rejected = [document for document in documents if document.verification_status == EmployeeDocument.VerificationStatus.REJECTED]
+            if rejected:
+                compliance_status = "REJECTED"
+            elif pending:
+                compliance_status = "REVIEW_REQUIRED"
+            elif not documents:
                 compliance_status = "NO_DOCUMENTS"
             elif expired:
                 compliance_status = "EXPIRED"
@@ -1072,7 +1150,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             own_employee = Employee.objects.filter(user=self.request.user).first()
             if not own_employee or employee.pk != own_employee.pk:
                 raise PermissionDenied("You can only add documents to your own profile.")
-        serializer.save(created_by=self.request.user)
+        serializer.save(created_by=self.request.user, verification_status=EmployeeDocument.VerificationStatus.PENDING)
 
 
 class TimesheetViewSet(viewsets.ModelViewSet):

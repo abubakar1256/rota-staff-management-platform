@@ -428,6 +428,14 @@ textarea, select, input { max-width: 100%; }
 .document-checklist-card.complete .document-card-top > div::before { content: "✓"; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-bottom: 2px; border-radius: 50%; color: #fff; background: #27a681; font-size: 11px; font-weight: 900; }
 .document-save-all .primary-button { font-size: 0; }
 .document-save-all .primary-button::after { content: "Upload documents"; font-size: 12px; }
+.document-status-stack { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-width: 150px; }
+.status-pill.review_required { color: #9b6a18; background: #fff5df; }
+.status-pill.verified { color: #218c72; background: #e5f8f1; }
+.document-review-reason { display: block; max-width: 220px; margin-top: 5px; color: #a45d68; font-size: 10px; line-height: 1.4; }
+.compliance-review-actions { flex-wrap: wrap; min-width: 210px; }
+.compliance-review-actions .mini-button { white-space: nowrap; }
+@media (max-width: 900px) { .expanded-document-header { align-items: flex-start; flex-direction: column; gap: 12px; }.expanded-document-header .primary-button { width: 100%; }.compliance-review-actions { min-width: 180px; } }
+@media (max-width: 680px) { .document-status-stack { min-width: 120px; }.compliance-review-actions { min-width: 160px; }.nested-document-table { min-width: 760px; } }
 .profile-photo-panel { display: flex; align-items: center; gap: 18px; }
 .profile-page-shell { display: flex; flex-direction: column; gap: 18px; }
 .profile-page-shell .page-heading { order: 2; }
