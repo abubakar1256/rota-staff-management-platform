@@ -1037,7 +1037,7 @@ function ProfilePhotoCard() {
 }
 
 function EmployeeProfilePage({ section = "profile" }) {
-  return <><EmployeeProfileContent section={section} />{section === "profile" && <ProfilePhotoCard />}</>;
+  return <div className="profile-page-shell">{section === "profile" && <ProfilePhotoCard />}<EmployeeProfileContent section={section} /></div>;
 }
 
 function EmployeeProfileContent({ section = "profile" }) {
