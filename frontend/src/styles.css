@@ -425,6 +425,9 @@ textarea, select, input { max-width: 100%; }
 .camera-modal { max-width: 560px; }
 .camera-preview { display: block; width: 100%; max-height: 55vh; border-radius: 10px; background: #0b1324; object-fit: contain; }
 .camera-canvas { display: none; }
+.document-checklist-card.complete .document-card-top > div::before { content: "✓"; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-bottom: 2px; border-radius: 50%; color: #fff; background: #27a681; font-size: 11px; font-weight: 900; }
+.document-save-all .primary-button { font-size: 0; }
+.document-save-all .primary-button::after { content: "Upload documents"; font-size: 12px; }
 .profile-photo-panel { display: flex; align-items: center; gap: 18px; }
 .profile-page-shell { display: flex; flex-direction: column; gap: 18px; }
 .profile-page-shell .page-heading { order: 2; }

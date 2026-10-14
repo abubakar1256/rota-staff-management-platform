@@ -1096,16 +1096,6 @@ function EmployeeProfileContent({ section = "profile" }) {
     } catch (err) { setError(err.message); throw err; } finally { setDocumentSaving(""); }
   };
   const saveAllDocuments = async () => {
-    const missing = employeeDocumentChecklist.filter((item) => {
-      if (!item.required || displayDocument(item)) return false;
-      const draft = documentDrafts[item.key] || {};
-      const textOnly = item.key === "share_code" || item.key === "ni_number" || item.key === "ppac_code";
-      return textOnly ? !draft.file && !(draft.notes || "").trim() : !draft.file;
-    });
-    if (missing.length) {
-      setError(`Please complete: ${missing.slice(0, 3).map((item) => item.label).join(", ")}${missing.length > 3 ? ` and ${missing.length - 3} more` : ""}.`);
-      return;
-    }
     setDocumentSaving("all"); setError(""); setNotice("");
     try {
       for (const item of employeeDocumentChecklist) await saveDocument(item, true);
