@@ -1020,7 +1020,10 @@ function ProfilePhotoCard() {
   useEffect(() => { load(); }, []);
   const save = async (event) => {
     event.preventDefault();
-    if (!photo) { setError("Choose a profile picture first."); return; }
+    const detailsForm = document.querySelector(".profile-page-shell .profile-form");
+    if (detailsForm && !detailsForm.reportValidity()) return;
+    if (detailsForm) detailsForm.requestSubmit();
+    if (!photo) return;
     setSaving(true); setError(""); setNotice("");
     const payload = new FormData();
     payload.append("employee", String(profile.id));
@@ -1033,7 +1036,7 @@ function ProfilePhotoCard() {
   };
   const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
   if (loading) return <section className="panel profile-photo-panel"><span className="muted">Loading profile picture...</span></section>;
-  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Profile picture</h3><p className="muted">Add a clear picture so the office can recognise you quickly.</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose profile picture"}<input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={saving || !photo}>{saving ? "Saving..." : existing ? "Replace picture" : "Save picture"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
+  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Profile picture</h3><p className="muted">Add a clear picture so the office can recognise you quickly.</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose profile picture"}<input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
 }
 
 function EmployeeProfilePage({ section = "profile" }) {

@@ -430,6 +430,7 @@ textarea, select, input { max-width: 100%; }
 .profile-page-shell .page-heading { order: 2; }
 .profile-page-shell .profile-photo-panel { order: 1; margin-bottom: 0; }
 .profile-page-shell .profile-layout, .profile-page-shell .profile-documents-panel, .profile-page-shell .password-panel { order: 3; }
+.profile-page-shell .profile-form .modal-actions { display: none; }
 .profile-photo-preview { display: grid; place-items: center; flex: 0 0 76px; width: 76px; height: 76px; overflow: hidden; border-radius: 50%; color: #4d76de; background: #eaf0ff; font-size: 28px; font-weight: 800; }
 .profile-photo-preview img { width: 100%; height: 100%; object-fit: cover; }
 .profile-photo-content { display: grid; gap: 10px; min-width: 0; }
