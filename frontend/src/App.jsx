@@ -1000,7 +1000,47 @@ function PasswordChange() {
   return <form className="panel password-panel" onSubmit={submit}><div className="panel-header"><div><h3>Change password</h3><p className="muted">Keep your portal account secure. Use at least 8 characters.</p></div></div><div className="form-grid"><label>Current password<input required type="password" value={form.current_password} onChange={(e) => setForm({ ...form, current_password: e.target.value })} /></label><label>New password<input required minLength="8" type="password" value={form.new_password} onChange={(e) => setForm({ ...form, new_password: e.target.value })} /></label><label>Confirm new password<input required minLength="8" type="password" value={form.new_password_confirmation} onChange={(e) => setForm({ ...form, new_password_confirmation: e.target.value })} /></label></div>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<div className="modal-actions"><button className="primary-button" disabled={saving}>{saving ? "Updating..." : "Change password"}</button></div></form>;
 }
 
+function ProfilePhotoCard() {
+  const [profile, setProfile] = useState(null);
+  const [existing, setExisting] = useState(null);
+  const [photo, setPhoto] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const load = async () => {
+    setLoading(true); setError("");
+    try {
+      const data = await api("/employees/me/");
+      const documents = await api(`/documents/?employee=${data.id}`);
+      setProfile(data);
+      setExisting(documents.find((document) => document.document_type === "Personal Photograph") || null);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  const save = async (event) => {
+    event.preventDefault();
+    if (!photo) { setError("Choose a profile picture first."); return; }
+    setSaving(true); setError(""); setNotice("");
+    const payload = new FormData();
+    payload.append("employee", String(profile.id));
+    payload.append("document_type", "Personal Photograph");
+    payload.append("file", photo);
+    try {
+      await api(existing ? `/documents/${existing.id}/` : "/documents/", { method: existing ? "PATCH" : "POST", body: payload });
+      setPhoto(null); setNotice("Profile picture saved successfully."); await load();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
+  if (loading) return <section className="panel profile-photo-panel"><span className="muted">Loading profile picture...</span></section>;
+  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Profile picture</h3><p className="muted">Add a clear picture so the office can recognise you quickly.</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose profile picture"}<input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={saving || !photo}>{saving ? "Saving..." : existing ? "Replace picture" : "Save picture"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
+}
+
 function EmployeeProfilePage({ section = "profile" }) {
+  return <><EmployeeProfileContent section={section} />{section === "profile" && <ProfilePhotoCard />}</>;
+}
+
+function EmployeeProfileContent({ section = "profile" }) {
   const [profile, setProfile] = useState(null);
   const [form, setForm] = useState({ name: "", position: "", phone: "", email: "", address: "", emergency_contact_name: "", emergency_contact_phone: "", emergency_contact_relationship: "", joining_date: "" });
   const [documents, setDocuments] = useState([]);
