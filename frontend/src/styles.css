@@ -431,6 +431,11 @@ textarea, select, input { max-width: 100%; }
   .main-area { width: 100%; margin-left: 0; }
   .sidebar { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #526482 #111b31; }
   .sidebar-backdrop { position: fixed; inset: 0; z-index: 9; display: block; border: 0; background: #0b143566; }
+  .attendance-shift-card { display: flex; flex-direction: column; }
+  .attendance-shift-card .attendance-shift-header { order: 1; }
+  .attendance-shift-card .attendance-location-map { order: 2; }
+  .attendance-shift-card .attendance-step-list { order: 3; }
+  .attendance-shift-card .attendance-events { order: 4; }
   .attendance-step { grid-template-columns: 28px minmax(0, 1fr); }
   .attendance-step-status { grid-column: 2; }
   .attendance-step .mini-button { grid-column: 2; justify-self: start; }
