@@ -6,7 +6,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -532,18 +532,23 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     site_geofence_radius_m = serializers.IntegerField(source="site.geofence_radius_m", read_only=True)
     shift_name = serializers.CharField(source="shift_type.name", read_only=True)
     scheduled_start = serializers.TimeField(source="shift_type.start_time", read_only=True)
+    scheduled_end = serializers.TimeField(source="shift_type.end_time", read_only=True)
     reached_by_name = serializers.SerializerMethodField()
     delay_minutes = serializers.SerializerMethodField()
     arrival_status = serializers.SerializerMethodField()
     attendance_events = ShiftAttendanceEventSerializer(many=True, read_only=True)
     hourly_checkin_notes = HourlyCheckinNoteSerializer(many=True, read_only=True)
+    book_off_note = serializers.SerializerMethodField()
+    book_off_due_at = serializers.SerializerMethodField()
+    book_off_deadline_at = serializers.SerializerMethodField()
+    book_off_status = serializers.SerializerMethodField()
     expected_hourly_checkins = serializers.SerializerMethodField()
     hourly_checkins = serializers.SerializerMethodField()
     attendance_status = serializers.SerializerMethodField()
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):
@@ -569,6 +574,36 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         end = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
         duration = end - start if end > start else end + 24 * 60 - start
         return max(0, ceil(duration / 60) - 1)
+
+    def _book_off_window(self, obj):
+        current_timezone = timezone.get_current_timezone()
+        shift_start_minutes = obj.shift_type.start_time.hour * 60 + obj.shift_type.start_time.minute
+        shift_end_minutes = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
+        end_date = obj.operation_date + timedelta(days=1 if shift_end_minutes <= shift_start_minutes else 0)
+        due_at = timezone.make_aware(datetime.combine(end_date, obj.shift_type.end_time), current_timezone)
+        return due_at, due_at + timedelta(minutes=30)
+
+    def get_book_off_due_at(self, obj):
+        return self._book_off_window(obj)[0].isoformat()
+
+    def get_book_off_deadline_at(self, obj):
+        return self._book_off_window(obj)[1].isoformat()
+
+    def get_book_off_status(self, obj):
+        if any(event.event_type == ShiftAttendanceEvent.EventType.BOOK_OFF for event in obj.attendance_events.all()):
+            return "COMPLETED"
+        if not any(event.event_type == ShiftAttendanceEvent.EventType.BOOK_ON for event in obj.attendance_events.all()):
+            return "UPCOMING"
+        due_at, deadline_at = self._book_off_window(obj)
+        now = timezone.now()
+        return "UPCOMING" if now < due_at else "AVAILABLE" if now <= deadline_at else "EXPIRED"
+
+    def get_book_off_note(self, obj):
+        try:
+            note = obj.book_off_note
+        except BookOffNote.DoesNotExist:
+            return None
+        return {"reason": note.reason, "created_at": note.created_at.isoformat(), "updated_at": note.updated_at.isoformat()}
 
     def get_hourly_checkins(self, obj):
         expected = self.get_expected_hourly_checkins(obj)

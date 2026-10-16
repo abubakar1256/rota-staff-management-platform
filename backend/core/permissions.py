@@ -128,7 +128,7 @@ class IsAdminManagerOrEmployeeOperation(BasePermission):
             return True
         if is_operator(request.user):
             return getattr(view, "action", None) in {"list", "retrieve", "mark_reached"}
-        return is_guard(request.user) and getattr(view, "action", None) in {"list", "retrieve", "attendance"}
+        return is_guard(request.user) and getattr(view, "action", None) in {"list", "retrieve", "attendance", "hourly_note", "book_off_note"}
 
 
 class IsAdminManagerOrEmployeeLeave(BasePermission):

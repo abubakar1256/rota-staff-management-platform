@@ -432,6 +432,19 @@ class HourlyCheckinNote(models.Model):
         return f"{self.operation} - Hourly check-in {self.sequence} note"
 
 
+class BookOffNote(models.Model):
+    """A guard's explanation when the Book Off attendance window was missed."""
+
+    operation = models.OneToOneField(DailyOperation, on_delete=models.CASCADE, related_name="book_off_note")
+    reason = models.TextField(max_length=500)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_book_off_notes")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.operation} - Book Off note"
+
+
 class DailyArrivalReport(models.Model):
     report_date = models.DateField()
     shift_type = models.ForeignKey(ShiftType, on_delete=models.PROTECT, related_name="arrival_reports")

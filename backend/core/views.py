@@ -28,7 +28,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
@@ -1178,7 +1178,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminManagerOrEmployeeOperation]
 
     def get_queryset(self):
-        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes")
+        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes", "book_off_note")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -1207,6 +1207,20 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Book On must be completed before this attendance event."}, status=status.HTTP_400_BAD_REQUEST)
         if event_type == ShiftAttendanceEvent.EventType.HOURLY and operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_OFF).exists():
             return Response({"detail": "This shift is already booked off."}, status=status.HTTP_400_BAD_REQUEST)
+        if event_type == ShiftAttendanceEvent.EventType.BOOK_OFF:
+            if operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_OFF).exists():
+                return Response({"detail": "Book Off has already been recorded for this shift."}, status=status.HTTP_400_BAD_REQUEST)
+            current_timezone = timezone.get_current_timezone()
+            start_minutes = operation.shift_type.start_time.hour * 60 + operation.shift_type.start_time.minute
+            end_minutes = operation.shift_type.end_time.hour * 60 + operation.shift_type.end_time.minute
+            end_date = operation.operation_date + timedelta(days=1 if end_minutes <= start_minutes else 0)
+            due_at = timezone.make_aware(datetime.combine(end_date, operation.shift_type.end_time), current_timezone)
+            deadline_at = due_at + timedelta(minutes=30)
+            now = timezone.now()
+            if now < due_at:
+                return Response({"detail": f"Book Off is available from {due_at.astimezone(current_timezone).strftime('%H:%M')} at the end of your shift."}, status=status.HTTP_400_BAD_REQUEST)
+            if now > deadline_at:
+                return Response({"detail": f"Book Off window expired at {deadline_at.astimezone(current_timezone).strftime('%H:%M')}. Add a reason below and contact the office."}, status=status.HTTP_400_BAD_REQUEST)
         if event_type == ShiftAttendanceEvent.EventType.HOURLY:
             hourly_count = operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.HOURLY).count()
             expected_hourly = DailyOperationSerializer().get_expected_hourly_checkins(operation)
@@ -1292,6 +1306,35 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="HourlyCheckinNote", object_id=str(note.pk), summary=f"{operation.employee.name} explained missed hourly check-in {sequence} at {operation.site.name}")
         operation = self.get_queryset().get(pk=operation.pk)
         return Response({"note": {"id": note.pk, "sequence": note.sequence, "reason": note.reason, "created_at": note.created_at, "updated_at": note.updated_at}, "operation": self.get_serializer(operation).data}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="book-off-note")
+    def book_off_note(self, request, pk=None):
+        operation = self.get_object()
+        if not operation.employee_id:
+            return Response({"detail": "This shift has no assigned guard."}, status=status.HTTP_400_BAD_REQUEST)
+        if role_of(request.user) == "EMPLOYEE" and operation.employee.user_id != request.user.id:
+            raise PermissionDenied("You can only add a note to your own shift.")
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response({"detail": "Please enter a reason for the missed Book Off picture."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(reason) > 500:
+            return Response({"detail": "The reason must be 500 characters or less."}, status=status.HTTP_400_BAD_REQUEST)
+        if operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_OFF).exists():
+            return Response({"detail": "This shift already has a Book Off picture."}, status=status.HTTP_400_BAD_REQUEST)
+        if not operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).exists():
+            return Response({"detail": "Book On must be completed before explaining a missed Book Off."}, status=status.HTTP_400_BAD_REQUEST)
+        current_timezone = timezone.get_current_timezone()
+        start_minutes = operation.shift_type.start_time.hour * 60 + operation.shift_type.start_time.minute
+        end_minutes = operation.shift_type.end_time.hour * 60 + operation.shift_type.end_time.minute
+        end_date = operation.operation_date + timedelta(days=1 if end_minutes <= start_minutes else 0)
+        due_at = timezone.make_aware(datetime.combine(end_date, operation.shift_type.end_time), current_timezone)
+        deadline_at = due_at + timedelta(minutes=30)
+        if timezone.now() <= deadline_at:
+            return Response({"detail": f"Book Off is not missed yet. You can add a reason after {deadline_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
+        note, _ = BookOffNote.objects.update_or_create(operation=operation, defaults={"reason": reason, "created_by": request.user})
+        AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="BookOffNote", object_id=str(note.pk), summary=f"{operation.employee.name} explained missed Book Off at {operation.site.name}")
+        operation = self.get_queryset().get(pk=operation.pk)
+        return Response({"note": {"reason": note.reason, "created_at": note.created_at, "updated_at": note.updated_at}, "operation": self.get_serializer(operation).data}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

@@ -403,6 +403,10 @@ textarea, select, input { max-width: 100%; }
 .attendance-step strong { color: #42516a; font-size: 11px; }
 .attendance-step small { color: #8a97aa; font-size: 10px; line-height: 1.45; }
 .attendance-step-status { color: #8290a5; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.attendance-stage-controls { display: grid; gap: 8px; margin-top: 10px; padding-top: 9px; border-top: 1px dashed #dfe6f0; }
+.attendance-stage-controls .attendance-actions { margin: 0; }
+.attendance-stage-controls .attendance-photo-input { margin: 0; }
+.attendance-stage-controls > .primary-button, .attendance-stage-controls > .secondary-button { justify-self: start; }
 .attendance-step.completed .attendance-step-status { color: #218c72; }
 .attendance-step.available .attendance-step-status { color: #4d76de; }
 .attendance-step.expired .attendance-step-status { color: #b65e6b; }
