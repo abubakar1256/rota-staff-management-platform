@@ -28,7 +28,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
@@ -1178,7 +1178,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminManagerOrEmployeeOperation]
 
     def get_queryset(self):
-        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events")
+        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -1259,6 +1259,39 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="ShiftAttendanceEvent", object_id=str(event.pk), summary=f"{operation.employee.name} submitted {event.get_event_type_display()} at {operation.site.name} ({event.location_status})")
         operation = self.get_queryset().get(pk=operation.pk)
         return Response({"event": ShiftAttendanceEventSerializer(event, context={"request": request}).data, "operation": self.get_serializer(operation).data}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="hourly-note")
+    def hourly_note(self, request, pk=None):
+        operation = self.get_object()
+        if not operation.employee_id:
+            return Response({"detail": "This shift has no assigned guard."}, status=status.HTTP_400_BAD_REQUEST)
+        if role_of(request.user) == "EMPLOYEE" and operation.employee.user_id != request.user.id:
+            raise PermissionDenied("You can only add a note to your own shift.")
+        try:
+            sequence = int(request.data.get("sequence"))
+        except (TypeError, ValueError):
+            return Response({"detail": "A valid hourly check-in number is required."}, status=status.HTTP_400_BAD_REQUEST)
+        reason = (request.data.get("reason") or "").strip()
+        expected_hourly = DailyOperationSerializer().get_expected_hourly_checkins(operation)
+        if sequence < 1 or sequence > expected_hourly:
+            return Response({"detail": "That hourly check-in does not exist for this shift."}, status=status.HTTP_400_BAD_REQUEST)
+        if not reason:
+            return Response({"detail": "Please enter a reason for the missed hourly picture."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(reason) > 500:
+            return Response({"detail": "The reason must be 500 characters or less."}, status=status.HTTP_400_BAD_REQUEST)
+        if operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.HOURLY, sequence=sequence).exists():
+            return Response({"detail": "This hourly check-in already has a submitted picture."}, status=status.HTTP_400_BAD_REQUEST)
+        if not operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).exists():
+            return Response({"detail": "Book On must be completed before explaining a missed hourly picture."}, status=status.HTTP_400_BAD_REQUEST)
+        current_timezone = timezone.get_current_timezone()
+        shift_start = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
+        deadline_at = shift_start + timedelta(hours=sequence, minutes=30)
+        if timezone.now() <= deadline_at:
+            return Response({"detail": f"Hourly check-in {sequence} is not missed yet. You can add a reason after {deadline_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
+        note, _ = HourlyCheckinNote.objects.update_or_create(operation=operation, sequence=sequence, defaults={"reason": reason, "created_by": request.user})
+        AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="HourlyCheckinNote", object_id=str(note.pk), summary=f"{operation.employee.name} explained missed hourly check-in {sequence} at {operation.site.name}")
+        operation = self.get_queryset().get(pk=operation.pk)
+        return Response({"note": {"id": note.pk, "sequence": note.sequence, "reason": note.reason, "created_at": note.created_at, "updated_at": note.updated_at}, "operation": self.get_serializer(operation).data}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)

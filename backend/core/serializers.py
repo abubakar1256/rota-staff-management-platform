@@ -6,7 +6,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -517,6 +517,13 @@ class ShiftAttendanceEventSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request else path
 
 
+class HourlyCheckinNoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HourlyCheckinNote
+        fields = ["id", "sequence", "reason", "created_at", "updated_at", "created_by"]
+        read_only_fields = ["id", "created_at", "updated_at", "created_by"]
+
+
 class DailyOperationSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
@@ -529,13 +536,14 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     delay_minutes = serializers.SerializerMethodField()
     arrival_status = serializers.SerializerMethodField()
     attendance_events = ShiftAttendanceEventSerializer(many=True, read_only=True)
+    hourly_checkin_notes = HourlyCheckinNoteSerializer(many=True, read_only=True)
     expected_hourly_checkins = serializers.SerializerMethodField()
     hourly_checkins = serializers.SerializerMethodField()
     attendance_status = serializers.SerializerMethodField()
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):
@@ -567,12 +575,14 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         current_timezone = timezone.get_current_timezone()
         shift_start = timezone.make_aware(datetime.combine(obj.operation_date, obj.shift_type.start_time), current_timezone)
         events = {event.sequence: event for event in obj.attendance_events.all() if event.event_type == ShiftAttendanceEvent.EventType.HOURLY}
+        notes = {note.sequence: note for note in obj.hourly_checkin_notes.all()}
         now = timezone.now()
         result = []
         for sequence in range(1, expected + 1):
             due_at = shift_start + timedelta(hours=sequence)
             deadline_at = due_at + timedelta(minutes=30)
             event = events.get(sequence)
+            note = notes.get(sequence)
             result.append({
                 "sequence": sequence,
                 "due_at": due_at.isoformat(),
@@ -580,6 +590,8 @@ class DailyOperationSerializer(serializers.ModelSerializer):
                 "status": "COMPLETED" if event else "EXPIRED" if now > deadline_at else "AVAILABLE" if now >= due_at else "UPCOMING",
                 "captured_at": event.captured_at.isoformat() if event else None,
                 "photo_url": self.context.get("request").build_absolute_uri(f"/api/media/attendance/{event.pk}/") if event and event.photo and self.context.get("request") else f"/api/media/attendance/{event.pk}/" if event and event.photo else None,
+                "missed_reason": note.reason if note else "",
+                "missed_reason_created_at": note.created_at.isoformat() if note else None,
             })
         return result
 
