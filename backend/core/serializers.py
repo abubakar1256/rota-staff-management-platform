@@ -520,6 +520,9 @@ class ShiftAttendanceEventSerializer(serializers.ModelSerializer):
 class DailyOperationSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
+    site_latitude = serializers.FloatField(source="site.latitude", read_only=True)
+    site_longitude = serializers.FloatField(source="site.longitude", read_only=True)
+    site_geofence_radius_m = serializers.IntegerField(source="site.geofence_radius_m", read_only=True)
     shift_name = serializers.CharField(source="shift_type.name", read_only=True)
     scheduled_start = serializers.TimeField(source="shift_type.start_time", read_only=True)
     reached_by_name = serializers.SerializerMethodField()
@@ -532,7 +535,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):

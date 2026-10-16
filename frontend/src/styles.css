@@ -403,6 +403,10 @@ textarea, select, input { max-width: 100%; }
 .attendance-photo-input { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 11px 12px; border: 1px dashed #b9c9e8; border-radius: 9px; color: #4d76de; background: #f7f9ff; cursor: pointer; font: inherit; text-align: left; }
 .attendance-photo-input small { width: 100%; margin-left: 24px; }
 .attendance-photo-input .live-photo-input { display: none; }
+.attendance-location-map { display: grid; gap: 7px; padding: 10px; border: 1px solid #dce5f3; border-radius: 10px; background: #f8faff; }
+.attendance-location-map-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #526079; font-size: 11px; }
+.attendance-location-map-header span { color: #8290a5; font-variant-numeric: tabular-nums; }
+.attendance-location-map iframe { width: 100%; height: 220px; border: 0; border-radius: 7px; background: #eaf0f7; }
 .document-save-all { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e9edf3; }
 .document-save-all .muted { font-size: 11px; }
 .guard-nav-entry { display: grid; gap: 4px; }
@@ -416,6 +420,8 @@ textarea, select, input { max-width: 100%; }
   .attendance-step .mini-button { grid-column: 2; justify-self: start; }
   .document-save-all { align-items: stretch; flex-direction: column; }
   .document-save-all .primary-button { width: 100%; }
+  .attendance-location-map-header { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .attendance-location-map iframe { height: 190px; }
 }
 /* Guard live camera and authenticated file actions */
 .file-link-button { border: 0; padding: 0; color: #4d76de; background: transparent; cursor: pointer; font: inherit; }
