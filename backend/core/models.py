@@ -54,6 +54,8 @@ class Employee(models.Model):
     employee_id = models.CharField(max_length=40, unique=True)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="employee_record", null=True, blank=True)
     name = models.CharField(max_length=160)
+    date_of_birth = models.DateField(null=True, blank=True)
+    nationality = models.CharField(max_length=80, blank=True)
     position = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     email = models.EmailField(blank=True)

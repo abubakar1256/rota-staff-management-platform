@@ -378,7 +378,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not employee:
             return Response({"detail": "No employee profile is linked to this account."}, status=status.HTTP_404_NOT_FOUND)
         if request.method == "PATCH":
-            blocked = set(request.data) - {"name", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date"}
+            blocked = set(request.data) - {"name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date"}
             if blocked:
                 return Response({"detail": f"These fields cannot be changed from your profile: {', '.join(sorted(blocked))}."}, status=status.HTTP_400_BAD_REQUEST)
             serializer = self.get_serializer(employee, data=request.data, partial=True)

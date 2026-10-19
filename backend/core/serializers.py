@@ -169,11 +169,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "created_at", "updated_at"]
         read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
-        fields = [obj.name, obj.position, obj.phone, obj.email, obj.address, obj.emergency_contact_name or obj.emergency_contact, obj.emergency_contact_phone, obj.emergency_contact_relationship, obj.joining_date]
+        fields = [obj.name, obj.date_of_birth, obj.nationality, obj.position, obj.phone, obj.email, obj.address, obj.emergency_contact_name or obj.emergency_contact, obj.emergency_contact_phone, obj.emergency_contact_relationship, obj.joining_date]
         return round(sum(bool(value) for value in fields) / len(fields) * 100)
 
     def get_documents_completion(self, obj):
