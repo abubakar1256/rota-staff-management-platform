@@ -368,7 +368,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         return Response({"archived": True, "detail": "Employee records are never permanently deleted. The employee was moved to Inactive."}, status=status.HTTP_200_OK)
 
     def get_queryset(self):
-        queryset = Employee.objects.all()
+        pending_invites = EmployeePortalInvite.objects.filter(used_at__isnull=True, expires_at__gt=timezone.now()).order_by("-created_at")
+        queryset = Employee.objects.all().prefetch_related(Prefetch("portal_invites", queryset=pending_invites, to_attr="_pending_portal_invites"))
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(user=self.request.user)
@@ -441,7 +442,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         now = timezone.now()
         EmployeePortalInvite.objects.filter(employee=employee, used_at__isnull=True).update(used_at=now)
         raw_token = token_urlsafe(32)
-        invite = EmployeePortalInvite.objects.create(employee=employee, token_hash=hashlib.sha256(raw_token.encode()).hexdigest(), expires_at=now + timedelta(hours=48), created_by=request.user)
+        invite = EmployeePortalInvite.objects.create(employee=employee, token=raw_token, token_hash=hashlib.sha256(raw_token.encode()).hexdigest(), expires_at=now + timedelta(hours=48), created_by=request.user)
         AuditLog.objects.create(user=request.user, action="INVITE", model_name="EmployeePortal", object_id=str(invite.employee_id), summary=f"Secure portal invite created for {employee.name}")
         frontend_url = (request.data.get("frontend_url") or os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")).rstrip("/")
         return Response({"employee": employee.id, "username": user.username, "activation_url": f"{frontend_url}/guard?activate={raw_token}", "expires_at": now + timedelta(hours=48), "message": "Secure employee activation invite created."}, status=status.HTTP_201_CREATED)

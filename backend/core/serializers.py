@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 from math import ceil
 from secrets import token_urlsafe
 
@@ -155,6 +156,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     profile_completion = serializers.SerializerMethodField(read_only=True)
     has_portal_account = serializers.SerializerMethodField(read_only=True)
     portal_status = serializers.SerializerMethodField(read_only=True)
+    portal_invite_url = serializers.SerializerMethodField(read_only=True)
+    portal_invite_token = serializers.SerializerMethodField(read_only=True)
+    portal_invite_expires_at = serializers.SerializerMethodField(read_only=True)
     documents_completion = serializers.SerializerMethodField(read_only=True)
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
     employee_id = serializers.CharField(required=False, allow_blank=True)
@@ -180,7 +184,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
@@ -226,6 +230,30 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if not obj.user_id:
             return "NOT_CREATED"
         return "ACTIVE" if obj.user.has_usable_password() else "INVITE_PENDING"
+
+    def _pending_invite(self, obj):
+        prefetched = getattr(obj, "_pending_portal_invites", None)
+        if prefetched is not None:
+            return prefetched[0] if prefetched else None
+        return obj.portal_invites.filter(used_at__isnull=True, expires_at__gt=timezone.now()).first()
+
+    def get_portal_invite_url(self, obj):
+        invite = self._pending_invite(obj)
+        if not invite or not invite.token:
+            return None
+        frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+        if not frontend_url:
+            request = self.context.get("request")
+            frontend_url = request.build_absolute_uri("/").rstrip("/") if request else "http://127.0.0.1:5173"
+        return f"{frontend_url}/guard?activate={invite.token}"
+
+    def get_portal_invite_token(self, obj):
+        invite = self._pending_invite(obj)
+        return invite.token if invite and invite.token else None
+
+    def get_portal_invite_expires_at(self, obj):
+        invite = self._pending_invite(obj)
+        return invite.expires_at if invite else None
 
 
 class SiteSerializer(serializers.ModelSerializer):

@@ -81,6 +81,7 @@ class Employee(models.Model):
 
 class EmployeePortalInvite(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="portal_invites")
+    token = models.CharField(max_length=128, blank=True)
     token_hash = models.CharField(max_length=64, unique=True)
     expires_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
