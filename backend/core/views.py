@@ -13,6 +13,7 @@ from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch, Q
+from django.db.models.deletion import ProtectedError
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -356,6 +357,14 @@ def dashboard(request):
 class EmployeeViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeSerializer
     permission_classes = [IsAdminManagerOrEmployee]
+
+    def destroy(self, request, *args, **kwargs):
+        employee = self.get_object()
+        try:
+            self.perform_destroy(employee)
+        except ProtectedError:
+            return Response({"detail": "This employee is linked to rota, induction, attendance or document records and cannot be permanently deleted. Set the employee to Inactive instead."}, status=status.HTTP_409_CONFLICT)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def get_queryset(self):
         queryset = Employee.objects.all()
