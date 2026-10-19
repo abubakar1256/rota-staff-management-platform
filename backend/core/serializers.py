@@ -57,6 +57,9 @@ class LoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         login_name = attrs["username"].strip()
         account = User.objects.filter(username__iexact=login_name).first()
+        if not account:
+            employee = Employee.objects.select_related("user").filter(email__iexact=login_name, user__isnull=False).first()
+            account = employee.user if employee else None
         user = authenticate(username=account.username if account else login_name, password=attrs["password"])
         if not user:
             raise serializers.ValidationError("Invalid username or password.")
@@ -171,6 +174,21 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if duplicate.exists():
             raise serializers.ValidationError("An employee with this name already exists. Use the existing employee record instead.")
         return normalized
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+    def validate(self, attrs):
+        if not self.instance and not attrs.get("email"):
+            raise serializers.ValidationError({"email": "Email is required because it will be used for guard portal login."})
+        email = attrs.get("email")
+        if email:
+            duplicate = Employee.objects.filter(email__iexact=email)
+            if self.instance:
+                duplicate = duplicate.exclude(pk=self.instance.pk)
+            if duplicate.exists():
+                raise serializers.ValidationError({"email": "This email is already linked to another employee."})
+        return attrs
 
     def create(self, validated_data):
         employee_id = (validated_data.get("employee_id") or "").strip()

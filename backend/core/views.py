@@ -422,7 +422,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Only Admin or Manager users can create employee portal accounts."}, status=status.HTTP_403_FORBIDDEN)
         if employee.user_id and employee.user.has_usable_password():
             return Response({"detail": "This employee already has an active portal account."}, status=status.HTTP_400_BAD_REQUEST)
-        username = (request.data.get("username") or employee.employee_id).strip().lower()
+        username = (request.data.get("username") or employee.email or employee.employee_id).strip().lower()
         user = employee.user
         if not user:
             if User.objects.filter(username=username).exists():
@@ -431,10 +431,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             user.set_unusable_password()
             user.save()
         else:
+            if User.objects.filter(username=username).exclude(pk=user.pk).exists():
+                return Response({"detail": "This email is already used by another account."}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = username
             user.email = employee.email
             user.first_name = employee.name
             user.set_unusable_password()
-            user.save(update_fields=["email", "first_name", "password"])
+            user.save(update_fields=["username", "email", "first_name", "password"])
         UserProfile.objects.update_or_create(user=user, defaults={"role": UserProfile.Role.EMPLOYEE})
         if not employee.user_id:
             employee.user = user
