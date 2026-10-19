@@ -586,13 +586,12 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
                     return document
             return None
 
-        def card_details(document):
-            if not document:
-                return ""
-            return " / ".join(str(value) for value in (document.document_number, document.expiry_date) if value)
+        def card_details(*document_types):
+            matching = [item for item in documents if item.document_type.lower() in {value.lower() for value in document_types}]
+            card_number = next((item.document_number for item in matching if item.document_number), "")
+            expiry_date = next((item.expiry_date for item in matching if item.expiry_date), "")
+            return " / ".join(str(value) for value in (card_number, expiry_date) if value)
 
-        sia = document_for("SIA Card (Front)", "SIA Card (Front & Back)", "SIA Card (Back)")
-        cscs = document_for("CSCS Card (Front)", "CSCS Card (Front & Back)", "CSCS Card (Back)")
         ppac = document_for("PPAC Code")
         emergency_contact = " / ".join(str(value) for value in (employee.emergency_contact_name or employee.emergency_contact, employee.emergency_contact_phone) if value)
         induction_fields = [
@@ -604,8 +603,8 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
             ("Contact Number", employee.phone),
             ("Email", employee.email),
             ("Emergency Contact Name & Number", emergency_contact),
-            ("SIA Card Number & Expiry Date", card_details(sia)),
-            ("CSCS Card Number & Expiry Date", card_details(cscs)),
+            ("SIA Card Number & Expiry Date", card_details("SIA Card (Front)", "SIA Card (Front & Back)", "SIA Card (Back)")),
+            ("CSCS Card Number & Expiry Date", card_details("CSCS Card (Front)", "CSCS Card (Front & Back)", "CSCS Card (Back)")),
             ("Compliant Code / PPAC Code", (ppac.notes or ppac.document_number) if ppac else ""),
         ]
         for field, value in induction_fields:
