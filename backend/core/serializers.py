@@ -57,10 +57,12 @@ class LoginSerializer(serializers.Serializer):
     def validate(self, attrs):
         login_name = attrs["username"].strip()
         account = User.objects.filter(username__iexact=login_name).first()
-        if not account:
-            employee = Employee.objects.select_related("user").filter(email__iexact=login_name, user__isnull=False).first()
-            account = employee.user if employee else None
         user = authenticate(username=account.username if account else login_name, password=attrs["password"])
+        if not user:
+            employee = Employee.objects.select_related("user").filter(email__iexact=login_name, user__isnull=False).first()
+            linked_user = employee.user if employee else None
+            if linked_user and (not account or linked_user.pk != account.pk):
+                user = authenticate(username=linked_user.username, password=attrs["password"])
         if not user:
             raise serializers.ValidationError("Invalid username or password.")
         if not user.is_active:
