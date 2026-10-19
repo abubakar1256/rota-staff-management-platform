@@ -1259,7 +1259,7 @@ function GuardProfileContent() {
 function EmployeeRecords() {
   const empty = { name: "", position: "Security Guard", status: "ACTIVE" };
   const [items, setItems] = useState([]); const [search, setSearch] = useState(""); const [open, setOpen] = useState(false); const [editingId, setEditingId] = useState(null); const [form, setForm] = useState(empty); const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [invite, setInvite] = useState(null); const [copied, setCopied] = useState(false);
-  const employeeQuery = useQuery({ queryKey: ["rota", "employees", search], queryFn: () => api(`/employees/?search=${encodeURIComponent(search)}`) });
+  const employeeQuery = useQuery({ queryKey: ["rota", "employees", search], queryFn: () => api(`/employees/?status=ACTIVE&search=${encodeURIComponent(search)}`) });
   const load = () => employeeQuery.refetch().then((result) => setItems(result.data || [])).catch((err) => setError(err.message));
   useEffect(() => { if (employeeQuery.data) setItems(employeeQuery.data); if (employeeQuery.error) setError(employeeQuery.error.message); }, [employeeQuery.data, employeeQuery.error]);
   const editForm = (item) => ({ employee_id: item.employee_id || "", name: item.name || "", date_of_birth: item.date_of_birth || "", nationality: item.nationality || "", position: item.position || "", phone: item.phone || "", email: item.email || "", address: item.address || "", emergency_contact: item.emergency_contact || "", emergency_contact_name: item.emergency_contact_name || "", emergency_contact_phone: item.emergency_contact_phone || "", emergency_contact_relationship: item.emergency_contact_relationship || "", joining_date: item.joining_date || "", status: item.status || "ACTIVE" });

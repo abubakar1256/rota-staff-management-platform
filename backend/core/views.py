@@ -363,7 +363,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         try:
             self.perform_destroy(employee)
         except ProtectedError:
-            return Response({"detail": "This employee is linked to rota, induction, attendance or document records and cannot be permanently deleted. Set the employee to Inactive instead."}, status=status.HTTP_409_CONFLICT)
+            employee.status = Employee.Status.INACTIVE
+            employee.save(update_fields=["status", "updated_at"])
+            if employee.user_id:
+                employee.user.set_unusable_password()
+                employee.user.is_active = False
+                employee.user.save(update_fields=["password", "is_active"])
+            return Response({"archived": True, "detail": "This employee has linked records, so the guard was archived and portal access was disabled instead of deleting operational history."}, status=status.HTTP_200_OK)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def get_queryset(self):
