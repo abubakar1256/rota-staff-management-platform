@@ -13,7 +13,6 @@ from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch, Q
-from django.db.models.deletion import ProtectedError
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -360,17 +359,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         employee = self.get_object()
-        try:
-            self.perform_destroy(employee)
-        except ProtectedError:
-            employee.status = Employee.Status.INACTIVE
-            employee.save(update_fields=["status", "updated_at"])
-            if employee.user_id:
-                employee.user.set_unusable_password()
-                employee.user.is_active = False
-                employee.user.save(update_fields=["password", "is_active"])
-            return Response({"archived": True, "detail": "This employee has linked records, so the guard was archived and portal access was disabled instead of deleting operational history."}, status=status.HTTP_200_OK)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        employee.status = Employee.Status.INACTIVE
+        employee.save(update_fields=["status", "updated_at"])
+        if employee.user_id:
+            employee.user.set_unusable_password()
+            employee.user.is_active = False
+            employee.user.save(update_fields=["password", "is_active"])
+        return Response({"archived": True, "detail": "Employee records are never permanently deleted. The employee was moved to Inactive."}, status=status.HTTP_200_OK)
 
     def get_queryset(self):
         queryset = Employee.objects.all()

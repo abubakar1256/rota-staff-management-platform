@@ -49,7 +49,7 @@ class Employee(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         INACTIVE = "INACTIVE", "Inactive"
-        ON_LEAVE = "ON_LEAVE", "On leave"
+        ON_HOLD = "ON_HOLD", "On hold"
 
     employee_id = models.CharField(max_length=40, unique=True)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="employee_record", null=True, blank=True)
