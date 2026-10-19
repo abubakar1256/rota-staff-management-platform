@@ -61,6 +61,11 @@ class LoginSerializer(serializers.Serializer):
         if not user:
             employee = Employee.objects.select_related("user").filter(email__iexact=login_name, user__isnull=False).first()
             linked_user = employee.user if employee else None
+            if not linked_user:
+                linked_user = User.objects.filter(
+                    email__iexact=login_name,
+                    profile__role=UserProfile.Role.EMPLOYEE,
+                ).first()
             if linked_user and (not account or linked_user.pk != account.pk):
                 user = authenticate(username=linked_user.username, password=attrs["password"])
         if not user:
