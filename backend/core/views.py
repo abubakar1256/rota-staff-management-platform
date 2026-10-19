@@ -568,49 +568,48 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
     def download_csv(self, request, pk=None):
         induction = self.get_object()
         employee = induction.employee
-        site = induction.site
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         safe_name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
         response["Content-Disposition"] = f'attachment; filename="{safe_name} - induction.csv"'
+        response.write("\ufeff")
         writer = csv.writer(response)
-        writer.writerow(["Guard induction record", ""])
         writer.writerow(["Field", "Value"])
-        profile_fields = [
-            ("Full name", employee.name),
-            ("Employee ID", employee.employee_id),
-            ("Position", employee.position),
-            ("Date of birth", employee.date_of_birth or ""),
-            ("Nationality", employee.nationality),
-            ("Phone", employee.phone),
-            ("Email", employee.email),
+        name_parts = employee.name.strip().split()
+        first_name = name_parts[0] if name_parts else ""
+        surname = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+        documents = list(employee.documents.all())
+
+        def document_for(*document_types):
+            for document_type in document_types:
+                document = next((item for item in documents if item.document_type.lower() == document_type.lower()), None)
+                if document and (document.document_number or document.expiry_date or document.notes):
+                    return document
+            return None
+
+        def card_details(document):
+            if not document:
+                return ""
+            return " / ".join(str(value) for value in (document.document_number, document.expiry_date) if value)
+
+        sia = document_for("SIA Card (Front)", "SIA Card (Front & Back)", "SIA Card (Back)")
+        cscs = document_for("CSCS Card (Front)", "CSCS Card (Front & Back)", "CSCS Card (Back)")
+        ppac = document_for("PPAC Code")
+        emergency_contact = " / ".join(str(value) for value in (employee.emergency_contact_name or employee.emergency_contact, employee.emergency_contact_phone) if value)
+        induction_fields = [
+            ("Surname", surname),
+            ("First Name", first_name),
+            ("Date of Birth", employee.date_of_birth or ""),
             ("Address", employee.address),
-            ("Emergency contact name", employee.emergency_contact_name or employee.emergency_contact),
-            ("Emergency contact phone", employee.emergency_contact_phone),
-            ("Emergency contact relationship", employee.emergency_contact_relationship),
-            ("Joining date", employee.joining_date or ""),
-            ("Site ID", site.site_id),
-            ("Site name", site.name),
-            ("Site address", site.address),
-            ("Induction date", induction.induction_date),
-            ("Induction time", induction.induction_time or ""),
-            ("Induction status", induction.get_status_display()),
-            ("Induction notes", induction.notes),
+            ("Nationality", employee.nationality),
+            ("Contact Number", employee.phone),
+            ("Email", employee.email),
+            ("Emergency Contact Name & Number", emergency_contact),
+            ("SIA Card Number & Expiry Date", card_details(sia)),
+            ("CSCS Card Number & Expiry Date", card_details(cscs)),
+            ("Compliant Code / PPAC Code", (ppac.notes or ppac.document_number) if ppac else ""),
         ]
-        for field, value in profile_fields:
+        for field, value in induction_fields:
             writer.writerow([field, value])
-        writer.writerow([])
-        writer.writerow(["Documents", ""])
-        writer.writerow(["Document type", "Document number", "Issue date", "Expiry date", "Review status", "Notes", "File name"])
-        for document in employee.documents.all().order_by("document_type"):
-            writer.writerow([
-                document.document_type,
-                document.document_number,
-                document.issue_date or "",
-                document.expiry_date or "",
-                document.get_verification_status_display(),
-                document.notes,
-                os.path.basename(document.file.name) if document.file else "",
-            ])
         return response
 
     def perform_destroy(self, instance):
