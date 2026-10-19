@@ -564,6 +564,55 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
         self._check_site(serializer.validated_data.get("site", serializer.instance.site))
         serializer.save()
 
+    @action(detail=True, methods=["get"], url_path="download-csv")
+    def download_csv(self, request, pk=None):
+        induction = self.get_object()
+        employee = induction.employee
+        site = induction.site
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        safe_name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
+        response["Content-Disposition"] = f'attachment; filename="{safe_name} - induction.csv"'
+        writer = csv.writer(response)
+        writer.writerow(["Guard induction record", ""])
+        writer.writerow(["Field", "Value"])
+        profile_fields = [
+            ("Full name", employee.name),
+            ("Employee ID", employee.employee_id),
+            ("Position", employee.position),
+            ("Date of birth", employee.date_of_birth or ""),
+            ("Nationality", employee.nationality),
+            ("Phone", employee.phone),
+            ("Email", employee.email),
+            ("Address", employee.address),
+            ("Emergency contact name", employee.emergency_contact_name or employee.emergency_contact),
+            ("Emergency contact phone", employee.emergency_contact_phone),
+            ("Emergency contact relationship", employee.emergency_contact_relationship),
+            ("Joining date", employee.joining_date or ""),
+            ("Site ID", site.site_id),
+            ("Site name", site.name),
+            ("Site address", site.address),
+            ("Induction date", induction.induction_date),
+            ("Induction time", induction.induction_time or ""),
+            ("Induction status", induction.get_status_display()),
+            ("Induction notes", induction.notes),
+        ]
+        for field, value in profile_fields:
+            writer.writerow([field, value])
+        writer.writerow([])
+        writer.writerow(["Documents", ""])
+        writer.writerow(["Document type", "Document number", "Issue date", "Expiry date", "Review status", "Notes", "File name"])
+        for document in employee.documents.all().order_by("document_type"):
+            writer.writerow([
+                document.document_type,
+                document.document_number,
+                document.issue_date or "",
+                document.expiry_date or "",
+                document.get_verification_status_display(),
+                document.notes,
+                os.path.basename(document.file.name) if document.file else "",
+            ])
+        return response
+
     def perform_destroy(self, instance):
         self._check_site(instance.site)
         instance.delete()
