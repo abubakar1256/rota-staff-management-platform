@@ -157,6 +157,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     portal_status = serializers.SerializerMethodField(read_only=True)
     documents_completion = serializers.SerializerMethodField(read_only=True)
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
+    employee_id = serializers.CharField(required=False, allow_blank=True)
 
     def validate_name(self, value):
         normalized = " ".join(value.split())
@@ -166,6 +167,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if duplicate.exists():
             raise serializers.ValidationError("An employee with this name already exists. Use the existing employee record instead.")
         return normalized
+
+    def create(self, validated_data):
+        employee_id = (validated_data.get("employee_id") or "").strip()
+        if not employee_id:
+            existing_ids = set(Employee.objects.values_list("employee_id", flat=True))
+            number = 1
+            while f"EMP-{number:03d}" in existing_ids:
+                number += 1
+            validated_data["employee_id"] = f"EMP-{number:03d}"
+        return super().create(validated_data)
 
     class Meta:
         model = Employee
