@@ -978,12 +978,117 @@ function GuardAttendanceOnly({ user, onSignOut }) {
   return <div className="attendance-only-shell"><header className="attendance-only-header"><div><div className="attendance-only-brand"><div className="brand-mark"><ShieldCheck size={18} /></div><strong>ROTA</strong></div><span>Secure attendance</span></div><div className="attendance-only-user"><span>{user.first_name || user.username}</span><button className="secondary-button" onClick={onSignOut}>Sign out</button></div></header><main className="attendance-only-content"><EmployeeAttendancePage /></main></div>;
 }
 
-function AttendanceReviewPage() {
+function LegacyAttendanceReviewPage() {
   const [date, setDate] = useState(todayIso()); const [items, setItems] = useState([]); const [error, setError] = useState("");
   const load = () => api(`/operations/?operation_date=${date}`).then(setItems).catch((err) => setError(err.message));
   useEffect(() => { load(); }, [date]);
   const eventsFor = (item) => item.attendance_events || []; const eventTime = (item, type) => { const event = eventsFor(item).find((entry) => entry.event_type === type); return event ? new Date(event.captured_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"; }; const formatCapturedAt = (value) => value ? new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—"; const locationLabel = (event) => event && event.latitude !== null && event.longitude !== null ? `${Number(event.latitude).toFixed(6)}, ${Number(event.longitude).toFixed(6)}` : "Not recorded"; const exceptions = items.reduce((total, item) => total + eventsFor(item).filter((event) => event.location_status !== "VERIFIED").length, 0);
   return <><div className="page-heading"><div><p className="eyebrow">CONTROL ROOM</p><h2>Shift attendance</h2><p className="muted">Review Book On, hourly photo checks and Book Off across all sites.</p></div><div className="report-filters"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /><button className="secondary-button" onClick={load}>Refresh</button></div></div>{error && <p className="error page-error">{error}</p>}<section className="stats-grid"><StatCard label="Assigned shifts" value={items.filter((item) => item.employee).length} detail={date} icon={Users} tone="blue" /><StatCard label="On duty" value={items.filter((item) => item.attendance_status === "ON_DUTY").length} detail="Book On received" icon={CheckCircle2} tone="teal" /><StatCard label="Booked off" value={items.filter((item) => item.attendance_status === "BOOKED_OFF").length} detail="Shift closed" icon={Clock3} tone="amber" /><StatCard label="Location exceptions" value={exceptions} detail="Outside or unverified" icon={ClipboardList} tone="rose" /></section><section className="panel"><div className="panel-header"><div><h3>Attendance evidence</h3><p className="muted">Open every submitted guard picture and review its timestamp, GPS result and missed-photo reasons.</p></div><span className="muted">{items.length} records</span></div>{items.length ? <div className="table-wrap"><table><thead><tr><th>Site</th><th>Shift</th><th>Guard</th><th>Book On</th><th>Hourly checks</th><th>Book Off</th><th>Pictures & evidence</th><th>Status</th></tr></thead><tbody>{items.map((item) => { const events = eventsFor(item); const hourlyEvents = events.filter((event) => event.event_type === "HOURLY"); const missedReasons = (item.hourly_checkins || []).filter((checkin) => checkin.status === "EXPIRED"); const exceptionsForItem = events.filter((event) => event.location_status !== "VERIFIED"); return <tr key={item.id}><td><strong>{item.site_name}</strong></td><td>{item.shift_name}<small className="table-subtext">{item.operation_date}</small></td><td>{item.employee_name || "Unassigned"}</td><td>{eventTime(item, "BOOK_ON")}</td><td>{hourlyEvents.length ? `${hourlyEvents.length} completed` : "Not submitted"}<small className="table-subtext">{item.expected_hourly_checkins} scheduled · {missedReasons.length} missed</small></td><td>{eventTime(item, "BOOK_OFF")}</td><td><div className="attendance-evidence-links">{events.length ? events.map((event) => event.photo_url ? <div className="attendance-evidence-item" key={event.id}><ProtectedFilePreview value={event.photo_url} label={`${item.employee_name || "Guard"} · ${event.event_label}`} buttonLabel={`View ${event.event_label}`} /><small className="table-subtext">{formatCapturedAt(event.captured_at)} · GPS {locationLabel(event)}</small></div> : null) : "—"}{missedReasons.filter((checkin) => checkin.missed_reason).map((checkin) => <div className="attendance-missed-reason" key={`reason-${checkin.sequence}`}><strong>Hourly {checkin.sequence} reason</strong><span>{checkin.missed_reason}</span></div>)}</div></td><td>{exceptionsForItem.length ? <span className="status-pill outside_site">Review required</span> : <span className={`status-pill ${item.attendance_status === "BOOKED_OFF" ? "active" : item.attendance_status === "ON_DUTY" ? "present" : "pending"}`}>{item.attendance_status.replaceAll("_", " ")}</span>}</td></tr>; })}</tbody></table></div> : <div className="empty-state"><ClipboardList size={30} /><strong>No attendance records</strong><span>Published assigned shifts will appear here.</span></div>}</section></>;
+}
+
+function AttendanceReviewPage() {
+  const [date, setDate] = useState(todayIso());
+  const [items, setItems] = useState([]);
+  const [siteFilter, setSiteFilter] = useState("ALL");
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    setError("");
+    api(`/operations/?operation_date=${date}`)
+      .then(setItems)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [date]);
+
+  const eventsFor = (item) => item.attendance_events || [];
+  const eventFor = (item, type) => eventsFor(item).find((event) => event.event_type === type);
+  const timeFor = (event) => event?.captured_at ? new Date(event.captured_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+  const formatTime = (value) => value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+  const formatShiftTime = (item) => `${String(item.scheduled_start || "").slice(0, 5)}–${String(item.scheduled_end || "").slice(0, 5)}`;
+  const isArrived = (item) => item.attendance_status === "ON_DUTY" || item.attendance_status === "BOOKED_OFF" || Boolean(eventFor(item, "BOOK_ON"));
+  const isCompleted = (item) => item.attendance_status === "BOOKED_OFF" || Boolean(eventFor(item, "BOOK_OFF"));
+
+  const assignedItems = items.filter((item) => item.employee);
+  const arrivedItems = assignedItems.filter(isArrived);
+  const completedItems = assignedItems.filter(isCompleted);
+  const pendingItems = assignedItems.filter((item) => !isArrived(item));
+  const unfilledItems = items.filter((item) => !item.employee);
+  const exceptions = items.reduce((total, item) => total + eventsFor(item).filter((event) => event.location_status !== "VERIFIED").length, 0);
+  const progress = assignedItems.length ? Math.round((arrivedItems.length / assignedItems.length) * 100) : 0;
+
+  const grouped = items.reduce((groups, item) => {
+    const name = item.site_name || "Unassigned site";
+    if (!groups[name]) groups[name] = [];
+    groups[name].push(item);
+    return groups;
+  }, {});
+  const siteNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+  const visibleSites = siteNames.filter((siteName) => {
+    if (siteFilter !== "ALL" && siteName !== siteFilter) return false;
+    if (!search.trim()) return true;
+    const query = search.trim().toLowerCase();
+    return siteName.toLowerCase().includes(query) || grouped[siteName].some((item) => (item.employee_name || "").toLowerCase().includes(query) || (item.shift_name || "").toLowerCase().includes(query));
+  });
+
+  const statusFor = (item) => {
+    if (!item.employee) return { label: "Unfilled shift", className: "pending", hint: "Guard still needed" };
+    if (isCompleted(item)) return { label: "Completed", className: "active", hint: `Book Off ${timeFor(eventFor(item, "BOOK_OFF"))}` };
+    if (isArrived(item)) return { label: "Arrived / on duty", className: "present", hint: `Book On ${timeFor(eventFor(item, "BOOK_ON"))}` };
+    return { label: "Awaiting arrival", className: "pending", hint: "Book On not received" };
+  };
+
+  return <>
+    <div className="page-heading control-room-heading">
+      <div><p className="eyebrow">CONTROL ROOM</p><h2>Shift attendance</h2><p className="muted">Track today’s guards by site: who is assigned, who has arrived and who is still outstanding.</p></div>
+      <div className="report-filters"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /><button className="secondary-button" onClick={load} disabled={loading}>{loading ? "Updating..." : "Refresh tracker"}</button></div>
+    </div>
+    {error && <p className="error page-error">{error}</p>}
+
+    <section className="control-room-overview panel">
+      <div className="panel-header"><div><h3>Today’s operations</h3><p className="muted">Live attendance readiness across every active site.</p></div><span className="status-pill present">{date === todayIso() ? "Live today" : date}</span></div>
+      <div className="control-room-progress-row"><div><strong>{arrivedItems.length} of {assignedItems.length} guards arrived</strong><span>{pendingItems.length ? `${pendingItems.length} still awaiting Book On` : "All assigned guards have checked in"}</span></div><strong className="control-room-progress-value">{progress}%</strong></div>
+      <div className="control-room-progress-track"><span style={{ width: `${progress}%` }} /></div>
+      <div className="attendance-legend"><span><i className="legend-dot arrived" /> Arrived / on duty</span><span><i className="legend-dot pending" /> Awaiting arrival</span><span><i className="legend-dot completed" /> Completed</span><span><i className="legend-dot unfilled" /> Unfilled</span></div>
+    </section>
+
+    <section className="stats-grid control-room-stats">
+      <StatCard label="Assigned guards" value={assignedItems.length} detail={`${siteNames.length} site${siteNames.length === 1 ? "" : "s"} today`} icon={Users} tone="blue" />
+      <StatCard label="Arrived / Booked on" value={arrivedItems.length} detail={`${progress}% of assigned guards`} icon={CheckCircle2} tone="teal" />
+      <StatCard label="Still pending" value={pendingItems.length} detail="Book On not received" icon={Clock3} tone="amber" />
+      <StatCard label="Booked off" value={completedItems.length} detail={`${unfilledItems.length} unfilled shift${unfilledItems.length === 1 ? "" : "s"}`} icon={ClipboardList} tone="rose" />
+    </section>
+
+    <section className="panel attendance-site-tracker">
+      <div className="panel-header"><div><h3>Site attendance tracker</h3><p className="muted">Open a site card to see every guard, shift time and live attendance state.</p></div><span className="muted">{items.length} shift records</span></div>
+      <div className="attendance-filter-row"><div className="search-box"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search site, guard or shift..." /></div><select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)}><option value="ALL">All sites</option>{siteNames.map((siteName) => <option key={siteName} value={siteName}>{siteName}</option>)}</select></div>
+      {visibleSites.length ? <div className="attendance-site-grid">{visibleSites.map((siteName) => {
+        const siteItems = grouped[siteName];
+        const siteAssigned = siteItems.filter((item) => item.employee);
+        const siteArrived = siteAssigned.filter(isArrived).length;
+        const siteCompleted = siteAssigned.filter(isCompleted).length;
+        const siteUnfilled = siteItems.filter((item) => !item.employee).length;
+        const siteState = siteUnfilled ? "Needs cover" : siteAssigned.length && siteArrived === siteAssigned.length ? "All arrived" : "In progress";
+        return <article className={`attendance-site-card ${siteUnfilled ? "needs-attention" : ""}`} key={siteName}>
+          <div className="attendance-site-header"><div><p className="eyebrow">SITE</p><h3>{siteName}</h3><span>{siteItems.length} shift{siteItems.length === 1 ? "" : "s"} scheduled</span></div><span className={`status-pill ${siteUnfilled ? "pending" : siteArrived === siteAssigned.length ? "present" : "neutral"}`}>{siteState}</span></div>
+          <div className="attendance-site-summary"><span><strong>{siteArrived}</strong> arrived</span><span><strong>{Math.max(siteAssigned.length - siteArrived, 0)}</strong> pending</span><span><strong>{siteCompleted}</strong> completed</span></div>
+          <div className="attendance-guard-list">{siteItems.sort((a, b) => `${a.scheduled_start || ""}${a.employee_name || ""}`.localeCompare(`${b.scheduled_start || ""}${b.employee_name || ""}`)).map((item) => {
+            const state = statusFor(item); const bookOn = eventFor(item, "BOOK_ON"); const bookOff = eventFor(item, "BOOK_OFF"); const hourly = (item.hourly_checkins || []).filter((checkin) => checkin.status === "COMPLETED").length;
+            return <div className="attendance-guard-row" key={item.id}><div className="attendance-guard-avatar">{item.employee_name ? item.employee_name.slice(0, 1).toUpperCase() : "?"}</div><div className="attendance-guard-details"><strong>{item.employee_name || "Unfilled shift"}</strong><span>{item.shift_name || "Shift"} · {formatShiftTime(item)}</span><div className="attendance-time-row"><span>{bookOn ? `Book On ${formatTime(bookOn.captured_at)}` : "Book On pending"}</span>{bookOff && <span>Book Off {formatTime(bookOff.captured_at)}</span>}{item.employee && item.expected_hourly_checkins > 0 && <span>{hourly}/{item.expected_hourly_checkins} hourly checks</span>}</div></div><div className="attendance-status-block"><span className={`status-pill ${state.className}`}>{state.label}</span><small>{state.hint}</small>{(bookOn?.photo_url || bookOff?.photo_url) && <div className="attendance-quick-evidence">{bookOn?.photo_url && <ProtectedFilePreview value={bookOn.photo_url} label={`${item.employee_name} · Book On`} buttonLabel="View Book On" />}{bookOff?.photo_url && <ProtectedFilePreview value={bookOff.photo_url} label={`${item.employee_name} · Book Off`} buttonLabel="View Book Off" />}</div>}</div></div>;
+          })}</div>
+        </article>;
+      })}</div> : <div className="empty-state compact-empty"><ClipboardList size={28} /><strong>No matching site records</strong><span>Try another site, guard or date.</span></div>}
+    </section>
+
+    <section className="control-room-bottom-grid">
+      <div className="panel"><div className="panel-header"><div><h3>Still to arrive</h3><p className="muted">Assigned guards without a Book On event.</p></div><span className="status-pill pending">{pendingItems.length}</span></div>{pendingItems.length ? <div className="attention-list">{pendingItems.map((item) => <div className="attention-item" key={item.id}><div><strong>{item.employee_name}</strong><span>{item.site_name} · {item.shift_name} · {formatShiftTime(item)}</span></div><span className="status-pill pending">Awaiting</span></div>)}</div> : <div className="tracker-empty"><CheckCircle2 size={18} /><span>Everyone assigned has arrived.</span></div>}</div>
+      <div className="panel"><div className="panel-header"><div><h3>Control room alerts</h3><p className="muted">Items that may need an operator’s attention.</p></div><span className={`status-pill ${unfilledItems.length || exceptions ? "pending" : "present"}`}>{unfilledItems.length + exceptions}</span></div>{unfilledItems.length || exceptions ? <div className="attention-list">{unfilledItems.length > 0 && <div className="attention-item"><div><strong>{unfilledItems.length} unfilled shift{unfilledItems.length === 1 ? "" : "s"}</strong><span>Assign cover from Weekly rota.</span></div><span className="status-pill pending">Action needed</span></div>}{exceptions > 0 && <div className="attention-item"><div><strong>{exceptions} location exception{exceptions === 1 ? "" : "s"}</strong><span>Review attendance evidence and GPS status.</span></div><span className="status-pill outside_site">Review</span></div>}</div> : <div className="tracker-empty"><CheckCircle2 size={18} /><span>No alerts for this date.</span></div>}</div>
+    </section>
+  </>;
 }
 
 function NotificationsPage() {
