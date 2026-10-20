@@ -501,6 +501,14 @@ textarea, select, input { max-width: 100%; }
 @media (max-width: 680px) { .profile-photo-panel { align-items: flex-start; } .profile-photo-form { align-items: stretch; flex-direction: column; } .profile-photo-input, .profile-photo-form .primary-button { width: 100%; justify-content: center; } }
 /* Employee status workflow */
 .status-pill.on_hold { color: #a16c21; background: #fff5df; }
+@media (min-width: 901px) {
+  .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 860px); max-height: none; overflow: visible; padding: 22px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 14px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .form-grid label { gap: 5px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .form-grid input, .modal-card:has(input[placeholder="First name Surname"]) .form-grid select, .modal-card:has(input[placeholder="First name Surname"]) .form-grid textarea { padding: 8px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 16px; }
+}
 .checkbox-field { display: flex !important; align-items: flex-start; gap: 10px !important; padding: 12px; border: 1px solid #dfe5ee; border-radius: 8px; background: #f8faff; }
 .checkbox-field input { width: auto !important; margin-top: 2px; accent-color: #4d76de; }
 .checkbox-field span { display: grid; gap: 4px; color: #33425c; }
