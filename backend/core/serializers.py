@@ -175,6 +175,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
     employee_id = serializers.CharField(required=False, allow_blank=True)
 
+    def to_internal_value(self, data):
+        data = data.copy()
+        for field in ("date_of_birth", "joining_date"):
+            if data.get(field) == "":
+                data[field] = None
+        return super().to_internal_value(data)
+
     def validate_name(self, value):
         normalized = " ".join(value.split())
         duplicate = Employee.objects.filter(name__iexact=normalized)
