@@ -128,6 +128,8 @@ class UserSerializer(serializers.ModelSerializer):
         profile = getattr(instance, "profile", None)
         data["managed_site_ids"] = list(profile.managed_sites.values_list("id", flat=True)) if profile else []
         data["client_id"] = profile.client_id if profile else None
+        employee = getattr(instance, "employee_record", None)
+        data["compliance_registration_enabled"] = bool(employee and employee.compliance_registration_enabled)
         return data
 
     def create(self, validated_data):
@@ -209,7 +211,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
