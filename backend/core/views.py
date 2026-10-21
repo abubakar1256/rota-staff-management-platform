@@ -30,13 +30,13 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
-from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
+from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
 User = get_user_model()
@@ -114,6 +114,134 @@ def build_arrival_pdf(report_date, shift, operations):
     story.extend([Paragraph(f"Scheduled: {counts['scheduled']} | Reached: {counts['reached']} | Late: {counts['late']} | Not reached: {counts['not_reached']} | Unassigned: {counts['unassigned']}", body_style), Spacer(1, 4 * mm), table])
     document.build(story)
     return buffer.getvalue(), counts
+
+
+def _compliance_employee_for_request(request, employee_id=None):
+    role = role_of(request.user)
+    if employee_id is None:
+        if role != UserProfile.Role.EMPLOYEE:
+            raise PermissionDenied("This route is reserved for guard accounts.")
+        return get_object_or_404(Employee, user=request.user)
+    if role in {UserProfile.Role.EMPLOYEE, UserProfile.Role.CLIENT_ADMIN, None}:
+        raise PermissionDenied("You do not have access to this guard registration.")
+    return get_object_or_404(Employee, pk=employee_id)
+
+
+def _document_value(employee, *document_types):
+    wanted = {value.casefold() for value in document_types}
+    document = next((item for item in employee.documents.all() if item.document_type.casefold() in wanted), None)
+    if not document:
+        return None
+    return document.document_number or document.notes or ""
+
+
+def _compliance_employee_data(employee, request):
+    return EmployeeSerializer(employee, context={"request": request}).data
+
+
+def build_compliance_pdf(employee, registration, request=None):
+    buffer = BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=14 * mm, bottomMargin=14 * mm, title="Diligent Registration Form", author="Diligent Business Services")
+    styles = getSampleStyleSheet()
+    heading_style = styles["Heading2"]
+    heading_style.fontName = "Helvetica-Bold"
+    heading_style.fontSize = 11
+    heading_style.textColor = colors.HexColor("#1f4f8f")
+    body_style = ParagraphStyle("ComplianceBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, leading=12)
+    label_style = ParagraphStyle("ComplianceLabel", parent=body_style, fontName="Helvetica-Bold", fontSize=8, textColor=colors.HexColor("#627d98"))
+    signature_style = ParagraphStyle("ComplianceSignature", parent=body_style, fontName="Helvetica-Oblique", fontSize=16, textColor=colors.HexColor("#102a43"))
+
+    story = []
+    logo_path = os.path.join(settings.BASE_DIR, "core", "assets", "diligent-business-services-logo.png")
+    header_cells = []
+    if os.path.exists(logo_path):
+        try:
+            logo = Image(logo_path, width=30 * mm, height=22 * mm, kind="proportional")
+            header_cells.append(logo)
+        except Exception:
+            header_cells.append("")
+    else:
+        header_cells.append("")
+    header_style = ParagraphStyle("ComplianceHeader", parent=body_style, leading=23)
+    header_text = Paragraph(f'<font name="Helvetica-Bold" size="11" color="#2f61c9">Diligent</font> <font name="Helvetica-Bold" size="11" color="#627d98">Business Services</font><br/><font name="Helvetica-Bold" size="20" color="#102a43">Diligent Registration Form</font><br/><font name="Helvetica" size="9" color="#334e68">Form ID: {registration.form_id}</font>', header_style)
+    header_cells.append(header_text)
+    header = Table([header_cells], colWidths=[34 * mm, 145 * mm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    story.append(header)
+    story.append(Spacer(1, 4 * mm))
+
+    photo = next((item for item in employee.documents.all() if item.document_type.casefold() == "personal photograph" and item.file), None)
+    photo_cell = ""
+    if photo:
+        try:
+            photo_cell = Image(photo.file.path, width=26 * mm, height=32 * mm, kind="proportional")
+        except Exception:
+            photo_cell = ""
+
+    def value(value):
+        return str(value or "—")
+
+    personal_rows = [
+        [Paragraph("First name / surname", label_style), Paragraph(value(employee.name), body_style)],
+        [Paragraph("National Insurance Number", label_style), Paragraph(value(registration.national_insurance_number or _document_value(employee, "National Insurance Number (NI)")), body_style)],
+        [Paragraph("Date of birth", label_style), Paragraph(value(employee.date_of_birth), body_style)],
+        [Paragraph("Address Line 1", label_style), Paragraph(value(registration.address_line_1 or employee.address), body_style)],
+        [Paragraph("City", label_style), Paragraph(value(registration.city), body_style)],
+        [Paragraph("Postcode", label_style), Paragraph(value(registration.postcode), body_style)],
+        [Paragraph("Email", label_style), Paragraph(value(employee.email), body_style)],
+        [Paragraph("Phone Number", label_style), Paragraph(value(employee.phone), body_style)],
+    ]
+    personal_table = Table(personal_rows, colWidths=[48 * mm, 92 * mm])
+    personal_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    personal_block = Table([[personal_table, photo_cell]], colWidths=[145 * mm, 30 * mm])
+    personal_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    def card_details(*document_types):
+        wanted = {item.casefold() for item in document_types}
+        item = next((document for document in employee.documents.all() if document.document_type.casefold() in wanted), None)
+        return (item.document_number or item.notes or "—", item.expiry_date or "—") if item else ("—", "—")
+
+    sia_number, sia_expiry = card_details("SIA Card (Front)", "SIA Card (Front & Back)", "SIA Card (Back)")
+    cscs_number, cscs_expiry = card_details("CSCS Card (Front)", "CSCS Card (Front & Back)", "CSCS Card (Back)")
+    cards_rows = [[Paragraph("SIA card number", label_style), Paragraph(value(sia_number), body_style), Paragraph("Expiry", label_style), Paragraph(value(sia_expiry), body_style)], [Paragraph("CSCS card number", label_style), Paragraph(value(cscs_number), body_style), Paragraph("Expiry", label_style), Paragraph(value(cscs_expiry), body_style)]]
+    cards_table = Table(cards_rows, colWidths=[38 * mm, 57 * mm, 25 * mm, 55 * mm])
+    cards_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    story.extend([Paragraph("Personal details", heading_style), Spacer(1, 2 * mm), personal_block, Spacer(1, 5 * mm), Paragraph("Security card details", heading_style), Spacer(1, 2 * mm), cards_table, Spacer(1, 5 * mm)])
+
+    employment_rows = [
+        [Paragraph("Previously unemployed", label_style), Paragraph(value(registration.previously_unemployed), body_style)],
+        [Paragraph("Main mode of transport", label_style), Paragraph(value(registration.main_mode_of_transport), body_style)],
+        [Paragraph("Type of employment", label_style), Paragraph(value(registration.employment_type), body_style)],
+        [Paragraph("Additional certifications / qualifications", label_style), Paragraph(value(registration.additional_certifications), body_style)],
+        [Paragraph("Job role", label_style), Paragraph(value(registration.job_role or employee.position), body_style)],
+        [Paragraph("Qualifications", label_style), Paragraph(value(registration.qualifications), body_style)],
+    ]
+    kin_rows = [
+        [Paragraph("Next of Kin name", label_style), Paragraph(value(registration.next_of_kin_name or employee.emergency_contact_name or employee.emergency_contact), body_style)],
+        [Paragraph("Relationship", label_style), Paragraph(value(registration.next_of_kin_relationship or employee.emergency_contact_relationship), body_style)],
+        [Paragraph("Contact phone", label_style), Paragraph(value(registration.next_of_kin_phone or employee.emergency_contact_phone), body_style)],
+    ]
+    def section_table(rows):
+        table = Table(rows, colWidths=[62 * mm, 113 * mm])
+        table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+        return table
+    story.extend([Paragraph("Employment details", heading_style), Spacer(1, 2 * mm), section_table(employment_rows), Spacer(1, 5 * mm), Paragraph("Next of kin", heading_style), Spacer(1, 2 * mm), section_table(kin_rows), Spacer(1, 5 * mm)])
+
+    equality_rows = [
+        [Paragraph("Ethnicity", label_style), Paragraph(value(registration.ethnicity), body_style)],
+        [Paragraph("Religion / belief", label_style), Paragraph(value(registration.religion), body_style)],
+        [Paragraph("Gender", label_style), Paragraph(value(registration.gender), body_style)],
+        [Paragraph("Sexual orientation", label_style), Paragraph(value(registration.sexuality), body_style)],
+        [Paragraph("Disability / health condition", label_style), Paragraph(value(registration.disability_health_condition), body_style)],
+    ]
+    story.extend([Paragraph("Equal opportunities", heading_style), Spacer(1, 2 * mm), section_table(equality_rows), Spacer(1, 6 * mm)])
+    declaration = "I can confirm all information is correct and I understand my details will be sent to Diligent."
+    story.extend([Paragraph("Declaration", heading_style), Spacer(1, 2 * mm), Paragraph(declaration, body_style), Spacer(1, 8 * mm)])
+    signature_rows = [[Paragraph("Typed signature", label_style), Paragraph(value(registration.signature_name), signature_style), Paragraph("Date", label_style), Paragraph(value(registration.signed_at), body_style)]]
+    signature_table = Table(signature_rows, colWidths=[30 * mm, 75 * mm, 17 * mm, 53 * mm])
+    signature_table.setStyle(TableStyle([("LINEBELOW", (1, 0), (1, 0), 0.7, colors.HexColor("#102a43")), ("LINEBELOW", (3, 0), (3, 0), 0.7, colors.HexColor("#102a43")), ("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story.extend([signature_table])
+    document.build(story)
+    return buffer.getvalue()
 
 
 def generate_daily_arrival_reports(report_date, user, shift_types=None):
@@ -337,6 +465,122 @@ def password_reset_confirm(request):
     Token.objects.filter(user=user).delete()
     AuditLog.objects.create(user=user, action="PASSWORD", model_name="PasswordReset", object_id=str(user.id), summary="Password reset through secure email link")
     return Response({"message": "Password reset successfully. You can now sign in."})
+
+
+@api_view(["GET", "POST", "PATCH"])
+@permission_classes([IsAuthenticated])
+def employee_compliance(request, employee_id=None):
+    employee = _compliance_employee_for_request(request, employee_id)
+    registration, _ = GuardComplianceRegistration.objects.get_or_create(employee=employee)
+    if request.method in {"POST", "PATCH"}:
+        if employee_id is not None:
+            return Response({"detail": "Use the approval action to change this registration."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+        if registration.status in {GuardComplianceRegistration.Status.PENDING_APPROVAL, GuardComplianceRegistration.Status.APPROVED}:
+            return Response({"detail": "Your registration is already in process or approved. Please wait for the office."}, status=status.HTTP_400_BAD_REQUEST)
+        data = request.data.copy()
+        data.pop("employee", None)
+        data.pop("form_id", None)
+        requested_status = data.get("status", GuardComplianceRegistration.Status.DRAFT)
+        if requested_status not in {GuardComplianceRegistration.Status.DRAFT, GuardComplianceRegistration.Status.PENDING_APPROVAL}:
+            return Response({"detail": "A guard can only save a draft or submit the registration for approval."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = GuardComplianceRegistrationSerializer(registration, data=data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        registration = serializer.save(employee=employee)
+        if registration.status == GuardComplianceRegistration.Status.PENDING_APPROVAL:
+            if not registration.submitted_at:
+                registration.submitted_at = timezone.now()
+            if not registration.signed_at:
+                registration.signed_at = timezone.localdate()
+            registration.approval_deadline = timezone.now() + timedelta(minutes=60)
+            registration.rejection_reason = ""
+            registration.save(update_fields=["submitted_at", "signed_at", "approval_deadline", "rejection_reason", "updated_at"])
+            AuditLog.objects.create(user=request.user, action="SUBMIT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Submitted Diligent registration for {employee.name}")
+            for admin_user in User.objects.filter(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN], is_active=True):
+                Notification.objects.create(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals")
+        return Response({"registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data, "employee": _compliance_employee_data(employee, request)})
+    documents = list(employee.documents.all())
+    document_details = [{"document_type": item.document_type, "document_number": item.document_number, "expiry_date": item.expiry_date, "notes": item.notes, "secure_file_url": f"/api/media/document/{item.pk}/" if item.file else None} for item in documents]
+    return Response({
+        "registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data,
+        "employee": _compliance_employee_data(employee, request),
+        "documents": document_details,
+        "declaration": "I can confirm all information is correct and I understand my details will be sent to Diligent.",
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def employee_compliance_pdf(request, employee_id=None):
+    employee = _compliance_employee_for_request(request, employee_id)
+    registration = get_object_or_404(GuardComplianceRegistration, employee=employee)
+    if registration.status != GuardComplianceRegistration.Status.APPROVED:
+        return Response({"detail": "The office must approve your registration before the PDF can be downloaded."}, status=status.HTTP_400_BAD_REQUEST)
+    pdf_bytes = build_compliance_pdf(employee, registration, request)
+    safe_name = re.sub(r"[^A-Za-z0-9 ._-]+", "", employee.name).strip() or employee.employee_id
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="Diligent - {safe_name}.pdf"'
+    return response
+
+
+def _compliance_admin_allowed(request):
+    return role_of(request.user) in {UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN}
+
+
+def _compliance_admin_response(registration, request):
+    data = GuardComplianceRegistrationSerializer(registration, context={"request": request}).data
+    data["employee"] = _compliance_employee_data(registration.employee, request)
+    if registration.approval_deadline:
+        data["approval_remaining_seconds"] = max(0, round((registration.approval_deadline - timezone.now()).total_seconds()))
+    else:
+        data["approval_remaining_seconds"] = None
+    return data
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def compliance_approvals(request):
+    if not _compliance_admin_allowed(request):
+        raise PermissionDenied("Only Admin or Super Admin users can review registrations.")
+    status_filter = request.query_params.get("status", "PENDING_APPROVAL")
+    registrations = GuardComplianceRegistration.objects.select_related("employee", "approved_by").order_by("approval_deadline", "-submitted_at")
+    if status_filter and status_filter != "ALL":
+        registrations = registrations.filter(status=status_filter)
+    return Response([_compliance_admin_response(item, request) for item in registrations])
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def approve_compliance(request, pk):
+    if not _compliance_admin_allowed(request):
+        raise PermissionDenied("Only Admin or Super Admin users can approve registrations.")
+    registration = get_object_or_404(GuardComplianceRegistration.objects.select_related("employee"), pk=pk)
+    registration.status = GuardComplianceRegistration.Status.APPROVED
+    registration.approved_by = request.user
+    registration.approved_at = timezone.now()
+    registration.rejection_reason = ""
+    registration.save(update_fields=["status", "approved_by", "approved_at", "rejection_reason", "updated_at"])
+    AuditLog.objects.create(user=request.user, action="APPROVE", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Approved Diligent registration for {registration.employee.name}")
+    if registration.employee.user_id:
+        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.SUCCESS, title="Diligent registration approved", message="Your registration is approved. You can now download your Diligent PDF.", link="compliance")
+    return Response(_compliance_admin_response(registration, request))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def reject_compliance(request, pk):
+    if not _compliance_admin_allowed(request):
+        raise PermissionDenied("Only Admin or Super Admin users can reject registrations.")
+    reason = (request.data.get("reason") or "Please update the registration and submit it again.").strip()
+    registration = get_object_or_404(GuardComplianceRegistration.objects.select_related("employee"), pk=pk)
+    registration.status = GuardComplianceRegistration.Status.REJECTED
+    registration.approved_by = request.user
+    registration.approved_at = None
+    registration.rejection_reason = reason
+    registration.save(update_fields=["status", "approved_by", "approved_at", "rejection_reason", "updated_at"])
+    AuditLog.objects.create(user=request.user, action="REJECT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Rejected Diligent registration for {registration.employee.name}")
+    if registration.employee.user_id:
+        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration needs changes", message=reason, link="compliance")
+    return Response(_compliance_admin_response(registration, request))
 
 
 @api_view(["GET"])

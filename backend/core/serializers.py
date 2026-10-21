@@ -7,7 +7,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -289,6 +289,42 @@ class EmployeeSerializer(serializers.ModelSerializer):
         invite = self._pending_invite(obj)
         return invite.expires_at if invite else None
 
+
+class GuardComplianceRegistrationSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.name", read_only=True)
+    approved_by_name = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = GuardComplianceRegistration
+        fields = [
+            "id", "employee", "employee_name", "form_id",
+            "national_insurance_number", "address_line_1", "city", "postcode",
+            "previously_unemployed", "main_mode_of_transport", "employment_type",
+            "additional_certifications", "next_of_kin_name", "next_of_kin_relationship",
+            "next_of_kin_phone", "job_role", "qualifications", "ethnicity", "religion",
+            "gender", "sexuality", "disability_health_condition", "declaration_accepted",
+            "signature_name", "signed_at", "status", "submitted_at", "approval_deadline", "approved_at", "approved_by", "approved_by_name", "rejection_reason", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "employee", "employee_name", "form_id", "signed_at", "submitted_at", "approval_deadline", "approved_at", "approved_by", "approved_by_name", "rejection_reason", "created_at", "updated_at",
+        ]
+
+    def validate(self, attrs):
+        status_value = attrs.get("status", getattr(self.instance, "status", GuardComplianceRegistration.Status.DRAFT))
+        if status_value not in {GuardComplianceRegistration.Status.PENDING_APPROVAL, GuardComplianceRegistration.Status.APPROVED}:
+            return attrs
+        declaration = attrs.get("declaration_accepted", getattr(self.instance, "declaration_accepted", False))
+        signature = attrs.get("signature_name", getattr(self.instance, "signature_name", ""))
+        if not declaration:
+            raise serializers.ValidationError({"declaration_accepted": "Please accept the declaration before saving the PDF."})
+        if not signature or not signature.strip():
+            raise serializers.ValidationError({"signature_name": "Type your full name as your signature."})
+        return attrs
+
+    def get_approved_by_name(self, obj):
+        if not obj.approved_by:
+            return None
+        return obj.approved_by.get_full_name() or obj.approved_by.get_username()
 
 class SiteSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source="client.name", read_only=True, allow_null=True)

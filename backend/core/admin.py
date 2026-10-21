@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AuditLog, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, LeaveRecord, Notification, RotaAssignment, RotaWeek, ShiftType, Site, Timesheet, UserProfile
+from .models import AuditLog, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, LeaveRecord, Notification, RotaAssignment, RotaWeek, ShiftType, Site, Timesheet, UserProfile
 
 
 @admin.register(UserProfile)
@@ -51,6 +51,14 @@ class LeaveRecordAdmin(admin.ModelAdmin):
 class EmployeeDocumentAdmin(admin.ModelAdmin):
     list_display = ("employee", "document_type", "document_number", "expiry_date", "status")
     search_fields = ("employee__name", "document_type", "document_number")
+
+
+@admin.register(GuardComplianceRegistration)
+class GuardComplianceRegistrationAdmin(admin.ModelAdmin):
+    list_display = ("form_id", "employee", "status", "approved_by", "approved_at", "submitted_at", "updated_at")
+    list_filter = ("status", "declaration_accepted")
+    search_fields = ("form_id", "employee__name", "employee__employee_id")
+    readonly_fields = ("form_id", "created_at", "updated_at", "submitted_at", "signed_at", "approved_at")
 
 
 @admin.register(Timesheet)

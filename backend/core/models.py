@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower, Trim
+from uuid import uuid4
 
 
 class UserProfile(models.Model):
@@ -94,6 +95,60 @@ class EmployeePortalInvite(models.Model):
 
     def __str__(self):
         return f"Portal invite for {self.employee.name}"
+
+
+class GuardComplianceRegistration(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        PENDING_APPROVAL = "PENDING_APPROVAL", "In process"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="compliance_registration")
+    form_id = models.CharField(max_length=40, unique=True, editable=False)
+    national_insurance_number = models.CharField(max_length=40, blank=True)
+    address_line_1 = models.CharField(max_length=200, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    postcode = models.CharField(max_length=30, blank=True)
+    previously_unemployed = models.CharField(max_length=20, blank=True)
+    main_mode_of_transport = models.CharField(max_length=80, blank=True)
+    employment_type = models.CharField(max_length=120, blank=True)
+    additional_certifications = models.TextField(blank=True)
+    next_of_kin_name = models.CharField(max_length=160, blank=True)
+    next_of_kin_relationship = models.CharField(max_length=80, blank=True)
+    next_of_kin_phone = models.CharField(max_length=40, blank=True)
+    job_role = models.CharField(max_length=100, blank=True)
+    qualifications = models.TextField(blank=True)
+    ethnicity = models.CharField(max_length=160, blank=True)
+    religion = models.CharField(max_length=160, blank=True)
+    gender = models.CharField(max_length=80, blank=True)
+    sexuality = models.CharField(max_length=160, blank=True)
+    disability_health_condition = models.CharField(max_length=250, blank=True)
+    declaration_accepted = models.BooleanField(default=False)
+    signature_name = models.CharField(max_length=160, blank=True)
+    signed_at = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approval_deadline = models.DateTimeField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_guard_compliance_forms", null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    verification_code = models.CharField(max_length=32, unique=True, editable=False, blank=True)
+    verification_token = models.CharField(max_length=64, unique=True, editable=False, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.form_id:
+            self.form_id = f"DBS-{uuid4().hex[:10].upper()}"
+        if not self.verification_code:
+            self.verification_code = f"DBS-{uuid4().hex[:8].upper()}"
+        if not self.verification_token:
+            self.verification_token = uuid4().hex + uuid4().hex
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.form_id} - {self.employee.name}"
 
 
 class Site(models.Model):

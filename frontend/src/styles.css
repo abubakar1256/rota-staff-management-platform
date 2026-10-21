@@ -566,3 +566,46 @@ textarea, select, input { max-width: 100%; }
 .tracker-empty { display: flex; align-items: center; gap: 8px; color: #27a681; font-size: 11px; }
 @media (max-width: 900px) { .control-room-heading { align-items: flex-start; }.control-room-heading .report-filters { width: 100%; }.control-room-heading .report-filters input { flex: 1; }.attendance-site-grid { grid-template-columns: 1fr; }.control-room-bottom-grid { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .control-room-overview { padding: 16px; }.attendance-filter-row { align-items: stretch; flex-direction: column; }.attendance-filter-row .search-box { max-width: none; }.attendance-filter-row select { width: 100%; }.attendance-site-grid { grid-template-columns: minmax(0, 1fr); }.attendance-guard-row { grid-template-columns: 29px minmax(0, 1fr); }.attendance-status-block { grid-column: 2; justify-items: start; text-align: left; }.attendance-quick-evidence { justify-content: flex-start; }.attendance-site-summary { gap: 9px; }.attendance-legend { gap: 8px; } }
+
+/* Diligent Business Services registration form */
+.compliance-form-shell { max-width: 1080px; padding: 0; overflow: hidden; }
+.compliance-form-top { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 22px; align-items: center; padding: 22px 24px; border-bottom: 1px solid #e8edf4; background: linear-gradient(135deg, #fbfcff, #f3f7ff); }
+.compliance-form-top > div:first-child { display: grid; gap: 5px; }
+.compliance-form-top > div:first-child strong { color: #66758d; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.compliance-form-id { color: #173b68; font-size: 14px; font-weight: 800; }
+.compliance-stepper { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.compliance-step { display: grid; justify-items: center; gap: 6px; min-width: 0; padding: 0; border: 0; color: #95a1b5; background: transparent; cursor: default; }
+.compliance-step span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #d6dfec; border-radius: 50%; color: #8492a8; background: #fff; font-size: 12px; font-weight: 800; }
+.compliance-step small { overflow: hidden; max-width: 100%; color: inherit; font-size: 10px; font-weight: 700; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.compliance-step.active { color: #4d76de; }.compliance-step.active span { border-color: #4d76de; color: #fff; background: #4d76de; box-shadow: 0 5px 12px rgba(77,118,222,.22); }
+.compliance-step.completed { color: #249777; cursor: pointer; }.compliance-step.completed span { border-color: #9edcc9; color: #fff; background: #27a681; }
+.compliance-form-card { padding: 25px 27px 10px; }.compliance-form-card .panel-header { margin-bottom: 18px; }
+.compliance-form-card .form-grid { gap: 15px; }.compliance-form-card label { color: #526079; }
+.compliance-readonly-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.compliance-readonly-grid > div { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid #dfe7f2; border-radius: 10px; background: #f8faff; }.compliance-readonly-grid span { color: #8794a8; font-size: 10px; }.compliance-readonly-grid strong { color: #30445f; font-size: 12px; }
+.compliance-declaration { margin: 8px 0 20px; padding: 17px; border: 1px solid #cbdaf8; border-radius: 11px; background: #f3f7ff; }.checkbox-row { display: flex; align-items: flex-start; gap: 11px; color: #30445f !important; line-height: 1.6; }.checkbox-row input { width: auto; margin-top: 4px; accent-color: #4d76de; }
+.signature-input { max-width: 540px; }.signature-input input { font-family: "Segoe Script", "Brush Script MT", cursive; font-size: 18px; }
+.compliance-actions { display: flex; justify-content: space-between; gap: 10px; padding: 18px 27px 25px; border-top: 1px solid #edf1f6; background: #fbfcff; }.compliance-actions .primary-button { min-width: 140px; }
+@media (max-width: 800px) { .compliance-form-top { grid-template-columns: 1fr; gap: 18px; }.compliance-stepper { gap: 2px; }.compliance-form-card { padding: 20px 18px 8px; }.compliance-actions { padding: 16px 18px 20px; } }
+@media (max-width: 560px) { .compliance-step small { font-size: 8px; }.compliance-step span { width: 27px; height: 27px; }.compliance-readonly-grid { grid-template-columns: 1fr; }.compliance-actions { position: sticky; bottom: 0; z-index: 2; }.compliance-actions button { flex: 1; } }
+
+.diligent-prefix { color: #2f61c9; }
+.compliance-status-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 18px; border-left: 4px solid #4d76de; }
+.compliance-status-card.approved { border-left-color: #27a681; }
+.compliance-status-card.rejected { border-left-color: #d96779; }
+.compliance-status-card h3 { margin: 4px 0 5px; color: #263a59; }
+.approval-time { color: #b07922; font-weight: 800; white-space: nowrap; }
+.approval-time.overdue { color: #c95d69; }
+.compliance-approvals-panel .table-subtext { display: block; }
+.compliance-review-modal { max-width: 820px; max-height: min(88vh, 760px); overflow: auto; }
+.compliance-review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.compliance-review-grid > div { display: grid; gap: 4px; padding: 11px 13px; border: 1px solid #e6ecf4; border-radius: 9px; background: #f8faff; }
+.compliance-review-grid span, .compliance-review-meta { color: #8290a4; font-size: 10px; }
+.compliance-review-grid strong { color: #30445f; font-size: 12px; overflow-wrap: anywhere; }
+.compliance-review-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 14px; }
+.compliance-review-meta strong { color: #193d71; letter-spacing: .05em; }
+@media (max-width: 680px) {
+  .compliance-status-card { align-items: flex-start; flex-direction: column; }
+  .compliance-status-card .primary-button { width: 100%; justify-content: center; }
+  .compliance-review-grid { grid-template-columns: 1fr; }
+}
