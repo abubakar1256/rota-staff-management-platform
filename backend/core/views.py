@@ -8,8 +8,12 @@ import re
 from io import BytesIO
 from secrets import token_urlsafe
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
 from django.core.files.base import ContentFile
+from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch, Q
@@ -18,6 +22,8 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -268,6 +274,69 @@ def activate_portal(request):
     AuditLog.objects.create(user=user, action="ACTIVATE", model_name="EmployeePortal", object_id=str(invite.employee_id), summary=f"Employee portal activated for {invite.employee.name}")
     token, _ = Token.objects.get_or_create(user=user)
     return Response({"token": token.key, "user": UserSerializer(user).data, "message": "Portal activated successfully."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_request(request):
+    """Send a time-limited reset link without revealing account existence."""
+    email = (request.data.get("email") or "").strip().lower()
+    if email:
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user and user.email:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
+            if frontend_url:
+                portal = (
+                    "guard"
+                    if role_of(user) == UserProfile.Role.EMPLOYEE
+                    else "client"
+                    if role_of(user) == UserProfile.Role.CLIENT_ADMIN
+                    else "admin"
+                )
+                reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}&portal={portal}"
+                try:
+                    send_mail(
+                        "Reset your ROTA password",
+                        f"Hello {user.first_name or user.username},\n\nUse this secure link to reset your ROTA password:\n{reset_url}\n\nThis link expires after one use or when the token expires. If you did not request this, you can ignore this email.",
+                        settings.DEFAULT_FROM_EMAIL,
+                        [user.email],
+                        fail_silently=False,
+                    )
+                except Exception:
+                    return Response({"detail": "The reset email could not be sent. Please contact the office."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({"message": "If an active account exists for that email, a password reset link has been sent."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_confirm(request):
+    uidb64 = (request.data.get("uid") or "").strip()
+    token = (request.data.get("token") or "").strip()
+    password = request.data.get("password") or ""
+    confirmation = request.data.get("password_confirmation") or ""
+    if not uidb64 or not token:
+        return Response({"detail": "This password reset link is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        user_id = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=user_id, is_active=True)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+    if not user or not default_token_generator.check_token(user, token):
+        return Response({"detail": "This password reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+    if password != confirmation:
+        return Response({"detail": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        validate_password(password, user)
+    except Exception as error:
+        messages = getattr(error, "messages", [str(error)])
+        return Response({"detail": " ".join(messages)}, status=status.HTTP_400_BAD_REQUEST)
+    user.set_password(password)
+    user.save(update_fields=["password"])
+    Token.objects.filter(user=user).delete()
+    AuditLog.objects.create(user=user, action="PASSWORD", model_name="PasswordReset", object_id=str(user.id), summary="Password reset through secure email link")
+    return Response({"message": "Password reset successfully. You can now sign in."})
 
 
 @api_view(["GET"])

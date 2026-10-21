@@ -162,6 +162,7 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
   const [username, setUsername] = useState(showDemo ? "admin@rota.local" : "");
   const [password, setPassword] = useState(showDemo ? "Admin123!" : "");
   const [error, setError] = useState("");
+  const [forgot, setForgot] = useState(false);
   const submit = async (event) => {
     event.preventDefault();
     setError("");
@@ -174,7 +175,33 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
       onLogin(data.user);
     } catch (err) { setError(err.message); }
   };
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">Sign in</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
+  if (forgot) return <ForgotPasswordPage guardMode={guardMode} clientMode={clientMode} onBack={() => setForgot(false)} />;
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">Sign in</button><button type="button" className="text-button" onClick={() => setForgot(true)}>Forgot password?</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
+}
+
+function ForgotPasswordPage({ guardMode, clientMode, onBack }) {
+  const [email, setEmail] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault(); setSaving(true); setError(""); setNotice("");
+    try { const result = await api("/auth/password-reset/", { method: "POST", body: JSON.stringify({ email }) }); setNotice(result.message); } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>Reset password</h1><p className="muted">Enter the email address linked to your portal account. We will send a secure reset link if it is registered.</p><form onSubmit={submit}><label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Sending..." : "Send reset link"}</button><button type="button" className="text-button" onClick={onBack}>Back to sign in</button></form><p className="login-hint">Check your inbox and spam folder. The link can only be used once.</p></section></main>;
+}
+
+function PasswordResetPage({ uid, token, portal }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async (event) => {
+    event.preventDefault(); setSaving(true); setError(""); setNotice("");
+    try { const result = await api("/auth/password-reset-confirm/", { method: "POST", body: JSON.stringify({ uid, token, password, password_confirmation: confirmation }) }); setNotice(result.message); window.setTimeout(() => { window.location.href = portal === "guard" ? "/guard" : portal === "client" ? "/client" : "/"; }, 1200); } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>Choose new password</h1><p className="muted">Create a new password with at least 8 characters.</p><form onSubmit={submit}><label>New password<input required minLength="8" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>Confirm new password<input required minLength="8" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Updating..." : "Reset password"}</button></form></section></main>;
 }
 
 function ActivationPage({ token, onActivated }) {
@@ -1411,6 +1438,7 @@ function App() {
   const guardPath = window.location.pathname === "/guard" || window.location.pathname.startsWith("/guard/");
   const attendanceOnlyPath = window.location.pathname === "/guard-attendance" || window.location.pathname.startsWith("/guard-attendance/");
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
+  const resetPath = window.location.pathname === "/reset-password";
   useEffect(() => { const refreshActivePage = () => setDataVersion((version) => version + 1); window.addEventListener("rota:data-changed", refreshActivePage); return () => window.removeEventListener("rota:data-changed", refreshActivePage); }, []);
   useEffect(() => { if (localStorage.getItem("rota_token")) api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then(setUser).catch(() => localStorage.removeItem("rota_token")); }, []);
   useEffect(() => { if (user && !clientPath && (user.role !== "EMPLOYEE" && user.role_display !== "EMPLOYEE")) api("/dashboard/").then(setStats).catch(() => {}); }, [user, clientPath]);
@@ -1437,6 +1465,11 @@ function App() {
     return () => { window.clearInterval(timer); window.removeEventListener("rota:notifications-changed", loadNotifications); };
   }, [user, clientPath]);
   const activationToken = new URLSearchParams(window.location.search).get("activate");
+  const resetParams = new URLSearchParams(window.location.search);
+  const resetUid = resetParams.get("uid");
+  const resetToken = resetParams.get("token");
+  const resetPortal = resetParams.get("portal") || "admin";
+  if (resetPath) return <><ToastHost /><PasswordResetPage uid={resetUid || ""} token={resetToken || ""} portal={resetPortal} /></>;
   if (!user) return <><ToastHost />{activationToken ? <ActivationPage token={activationToken} onActivated={setUser} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} />}</>;
   const signOut = () => { localStorage.removeItem("rota_token"); setUser(null); };
   const role = user.role || user.role_display;

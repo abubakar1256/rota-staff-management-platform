@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, client_login, client_me, client_portal_summary, dashboard, guard_login, guard_me, login, me, report_print, reports_summary, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
+from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, client_login, client_me, client_portal_summary, dashboard, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, report_print, reports_summary, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
 
 
 router = DefaultRouter()
@@ -27,6 +27,8 @@ urlpatterns = [
     path("auth/guard-login/", guard_login, name="guard-login"),
     path("auth/client-login/", client_login, name="client-login"),
     path("auth/activate/", activate_portal, name="activate-portal"),
+    path("auth/password-reset/", password_reset_request, name="password-reset-request"),
+    path("auth/password-reset-confirm/", password_reset_confirm, name="password-reset-confirm"),
     path("auth/me/", me, name="me"),
     path("auth/guard-me/", guard_me, name="guard-me"),
     path("auth/client-me/", client_me, name="client-me"),
