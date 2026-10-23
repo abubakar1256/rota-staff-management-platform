@@ -34,26 +34,20 @@ Railway is configured from the dashboard using the commands above; the included 
 6. Configure persistent media storage before accepting real employee documents or attendance photos. On Railway, attach a Volume to the backend service at `/data` and set `DJANGO_MEDIA_ROOT=/data/media`. The application already reads this setting and serves uploaded files through authenticated media endpoints, so documents and attendance photos are not lost on redeploy and are not publicly exposed.
 7. Run `python backend/manage.py seed_demo` only for a non-production demo environment; never use the demo password in production.
 
-## Gmail SMTP and password reset
+## Brevo API and password reset
 
-The application now includes a secure **Forgot password?** flow for the admin and guard portals. It sends a one-time reset link through Gmail SMTP, expires the link after use/expiry, and invalidates existing login tokens after the password is changed.
-
-Use a Google App Password; do not use the normal Gmail account password. The Google account must have 2-Step Verification enabled, then create an App Password from [Google App Passwords](https://myaccount.google.com/apppasswords).
+The application includes a secure **Forgot password?** flow for the admin and guard portals. When `BREVO_API_KEY` is configured, it sends the one-time reset link through Brevo's HTTPS transactional-email API, expires the link after use/expiry, and invalidates existing login tokens after the password is changed. Without that key, local development can still use the configured Django email backend.
 
 Add these variables to the **backend service** in Railway:
 
 ```text
-EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USE_TLS=1
-EMAIL_HOST_USER=your Gmail address
-EMAIL_HOST_PASSWORD=your 16-character Google App Password
-DEFAULT_FROM_EMAIL=ROTA Operations <your Gmail address>
+BREVO_API_KEY=your-new-restricted-brevo-api-key
+BREVO_FROM_EMAIL=Diligent <your-verified-sender-email>
+DEFAULT_FROM_EMAIL=Diligent <your-verified-sender-email>
 FRONTEND_URL=https://your-frontend-domain.example.com
 ```
 
-Keep `EMAIL_HOST_PASSWORD` private and add it only in Railway Variables. Do not commit it to GitHub. After saving the variables, redeploy the backend and test from `/` and `/guard` using **Forgot password?**. The reset link will open `/reset-password` and return the user to the correct portal after success.
+Keep `BREVO_API_KEY` private and add it only in Railway Variables. Do not commit it to GitHub or send it in chat. After saving the variables, redeploy the backend and test from `/` and `/guard` using **Forgot password?**. The reset link will open `/reset-password` and return the user to the correct portal after success.
 
 ## Local production checks
 

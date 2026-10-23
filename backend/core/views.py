@@ -1,6 +1,8 @@
 from datetime import date, datetime, timedelta
 import csv
+from email.utils import parseaddr
 import hashlib
+import json
 import mimetypes
 from math import asin, cos, radians, sin, sqrt
 import logging
@@ -8,6 +10,8 @@ import os
 import re
 from io import BytesIO
 from secrets import token_urlsafe
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -51,6 +55,56 @@ def haversine_distance_m(latitude_a, longitude_a, latitude_b, longitude_b):
     lon_delta = radians(longitude_b - longitude_a)
     a = sin(lat_delta / 2) ** 2 + cos(radians(latitude_a)) * cos(radians(latitude_b)) * sin(lon_delta / 2) ** 2
     return earth_radius_m * 2 * asin(sqrt(a))
+
+
+def send_transactional_email(subject, message, recipient):
+    """Send transactional email through Brevo API, with SMTP fallback.
+
+    Railway's outbound SMTP connection can be unavailable on some plans. The
+    Brevo HTTPS API uses normal HTTPS egress and keeps the provider secret out
+    of the request payload and source code.
+    """
+    if settings.BREVO_API_KEY:
+        sender_name, sender_email = parseaddr(settings.BREVO_FROM_EMAIL)
+        if not sender_email:
+            raise RuntimeError("BREVO_FROM_EMAIL must contain a valid verified sender email")
+        payload = {
+            "sender": {
+                "name": sender_name or "ROTA Operations",
+                "email": sender_email,
+            },
+            "to": [{"email": recipient}],
+            "subject": subject,
+            "textContent": message,
+        }
+        request = Request(
+            settings.BREVO_API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "accept": "application/json",
+                "api-key": settings.BREVO_API_KEY,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=settings.BREVO_API_TIMEOUT) as response:
+                if response.status >= 300:
+                    raise RuntimeError(f"Brevo API returned HTTP {response.status}")
+            return
+        except HTTPError as error:
+            error_body = error.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"Brevo API returned HTTP {error.code}: {error_body}") from error
+        except URLError as error:
+            raise RuntimeError(f"Brevo API connection failed: {error.reason}") from error
+
+    send_mail(
+        subject,
+        message,
+        settings.DEFAULT_FROM_EMAIL,
+        [recipient],
+        fail_silently=False,
+    )
 
 
 def arrival_snapshot(operation):
@@ -428,12 +482,10 @@ def password_reset_request(request):
                 )
                 reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}&portal={portal}"
                 try:
-                    send_mail(
+                    send_transactional_email(
                         "Reset your ROTA password",
                         f"Hello {user.first_name or user.username},\n\nUse this secure link to reset your ROTA password:\n{reset_url}\n\nThis link expires after one use or when the token expires. If you did not request this, you can ignore this email.",
-                        settings.DEFAULT_FROM_EMAIL,
-                        [user.email],
-                        fail_silently=False,
+                        user.email,
                     )
                 except Exception:
                     logger.exception("Password reset email delivery failed for user %s", user.pk)

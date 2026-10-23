@@ -101,9 +101,12 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(os.getenv("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Transactional email (Brevo SMTP in production). Keep the SMTP key in
-# Railway secrets, never in source control. The generic EMAIL_* names also
-# allow another SMTP provider to be selected without a code change.
+# Transactional email. Keep all provider credentials in Railway secrets, never
+# in source control. Brevo's HTTPS API is preferred when BREVO_API_KEY is set;
+# the generic EMAIL_* settings remain available as a local/SMTP fallback.
+BREVO_API_KEY = "".join(os.getenv("BREVO_API_KEY", "").split())
+BREVO_API_URL = os.getenv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email").strip()
+BREVO_API_TIMEOUT = int(os.getenv("BREVO_API_TIMEOUT", "20"))
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
     "django.core.mail.backends.smtp.EmailBackend" if os.getenv("EMAIL_HOST_USER") else "django.core.mail.backends.console.EmailBackend",
@@ -117,6 +120,7 @@ EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
 EMAIL_HOST_PASSWORD = "".join(os.getenv("EMAIL_HOST_PASSWORD", "").split())
 EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "20"))
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "ROTA Operations <no-reply@localhost>")
+BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", DEFAULT_FROM_EMAIL).strip()
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
