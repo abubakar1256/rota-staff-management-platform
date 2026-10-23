@@ -110,6 +110,7 @@ EMAIL_BACKEND = os.getenv(
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "1") == "1"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "1" if EMAIL_PORT == 465 else "0") == "1"
 # Gmail displays App Passwords in groups of four characters. Ignore accidental
 # spaces/newlines when the value is pasted into Railway.
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "").strip()
