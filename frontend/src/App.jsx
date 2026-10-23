@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Clock3, Copy, Download, ExternalLink, FileText, History, LayoutDashboard, LogOut, Menu, Pencil, Search, ShieldCheck, Trash2, Upload, Users, UserPlus, X } from "lucide-react";
-import { invalidateForPath, queryClient } from "./queryClient";
+import { invalidateForPath } from "./queryClient";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const PORTAL_ORIGIN = import.meta.env.VITE_PORTAL_ORIGIN || ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") ? "http://192.168.1.8:5175" : window.location.origin);
-const LIVE_REFRESH_INTERVAL_MS = 30_000;
-
 function canRefreshLiveData() {
   if (document.visibilityState !== "visible") return false;
   if (document.querySelector(".modal-backdrop")) return false;
@@ -1594,7 +1592,6 @@ function App() {
   const attendanceOnlyPath = window.location.pathname === "/guard-attendance" || window.location.pathname.startsWith("/guard-attendance/");
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
   const resetPath = window.location.pathname === "/reset-password";
-  useEffect(() => { const refreshActivePage = () => setDataVersion((version) => version + 1); window.addEventListener("rota:data-changed", refreshActivePage); return () => window.removeEventListener("rota:data-changed", refreshActivePage); }, []);
   useEffect(() => {
     const token = localStorage.getItem("rota_token");
     if (!token) { setAuthLoading(false); return undefined; }
@@ -1607,18 +1604,6 @@ function App() {
     loadDashboard();
     window.addEventListener("rota:live-refresh", loadDashboard);
     return () => window.removeEventListener("rota:live-refresh", loadDashboard);
-  }, [user, clientPath]);
-  useEffect(() => {
-    if (!user) return undefined;
-    const refreshLiveData = () => {
-      if (!canRefreshLiveData()) return;
-      queryClient.refetchQueries({ type: "active" });
-      window.dispatchEvent(new Event("rota:live-refresh"));
-      if (!clientPath) setDataVersion((version) => version + 1);
-    };
-    const timer = window.setInterval(refreshLiveData, LIVE_REFRESH_INTERVAL_MS);
-    window.addEventListener("focus", refreshLiveData);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refreshLiveData); };
   }, [user, clientPath]);
   useEffect(() => { if (user) setPage((user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") ? "profile" : "dashboard"); }, [user]);
   useEffect(() => {
