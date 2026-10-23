@@ -72,7 +72,8 @@ function ToastHost() {
     window.addEventListener("rota:toast", receive);
     return () => window.removeEventListener("rota:toast", receive);
   }, []);
-  return <><GlobalRequestLoader /><div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div></>;
+  const guardPath = window.location.pathname === "/guard" || window.location.pathname.startsWith("/guard/");
+  return <><GlobalRequestLoader />{guardPath && <GuardNotificationBell />}<div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div></>;
 }
 
 function GlobalRequestLoader() {
@@ -99,6 +100,69 @@ function GlobalRequestLoader() {
     return () => { window.clearTimeout(showTimer); window.removeEventListener("rota:request-start", start); window.removeEventListener("rota:request-end", end); };
   }, []);
   return visible && active > 0 ? <div className="global-request-loader" role="status" aria-live="polite"><span className="global-request-spinner" /><strong>RotaOps</strong><span>Updating live data…</span></div> : null;
+}
+
+function GuardNotificationBell() {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const data = await api("/notifications/", { silentLoading: true });
+      setItems(data.slice(0, 6));
+      setUnreadCount(data.filter((item) => !item.is_read).length);
+    } catch {
+      // The shared API helper already shows the error toast when needed.
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const refresh = () => load();
+    const timer = window.setInterval(load, 30000);
+    window.addEventListener("rota:notifications-changed", refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener("rota:notifications-changed", refresh); };
+  }, []);
+
+  useEffect(() => {
+    if (open) load();
+  }, [open]);
+
+  const markRead = async (id, event) => {
+    event.stopPropagation();
+    try {
+      await api(`/notifications/${id}/mark_read/`, { method: "POST", body: "{}", silentToast: true, silentLoading: true });
+      setItems((current) => current.map((item) => item.id === id ? { ...item, is_read: true } : item));
+      setUnreadCount((current) => Math.max(0, current - 1));
+      window.dispatchEvent(new Event("rota:notifications-changed"));
+    } catch {
+      // Error toast is handled by api().
+    }
+  };
+
+  return <div className="guard-notification-widget">
+    <button type="button" className={`guard-notification-trigger${unreadCount ? " has-unread" : ""}`} aria-label="Open notifications" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <Bell size={18} />
+      <span>Notifications</span>
+      {unreadCount > 0 && <b className="guard-notification-badge">{unreadCount > 99 ? "99+" : unreadCount}</b>}
+    </button>
+    {open && <div className="guard-notification-menu" role="dialog" aria-label="Recent notifications">
+      <div className="guard-notification-menu-header"><div><strong>Notifications</strong><span>{unreadCount ? `${unreadCount} unread update${unreadCount === 1 ? "" : "s"}` : "All caught up"}</span></div><button type="button" className="icon-button" aria-label="Close notifications" onClick={() => setOpen(false)}><X size={16} /></button></div>
+      <div className="guard-notification-list">
+        {loading ? <RotaLoader compact label="Checking updates…" /> : items.length === 0 ? <div className="guard-notification-empty"><Bell size={22} /><span>No notifications yet.</span></div> : items.map((item) => <div className={`guard-notification-item${item.is_read ? "" : " unread"}`} key={item.id}>
+          <span className={`guard-notification-kind ${(item.notification_type || "info").toLowerCase()}`} aria-hidden="true"><Bell size={14} /></span>
+          <div><strong>{item.title}</strong><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString()}</small></div>
+          {!item.is_read && <button type="button" className="guard-notification-mark" onClick={(event) => markRead(item.id, event)}>Mark read</button>}
+        </div>)}
+      </div>
+      <button type="button" className="guard-notification-all" onClick={() => { setOpen(false); window.dispatchEvent(new Event("rota:notifications-open")); }}>View all notifications <ChevronRight size={15} /></button>
+    </div>}
+  </div>;
 }
 
 async function downloadFile(path, filename) {
@@ -1151,6 +1215,7 @@ function GuardPortal({ user, onSignOut, unreadNotifications }) {
   const [complianceEnabled, setComplianceEnabled] = useState(Boolean(user.compliance_registration_enabled));
   useEffect(() => { let active = true; api("/employees/me/").then((profile) => { if (active) setComplianceEnabled(Boolean(profile.compliance_registration_enabled)); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { const refreshablePages = new Set(["home", "rota", "notifications"]); const refresh = () => { if (refreshablePages.has(page) && canRefreshLiveData()) setLiveRefresh((value) => value + 1); }; window.addEventListener("rota:live-refresh", refresh); return () => window.removeEventListener("rota:live-refresh", refresh); }, [page]);
+  useEffect(() => { const openNotifications = () => setPage("notifications"); window.addEventListener("rota:notifications-open", openNotifications); return () => window.removeEventListener("rota:notifications-open", openNotifications); }, []);
   const items = [{ id: "home", label: "Home", icon: LayoutDashboard }, { id: "rota", label: "My rota", icon: CalendarDays }, { id: "attendance", label: "Book on / off", icon: CheckCircle2 }, { id: "leave", label: "Leave & replacement", icon: CalendarDays }, ...(complianceEnabled ? [{ id: "external-compliance", label: "Compliance registration", icon: ExternalLink, section: "Compliance", external: true, href: COMPLIANCE_REGISTRATION_URL }] : []), { id: "diligent-registration", label: "Diligent Registration", icon: ShieldCheck, section: "Compliance" }, { id: "profile", label: "My profile", icon: Users, section: "Account" }, { id: "password", label: "Change password", icon: ShieldCheck, section: "Account" }, { id: "documents", label: "Documents", icon: FileText, section: "Account" }, { id: "notifications", label: "Notifications", icon: Bell }];
   const content = page === "home" ? <GuardHomePage onNavigate={setPage} /> : page === "rota" ? <GuardRotaPage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "leave" ? <GuardLeavePage /> : page === "diligent-registration" ? <ComplianceRegistrationPage /> : page === "profile" ? <EmployeeProfilePage section="profile" /> : page === "password" ? <EmployeeProfilePage section="password" /> : page === "documents" ? <EmployeeProfilePage section="documents" /> : <NotificationsPage />;
   return <><ToastHost /><div className="app-shell guard-portal-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{items.map((item, index) => { const Icon = item.icon; const showSection = item.section && (index === 0 || items[index - 1].section !== item.section); const navClass = page === item.id ? "nav-item active" : "nav-item"; return <div className="guard-nav-entry" key={item.id}>{showSection && <span className="sidebar-section-label">{item.section}</span>}{item.external ? <a className={navClass} href={item.href} target="_blank" rel="noreferrer" onClick={() => setMobileNav(false)}><Icon size={18} /><span>{item.label}</span><ExternalLink className="nav-external-icon" size={13} /></a> : <button className={navClass} onClick={() => { setPage(item.id); setMobileNav(false); }}><Icon size={18} /><span>{item.label}</span>{item.id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}</button>}</div>; })}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{(user.first_name || user.username || "G").slice(0, 1).toUpperCase()}</div><div><strong>{user.first_name || user.username}</strong><span>Guard</span></div></div><button className="logout-button" onClick={onSignOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Guard portal <span>/</span> <strong>{items.find((item) => item.id === page)?.label}</strong></div><div className="topbar-right"><span className="online-dot" /> Secure portal</div></header><div className="page-content" key={liveRefresh}>{content}</div></main></div></>;
