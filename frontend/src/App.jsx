@@ -33,7 +33,8 @@ async function api(path, options = {}) {
   const token = localStorage.getItem("rota_token");
   const headers = { ...(token ? { Authorization: `Token ${token}` } : {}), ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
-  window.dispatchEvent(new Event("rota:request-start"));
+  const showRequestLoader = !options.silentLoading;
+  if (showRequestLoader) window.dispatchEvent(new Event("rota:request-start"));
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...options,
@@ -56,7 +57,7 @@ async function api(path, options = {}) {
     if (method !== "GET" && !options.skipInvalidation) invalidateForPath(path);
     return result;
   } finally {
-    window.dispatchEvent(new Event("rota:request-end"));
+    if (showRequestLoader) window.dispatchEvent(new Event("rota:request-end"));
   }
 }
 
@@ -1582,7 +1583,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(() => Boolean(localStorage.getItem("rota_token")));
   const [page, setPage] = useState("dashboard");
-  const [dataVersion, setDataVersion] = useState(0);
+  const dataVersion = 0;
   const [mobileNav, setMobileNav] = useState(false);
   const [stats, setStats] = useState({ active_employees: 0, active_sites: 0, employees_on_leave: 0, unfilled_shifts: 0, documents_expiring_soon: 0 });
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -1612,14 +1613,14 @@ function App() {
     notificationPrimedRef.current = false;
     const loadNotifications = async () => {
       try {
-        const items = await api("/notifications/");
+        const items = await api("/notifications/", { silentLoading: true });
         const unread = items.filter((item) => !item.is_read);
         if (notificationPrimedRef.current) {
           unread.filter((item) => !notificationIdsRef.current.has(item.id)).forEach((item) => notifyToast(`${item.title}: ${item.message}`, item.notification_type?.toLowerCase() || "info"));
         }
         notificationIdsRef.current = new Set(items.map((item) => item.id));
         notificationPrimedRef.current = true;
-        setUnreadNotifications(unread.length);
+        setUnreadNotifications((current) => current === unread.length ? current : unread.length);
       } catch { /* api already displays the error toast */ }
     };
     loadNotifications();
