@@ -641,3 +641,11 @@ textarea, select, input { max-width: 100%; }
 .global-request-spinner { width: 12px; height: 12px; border: 2px solid #dce5fb; border-top-color: #4e74e8; border-right-color: #25b99a; border-radius: 50%; animation: rota-loader-spin .8s linear infinite; }
 .loading-strip { display: flex; align-items: center; gap: 7px; color: #8390a5; font-size: 11px; margin-top: 10px; }
 .loading-strip::before { content: ""; width: 12px; height: 12px; flex: 0 0 12px; border: 2px solid #e1e8fb; border-top-color: #4e74e8; border-right-color: #25b99a; border-radius: 50%; animation: rota-loader-spin .8s linear infinite; }
+
+/* Live RotaOps system status */
+.topbar-right { position: relative; gap: 9px; color: #6f7f98; font-weight: 600; letter-spacing: .01em; }
+.online-dot { position: relative; display: inline-block; width: 9px; height: 9px; flex: 0 0 9px; background: #24b98a; border: 2px solid #e2f8f0; border-radius: 50%; box-shadow: 0 0 0 1px #bfeedd; }
+.online-dot::before, .online-dot::after { content: ""; position: absolute; inset: -5px; border: 1px solid #55cfa7; border-radius: 50%; opacity: 0; animation: rota-status-ping 2.4s ease-out infinite; }
+.online-dot::after { animation-delay: 1.2s; }
+@keyframes rota-status-ping { 0% { transform: scale(.45); opacity: .65; } 70%, 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .online-dot::before, .online-dot::after { animation: none; } }
