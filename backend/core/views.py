@@ -3,6 +3,7 @@ import csv
 import hashlib
 import mimetypes
 from math import asin, cos, radians, sin, sqrt
+import logging
 import os
 import re
 from io import BytesIO
@@ -28,6 +29,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -433,6 +436,7 @@ def password_reset_request(request):
                         fail_silently=False,
                     )
                 except Exception:
+                    logger.exception("Password reset email delivery failed for user %s", user.pk)
                     return Response({"detail": "The reset email could not be sent. Please contact the office."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     return Response({"message": "If an active account exists for that email, a password reset link has been sent."})
 
