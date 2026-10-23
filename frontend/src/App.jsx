@@ -18,30 +18,48 @@ function notifyToast(message, type = "success") {
   window.dispatchEvent(new CustomEvent("rota:toast", { detail: { message, type } }));
 }
 
+function RotaLoader({ label = "Loading your operations…", compact = false, overlay = false }) {
+  return <div className={`rota-loader${compact ? " compact" : ""}${overlay ? " overlay" : ""}`} role="status" aria-live="polite" aria-label={label}>
+    <div className="rota-loader-mark" aria-hidden="true">
+      <div className="rota-loader-ring" />
+      <div className="rota-loader-shield"><ShieldCheck size={compact ? 16 : 22} strokeWidth={2.2} /></div>
+      <span className="rota-loader-dot dot-one" />
+      <span className="rota-loader-dot dot-two" />
+      <span className="rota-loader-dot dot-three" />
+    </div>
+    <div className="rota-loader-copy"><strong>RotaOps</strong><span>{label}</span></div>
+  </div>;
+}
+
 async function api(path, options = {}) {
   const token = localStorage.getItem("rota_token");
   const headers = { ...(token ? { Authorization: `Token ${token}` } : {}), ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    const fieldErrors = Object.entries(payload).filter(([key]) => key !== "detail" && key !== "errors").map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
-    const bulkErrors = Array.isArray(payload.errors) ? payload.errors.map((item) => `${item.employee}: ${Object.values(item.errors || {}).flat().join(", ")}`).join(" | ") : "";
-    const message = payload.detail || bulkErrors || fieldErrors.join(" | ") || "Request failed";
-    notifyToast(message, "error");
-    throw new Error(message);
+  window.dispatchEvent(new Event("rota:request-start"));
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const fieldErrors = Object.entries(payload).filter(([key]) => key !== "detail" && key !== "errors").map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
+      const bulkErrors = Array.isArray(payload.errors) ? payload.errors.map((item) => `${item.employee}: ${Object.values(item.errors || {}).flat().join(", ")}`).join(" | ") : "";
+      const message = payload.detail || bulkErrors || fieldErrors.join(" | ") || "Request failed";
+      notifyToast(message, "error");
+      throw new Error(message);
+    }
+    const responseText = await response.text();
+    const result = responseText ? JSON.parse(responseText) : {};
+    const method = (options.method || "GET").toUpperCase();
+    if (method !== "GET" && !options.silentToast) {
+      notifyToast(method === "DELETE" ? "Deleted successfully." : method === "PATCH" ? "Changes saved successfully." : "Saved successfully.");
+    }
+    if (method !== "GET" && !options.skipInvalidation) invalidateForPath(path);
+    return result;
+  } finally {
+    window.dispatchEvent(new Event("rota:request-end"));
   }
-  const responseText = await response.text();
-  const result = responseText ? JSON.parse(responseText) : {};
-  const method = (options.method || "GET").toUpperCase();
-  if (method !== "GET" && !options.silentToast) {
-    notifyToast(method === "DELETE" ? "Deleted successfully." : method === "PATCH" ? "Changes saved successfully." : "Saved successfully.");
-  }
-  if (method !== "GET" && !options.skipInvalidation) invalidateForPath(path);
-  return result;
 }
 
 function ToastHost() {
@@ -55,7 +73,33 @@ function ToastHost() {
     window.addEventListener("rota:toast", receive);
     return () => window.removeEventListener("rota:toast", receive);
   }, []);
-  return <div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div>;
+  return <><GlobalRequestLoader /><div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div></>;
+}
+
+function GlobalRequestLoader() {
+  const [active, setActive] = useState(0);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    let showTimer;
+    const start = () => {
+      setActive((count) => {
+        const next = count + 1;
+        if (next === 1) showTimer = window.setTimeout(() => setVisible(true), 180);
+        return next;
+      });
+    };
+    const end = () => {
+      setActive((count) => {
+        const next = Math.max(0, count - 1);
+        if (next === 0) { window.clearTimeout(showTimer); setVisible(false); }
+        return next;
+      });
+    };
+    window.addEventListener("rota:request-start", start);
+    window.addEventListener("rota:request-end", end);
+    return () => { window.clearTimeout(showTimer); window.removeEventListener("rota:request-start", start); window.removeEventListener("rota:request-end", end); };
+  }, []);
+  return visible && active > 0 ? <div className="global-request-loader" role="status" aria-live="polite"><span className="global-request-spinner" /><strong>RotaOps</strong><span>Updating live data…</span></div> : null;
 }
 
 async function downloadFile(path, filename) {
@@ -135,7 +179,7 @@ function ProtectedFilePreview({ value, label = "File", buttonLabel = "View" }) {
   const [open, setOpen] = useState(false);
   const preview = useProtectedPreviewUrl(value, open);
   if (!value) return null;
-  return <><button type="button" className="file-link-button" onClick={() => setOpen(true)}><FileText size={13} /> {buttonLabel}</button>{open && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}><section className="modal-card protected-file-preview-modal"><div className="modal-header"><div><p className="eyebrow">SECURE FILE PREVIEW</p><h3>{label}</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div>{preview.loading && <div className="empty-state compact-empty">Loading file...</div>}{preview.error && <div className="empty-state compact-empty"><strong>File could not be loaded</strong><span>{preview.error}</span></div>}{preview.url && <iframe className="protected-file-preview-frame" title={`${label} preview`} src={preview.url} />}{preview.url && <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => openProtectedFile(value, label).catch(() => {})}>Open in new tab</button><button type="button" className="primary-button" onClick={() => setOpen(false)}>Close</button></div>}</section></div>}</>;
+  return <><button type="button" className="file-link-button" onClick={() => setOpen(true)}><FileText size={13} /> {buttonLabel}</button>{open && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setOpen(false)}><section className="modal-card protected-file-preview-modal"><div className="modal-header"><div><p className="eyebrow">SECURE FILE PREVIEW</p><h3>{label}</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div>{preview.loading && <div className="empty-state compact-empty"><RotaLoader label="Opening secure file…" compact /></div>}{preview.error && <div className="empty-state compact-empty"><strong>File could not be loaded</strong><span>{preview.error}</span></div>}{preview.url && <iframe className="protected-file-preview-frame" title={`${label} preview`} src={preview.url} />}{preview.url && <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => openProtectedFile(value, label).catch(() => {})}>Open in new tab</button><button type="button" className="primary-button" onClick={() => setOpen(false)}>Close</button></div>}</section></div>}</>;
 }
 
 const navItems = [
@@ -981,7 +1025,7 @@ function GuardHomePage({ onNavigate }) {
   const load = async () => { setLoading(true); setError(""); try { const [profileData, todayOperations, inbox] = await Promise.all([api("/employees/me/"), api(`/operations/?operation_date=${todayIso()}`), api("/notifications/")]); setProfile(profileData); setOperations(todayOperations); setNotifications(inbox); } catch (err) { setError(err.message); } finally { setLoading(false); } };
   useEffect(() => { load(); }, []);
   const assigned = operations.filter((item) => item.employee); const onDuty = assigned.filter((item) => item.attendance_status === "ON_DUTY"); const bookedOff = assigned.filter((item) => item.attendance_status === "BOOKED_OFF");
-  if (loading) return <div className="empty-view"><h2>Loading your portal...</h2></div>;
+  if (loading) return <div className="empty-view"><RotaLoader label="Loading your portal…" /></div>;
   return <><div className="page-heading guard-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2>Welcome, {profile?.name?.split(" ")[0] || "Guard"}</h2><p className="muted">Your shifts, attendance and compliance tasks in one place.</p></div><span className="profile-progress-badge">{profile?.profile_completion || 0}% profile</span></div>{error && <p className="error page-error">{error}</p>}<section className="guard-hero panel"><div><span className="eyebrow">TODAY · {todayIso()}</span><h3>{assigned.length ? `${assigned.length} shift${assigned.length === 1 ? "" : "s"} assigned today` : "No shift assigned today"}</h3><p>{assigned.length ? "Open My attendance to book on at your assigned site." : "Check My rota for your next published shift."}</p></div><div className="guard-hero-actions"><button className="primary-button" onClick={() => onNavigate("attendance")}>Book On / Attendance</button><button className="secondary-button" onClick={() => onNavigate("rota")}>View my rota</button></div></section><section className="stats-grid guard-stats"><StatCard label="Today’s shifts" value={assigned.length} detail="Assigned to you" icon={CalendarDays} tone="blue" /><StatCard label="On duty" value={onDuty.length} detail="Book On received" icon={CheckCircle2} tone="teal" /><StatCard label="Booked off" value={bookedOff.length} detail="Shift completed" icon={Clock3} tone="amber" /><StatCard label="Unread alerts" value={notifications.filter((item) => !item.is_read).length} detail="Review notifications" icon={Bell} tone="rose" /></section><section className="guard-home-grid"><article className="panel"><div className="panel-header"><div><h3>Today’s assignments</h3><p className="muted">Your site and shift details.</p></div><button className="mini-button" onClick={() => onNavigate("attendance")}>Open attendance</button></div>{assigned.length ? <div className="guard-assignment-list">{assigned.map((item) => <div className="guard-assignment-row" key={item.id}><div><strong>{item.site_name}</strong><span>{item.shift_name} · {String(item.scheduled_start || "").slice(0, 5)}–{String(item.scheduled_end || "").slice(0, 5)}</span></div><span className={`status-pill ${item.attendance_status === "BOOKED_OFF" ? "active" : item.attendance_status === "ON_DUTY" ? "present" : "pending"}`}>{item.attendance_status.replaceAll("_", " ")}</span></div>)}</div> : <div className="empty-state compact-empty"><CalendarDays size={25} /><strong>No shift for today</strong><span>Your next published assignments are in My rota.</span></div>}</article><article className="panel guard-quick-panel"><div className="panel-header"><div><h3>Quick actions</h3><p className="muted">Keep your account ready for work.</p></div></div><button className="guard-quick-action" onClick={() => onNavigate("profile")}><FileText size={17} /><span><strong>Complete profile & documents</strong><small>{profile?.profile_completion || 0}% personal details completed</small></span><ChevronRight size={16} /></button><button className="guard-quick-action" onClick={() => onNavigate("notifications")}><Bell size={17} /><span><strong>Check notifications</strong><small>{notifications.filter((item) => !item.is_read).length} unread updates</small></span><ChevronRight size={16} /></button></article></section></>;
 }
 
@@ -1340,7 +1384,7 @@ function ProfilePhotoCard() {
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
   const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
-  if (loading) return <section className="panel profile-photo-panel"><span className="muted">Loading profile picture...</span></section>;
+  if (loading) return <section className="panel profile-photo-panel"><RotaLoader label="Loading profile picture…" compact /></section>;
   return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Profile picture</h3><p className="muted">Add a clear picture so the office can recognise you quickly.</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose profile picture"}<input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
 }
 
@@ -1411,7 +1455,7 @@ function EmployeeProfileContent({ section = "profile" }) {
       setError(err.message);
     } finally { setDocumentSaving(""); }
   };
-  if (loading) return <div className="empty-view"><h2>Loading profile...</h2></div>;
+  if (loading) return <div className="empty-view"><RotaLoader label="Loading your profile…" /></div>;
   const completedRequiredDocuments = employeeDocumentChecklist.filter((item) => item.required && displayDocument(item)).length;
   const documentsCompletion = { completed: completedRequiredDocuments, required: employeeDocumentChecklist.filter((item) => item.required).length, percentage: Math.round(completedRequiredDocuments / employeeDocumentChecklist.filter((item) => item.required).length * 100) };
   const sectionTitle = section === "password" ? "Change password" : section === "documents" ? "Documents" : "My profile";
@@ -1468,7 +1512,7 @@ function EmployeeProfileContentV2({ section = "profile" }) {
     try { for (const item of employeeDocumentChecklist) await saveDocument(item, true); setNotice("All document updates saved successfully."); }
     catch (err) { setError(err.message); } finally { setSavingDocuments(false); }
   };
-  if (loading) return <div className="empty-view"><h2>Loading profile...</h2></div>;
+  if (loading) return <div className="empty-view"><RotaLoader label="Loading your profile…" /></div>;
   const completed = employeeDocumentChecklist.filter((item) => item.required && displayDocument(item)).length;
   const required = employeeDocumentChecklist.filter((item) => item.required).length;
   const sectionTitle = section === "password" ? "Change password" : section === "documents" ? "Documents" : "My profile";
@@ -1497,7 +1541,7 @@ function LegacyGuardProfileContent() {
   const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   useEffect(() => { api("/employees/me/").then((data) => { setProfile(data); setForm({ name: data.name || "", date_of_birth: data.date_of_birth || "", nationality: data.nationality || "", phone: data.phone || "", email: data.email || "", address: data.address || "", emergency_contact_name: data.emergency_contact_name || "", emergency_contact_phone: data.emergency_contact_phone || "", emergency_contact_relationship: data.emergency_contact_relationship || "", joining_date: data.joining_date || "" }); }).catch((err) => setError(err.message)).finally(() => setLoading(false)); }, []);
   const save = async (event) => { event.preventDefault(); setSaving(true); setError(""); setNotice(""); try { const data = await api("/employees/me/", { method: "PATCH", body: JSON.stringify(form) }); setProfile(data); setNotice("Profile updated successfully."); } catch (err) { setError(err.message); } finally { setSaving(false); } };
-  if (loading) return <div className="empty-view"><h2>Loading profile...</h2></div>;
+  if (loading) return <div className="empty-view"><RotaLoader label="Loading your profile…" /></div>;
   return <><div className="page-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2>My profile</h2><p className="muted">Update your personal and emergency details. Position is managed by the office.</p></div><span className="profile-progress-badge">{profile?.profile_completion || 0}% details</span></div>{error && <p className="error page-error">{error}</p>}{notice && <p className="success page-success">{notice}</p>}<section className="profile-layout"><article className="panel profile-card"><div className="profile-card-header"><div className="profile-avatar">{profile?.profile_photo_url ? <ProtectedImage src={profile.profile_photo_url} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div><h3>{profile?.name}</h3><p className="muted">{profile?.employee_id} · {profile?.position || "Guard"}</p></div></div><div className="profile-progress"><div><strong>Personal details</strong><span>{profile?.profile_completion || 0}%</span></div><div className="progress-track"><span style={{ width: `${profile?.profile_completion || 0}%` }} /></div><small>Keep your contact and emergency details current.</small></div></article><form className="panel profile-form" onSubmit={save}><div className="panel-header"><div><h3>Personal details</h3><p className="muted">Position can only be changed by an authorised office user.</p></div></div><div className="form-grid"><label>Employee ID<input value={profile?.employee_id || ""} disabled /></label><label>Full name (first name + surname)<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Position<input value={profile?.position || "Guard"} disabled /></label><label>Date of birth<input type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} /></label><label>Nationality<input value={form.nationality} onChange={(e) => setForm({ ...form, nationality: e.target.value })} placeholder="Pakistan" /></label><label>Phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+92..." /></label><label>Email address<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Joining date<input type="date" value={form.joining_date} onChange={(e) => setForm({ ...form, joining_date: e.target.value })} /></label><label className="full-width">Address<textarea rows="3" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label><label>Emergency contact name<input value={form.emergency_contact_name} onChange={(e) => setForm({ ...form, emergency_contact_name: e.target.value })} /></label><label>Emergency contact phone<input value={form.emergency_contact_phone} onChange={(e) => setForm({ ...form, emergency_contact_phone: e.target.value })} /></label><label>Relationship<input value={form.emergency_contact_relationship} onChange={(e) => setForm({ ...form, emergency_contact_relationship: e.target.value })} placeholder="Parent, spouse, sibling..." /></label></div><div className="modal-actions"><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save profile"}</button></div></form></section></>;
 }
 
@@ -1505,7 +1549,7 @@ function GuardProfileContent() {
   const [profile, setProfile] = useState(null); const [form, setForm] = useState({ name: "", date_of_birth: "", nationality: "", phone: "", email: "", address: "", emergency_contact_name: "", emergency_contact_phone: "", emergency_contact_relationship: "" }); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   useEffect(() => { api("/employees/me/").then((data) => { setProfile(data); setForm({ name: data.name || "", date_of_birth: data.date_of_birth || "", nationality: data.nationality || "", phone: data.phone || "", email: data.email || "", address: data.address || "", emergency_contact_name: data.emergency_contact_name || "", emergency_contact_phone: data.emergency_contact_phone || "", emergency_contact_relationship: data.emergency_contact_relationship || "" }); }).catch((err) => setError(err.message)).finally(() => setLoading(false)); }, []);
   const save = async (event) => { event.preventDefault(); setSaving(true); setError(""); setNotice(""); try { const data = await api("/employees/me/", { method: "PATCH", body: JSON.stringify(form) }); setProfile(data); setNotice("Profile updated successfully."); } catch (err) { setError(err.message); } finally { setSaving(false); } };
-  if (loading) return <div className="empty-view"><h2>Loading profile...</h2></div>;
+  if (loading) return <div className="empty-view"><RotaLoader label="Loading your profile…" /></div>;
   return <><div className="page-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2>My profile</h2><p className="muted">Update your personal and emergency details. Position and joining date are managed by the office.</p></div><span className="profile-progress-badge">{profile?.profile_completion || 0}% details</span></div>{error && <p className="error page-error">{error}</p>}{notice && <p className="success page-success">{notice}</p>}<section className="profile-layout"><article className="panel profile-card"><div className="profile-card-header"><div className="profile-avatar">{profile?.profile_photo_url ? <ProtectedImage src={profile.profile_photo_url} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div><h3>{profile?.name}</h3><p className="muted">{profile?.employee_id} · {profile?.position || "Guard"}</p></div></div><div className="profile-progress"><div><strong>Personal details</strong><span>{profile?.profile_completion || 0}%</span></div><div className="progress-track"><span style={{ width: `${profile?.profile_completion || 0}%` }} /></div><small>Keep your contact and emergency details current.</small></div></article><form className="panel profile-form" onSubmit={save}><div className="panel-header"><div><h3>Personal details</h3><p className="muted">Position and joining date can only be changed by an authorised office user.</p></div></div><div className="form-grid"><label>Employee ID<input value={profile?.employee_id || ""} disabled /></label><label>Full name (first name + surname)<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label><label>Position<input value={profile?.position || "Guard"} disabled /></label><label>Date of birth<input type="date" value={form.date_of_birth} onChange={(e) => setForm({ ...form, date_of_birth: e.target.value })} /></label><label>Nationality<input value={form.nationality} onChange={(e) => setForm({ ...form, nationality: e.target.value })} placeholder="Pakistan" /></label><label>Phone<input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+92..." /></label><label>Email address<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label><label>Joining date<input type="date" value={profile?.joining_date || ""} disabled /></label><label className="full-width">Address<textarea rows="3" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></label><label>Emergency contact name<input value={form.emergency_contact_name} onChange={(e) => setForm({ ...form, emergency_contact_name: e.target.value })} /></label><label>Emergency contact phone<input value={form.emergency_contact_phone} onChange={(e) => setForm({ ...form, emergency_contact_phone: e.target.value })} /></label><label>Relationship<input value={form.emergency_contact_relationship} onChange={(e) => setForm({ ...form, emergency_contact_relationship: e.target.value })} placeholder="Parent, spouse, sibling..." /></label></div><div className="modal-actions"><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save profile"}</button></div></form></section></>;
 }
 
@@ -1538,6 +1582,7 @@ function EmployeeRecords() {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(() => Boolean(localStorage.getItem("rota_token")));
   const [page, setPage] = useState("dashboard");
   const [dataVersion, setDataVersion] = useState(0);
   const [mobileNav, setMobileNav] = useState(false);
@@ -1550,7 +1595,12 @@ function App() {
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
   const resetPath = window.location.pathname === "/reset-password";
   useEffect(() => { const refreshActivePage = () => setDataVersion((version) => version + 1); window.addEventListener("rota:data-changed", refreshActivePage); return () => window.removeEventListener("rota:data-changed", refreshActivePage); }, []);
-  useEffect(() => { if (localStorage.getItem("rota_token")) api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then(setUser).catch(() => localStorage.removeItem("rota_token")); }, []);
+  useEffect(() => {
+    const token = localStorage.getItem("rota_token");
+    if (!token) { setAuthLoading(false); return undefined; }
+    api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then(setUser).catch(() => localStorage.removeItem("rota_token")).finally(() => setAuthLoading(false));
+    return undefined;
+  }, []);
   useEffect(() => {
     if (!user || clientPath || user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") return undefined;
     const loadDashboard = () => api("/dashboard/").then(setStats).catch(() => {});
@@ -1598,6 +1648,7 @@ function App() {
   const resetToken = resetParams.get("token");
   const resetPortal = resetParams.get("portal") || "admin";
   if (resetPath) return <><ToastHost /><PasswordResetPage uid={resetUid || ""} token={resetToken || ""} portal={resetPortal} /></>;
+  if (authLoading) return <><ToastHost /><RotaLoader overlay label="Securing your portal…" /></>;
   if (!user) return <><ToastHost />{activationToken ? <ActivationPage token={activationToken} onActivated={setUser} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} />}</>;
   const signOut = () => { localStorage.removeItem("rota_token"); setUser(null); };
   const role = user.role || user.role_display;
