@@ -651,7 +651,7 @@ textarea, select, input { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) { .online-dot::before, .online-dot::after { animation: none; } }
 
 /* Guard portal notification centre */
-.guard-notification-widget { position: fixed; top: 76px; right: 26px; z-index: 1050; }
+.guard-notification-widget { position: fixed; top: 15px; right: 26px; z-index: 1050; }
 .guard-notification-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 13px; border: 1px solid #dce5f3; border-radius: 999px; background: rgba(255,255,255,.96); box-shadow: 0 8px 22px rgba(31,55,96,.12); color: #30445f; font-size: 11px; font-weight: 800; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
 .guard-notification-trigger:hover, .guard-notification-trigger:focus-visible { border-color: #8ca8ee; box-shadow: 0 10px 26px rgba(55,88,170,.2); outline: none; transform: translateY(-1px); }
 .guard-notification-trigger.has-unread { border-color: #b8c9f6; color: #3159bb; }
@@ -669,5 +669,5 @@ textarea, select, input { max-width: 100%; }
 .guard-notification-empty { display: grid; justify-items: center; gap: 8px; padding: 30px 18px; color: #8794a8; font-size: 11px; }.guard-notification-empty svg { color: #9aabd1; }
 .guard-notification-menu .rota-loader.compact { min-height: 82px; justify-content: center; padding: 16px; }.guard-notification-menu .rota-loader-copy span { font-size: 10px; }
 .guard-notification-all { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; padding: 12px 16px; border: 0; border-top: 1px solid #edf1f7; background: #fbfcff; color: #456ac8; font-size: 11px; font-weight: 800; cursor: pointer; }.guard-notification-all:hover { background: #f1f5ff; }
-@media (max-width: 680px) { .guard-notification-widget { top: 70px; right: 16px; }.guard-notification-trigger span { display: none; }.guard-notification-trigger { width: 39px; height: 39px; justify-content: center; padding: 0; }.guard-notification-menu { right: -4px; width: min(380px, calc(100vw - 28px)); } }
+@media (max-width: 680px) { .guard-notification-widget { top: 12px; right: 16px; }.guard-notification-trigger span { display: none; }.guard-notification-trigger { width: 39px; height: 39px; justify-content: center; padding: 0; }.guard-notification-menu { top: 47px; right: -4px; width: min(380px, calc(100vw - 28px)); } }
 @media (prefers-reduced-motion: reduce) { .guard-notification-trigger { transition: none; } }
