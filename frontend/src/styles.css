@@ -714,3 +714,24 @@ textarea, select, input { max-width: 100%; }
 .role-custom-form .secondary-button { padding: 7px 9px; font-size: 10px; }
 @media (min-width: 681px) { .modal-card:has(input[placeholder="First name Surname"]) .form-grid label:has(textarea) { grid-column: span 2; } }
 @media (max-width: 560px) { .role-custom-form { flex-wrap: wrap; }.role-custom-form input { flex: 1 1 100%; } }
+
+.role-option-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; transition: opacity .15s ease; }
+.role-option:hover .role-option-actions, .role-option:focus-within .role-option-actions { opacity: 1; }
+.role-option-actions button { display: grid; place-items: center; width: 23px; height: 23px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: #8290a4; cursor: pointer; }
+.role-option-actions button:hover { background: #dce6ff; color: #3159bb; }
+.role-option-actions button:last-child:hover { background: #ffe7eb; color: #bd6675; }
+@media (min-width: 681px) {
+  .modal-backdrop:has(.modal-card input[placeholder="First name Surname"]) { padding: 10px 14px; }
+  .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 900px); padding: 14px 16px; border-radius: 12px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 7px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .form-grid { gap: 6px 8px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .role-picker { gap: 5px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .role-options { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .role-options .role-option { min-height: 35px; padding: 5px 7px; gap: 6px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .role-option-index { width: 18px; height: 18px; flex-basis: 18px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .role-option-actions button { width: 20px; height: 20px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .selected-role-summary { gap: 4px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .selected-role-summary b { padding: 3px 6px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .checkbox-field { padding: 7px 9px; }
+  .modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 7px; }
+}
