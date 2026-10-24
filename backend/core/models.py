@@ -98,6 +98,22 @@ class EmployeePortalInvite(models.Model):
         return f"Portal invite for {self.employee.name}"
 
 
+class GoogleDriveConnection(models.Model):
+    """The organisation's encrypted Google Drive OAuth connection."""
+
+    connection_key = models.CharField(max_length=40, unique=True, default="default")
+    authorized_email = models.EmailField(blank=True)
+    encrypted_refresh_token = models.TextField()
+    scopes = models.JSONField(default=list, blank=True)
+    root_folder_id = models.CharField(max_length=160, blank=True)
+    connected_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="google_drive_connections")
+    connected_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.authorized_email or "Google Drive connection"
+
+
 class GuardComplianceRegistration(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -347,6 +363,10 @@ class EmployeeDocument(models.Model):
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="reviewed_employee_documents", null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
+    drive_file_id = models.CharField(max_length=160, blank=True)
+    drive_folder_id = models.CharField(max_length=160, blank=True)
+    drive_synced_at = models.DateTimeField(null=True, blank=True)
+    drive_sync_error = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_documents")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

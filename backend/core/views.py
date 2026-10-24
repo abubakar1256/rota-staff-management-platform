@@ -17,12 +17,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.core import signing
 from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch, Q
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
@@ -42,11 +43,62 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
 User = get_user_model()
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def google_drive_connect(request):
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
+        return Response({"detail": "Only Admin or Super Admin users can connect Google Drive."}, status=status.HTTP_403_FORBIDDEN)
+    if not google_drive_is_configured():
+        return Response({"detail": "Google Drive OAuth is not configured. Add the client ID and secret to Railway Variables first."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    redirect = google_drive_redirect_uri(request)
+    state = signing.dumps({"user_id": request.user.pk, "nonce": token_urlsafe(16)}, salt=OAUTH_SALT)
+    flow = build_flow(redirect, state=state)
+    authorization_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
+    return Response({"authorization_url": authorization_url, "redirect_uri": redirect})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def google_drive_callback(request):
+    if request.query_params.get("error"):
+        return HttpResponse("Google Drive authorization was cancelled. You can close this window and try again.", status=status.HTTP_400_BAD_REQUEST)
+    try:
+        state = signing.loads(request.query_params.get("state", ""), salt=OAUTH_SALT, max_age=OAUTH_STATE_MAX_AGE)
+        user = User.objects.get(pk=state["user_id"])
+        if role_of(user) not in {"SUPER_ADMIN", "ADMIN"}:
+            raise PermissionDenied("Only Admin or Super Admin users can connect Google Drive.")
+        redirect = google_drive_redirect_uri(request)
+        flow = build_flow(redirect, state=request.query_params.get("state"))
+        flow.fetch_token(authorization_response=request.build_absolute_uri())
+        save_oauth_connection(flow.credentials, user)
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        return HttpResponseRedirect(f"{frontend_url}/?google_drive=connected" if frontend_url else "/")
+    except Exception as exc:
+        logger.exception("Google Drive OAuth callback failed")
+        return HttpResponse(f"Google Drive connection failed: {exc}", status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def google_drive_status(request):
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
+        return Response({"detail": "Only Admin or Super Admin users can view Google Drive settings."}, status=status.HTTP_403_FORBIDDEN)
+    item = google_drive_connection()
+    return Response({
+        "configured": google_drive_is_configured(),
+        "connected": bool(item and item.encrypted_refresh_token),
+        "authorized_email": item.authorized_email if item else "",
+        "root_folder_id": item.root_folder_id if item else "",
+        "redirect_uri": google_drive_redirect_uri(request),
+    })
 
 
 def haversine_distance_m(latitude_a, longitude_a, latitude_b, longitude_b):
@@ -1465,6 +1517,21 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 message=f"Your {document.document_type} has been verified by the office.",
                 link="documents",
             )
+        try:
+            sync_verified_document(document)
+        except Exception:
+            logger.exception("Verified document %s could not be synced to Google Drive", document.pk)
+        return Response(self.get_serializer(document).data)
+
+    @action(detail=True, methods=["post"], url_path="sync-drive")
+    def sync_drive(self, request, pk=None):
+        document = self.get_object()
+        if document.verification_status != EmployeeDocument.VerificationStatus.VERIFIED:
+            return Response({"detail": "Only verified documents can be uploaded to Google Drive."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            sync_verified_document(document)
+        except Exception as exc:
+            return Response({"detail": f"Google Drive upload failed: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
         return Response(self.get_serializer(document).data)
 
     @action(detail=True, methods=["post"])

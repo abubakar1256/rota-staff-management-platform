@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AuditLog, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, LeaveRecord, Notification, RotaAssignment, RotaWeek, ShiftType, Site, Timesheet, UserProfile
+from .models import AuditLog, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GoogleDriveConnection, GuardComplianceRegistration, LeaveRecord, Notification, RotaAssignment, RotaWeek, ShiftType, Site, Timesheet, UserProfile
 
 
 @admin.register(UserProfile)
@@ -51,6 +51,12 @@ class LeaveRecordAdmin(admin.ModelAdmin):
 class EmployeeDocumentAdmin(admin.ModelAdmin):
     list_display = ("employee", "document_type", "document_number", "expiry_date", "status")
     search_fields = ("employee__name", "document_type", "document_number")
+
+
+@admin.register(GoogleDriveConnection)
+class GoogleDriveConnectionAdmin(admin.ModelAdmin):
+    list_display = ("connection_key", "authorized_email", "connected_by", "updated_at")
+    readonly_fields = ("encrypted_refresh_token", "connected_at", "updated_at")
 
 
 @admin.register(GuardComplianceRegistration)

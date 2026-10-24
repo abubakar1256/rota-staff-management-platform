@@ -544,7 +544,7 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmployeeDocument
-        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_by", "created_at", "updated_at"]
+        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_at", "updated_at"]
 
     def get_secure_file_url(self, obj):

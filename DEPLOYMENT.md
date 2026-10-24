@@ -49,6 +49,23 @@ FRONTEND_URL=https://your-frontend-domain.example.com
 
 Keep `BREVO_API_KEY` private and add it only in Railway Variables. Do not commit it to GitHub or send it in chat. After saving the variables, redeploy the backend and test from `/` and `/guard` using **Forgot password?**. The reset link will open `/reset-password` and return the user to the correct portal after success.
 
+## Google Drive approved-document sync
+
+The backend uses Google OAuth (not an API key) and uploads only documents that an Admin has marked **Verified**. It creates `All Guards / Guard Name — Employee ID` in the connected Drive and keeps the refresh token encrypted in PostgreSQL.
+
+Add these variables to the backend Railway service after creating the Google Cloud Web application OAuth client:
+
+```text
+GOOGLE_DRIVE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_DRIVE_CLIENT_SECRET=your-client-secret
+```
+
+After deployment, add this exact URL under the OAuth client's **Authorized redirect URIs**:
+
+```text
+https://rota-staff-management-platform-production.up.railway.app/api/integrations/google-drive/callback/
+```
+
 ## Local production checks
 
 ```powershell
