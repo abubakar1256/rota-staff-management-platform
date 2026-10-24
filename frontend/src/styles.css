@@ -671,3 +671,12 @@ textarea, select, input { max-width: 100%; }
 .guard-notification-all { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; padding: 12px 16px; border: 0; border-top: 1px solid #edf1f7; background: #fbfcff; color: #456ac8; font-size: 11px; font-weight: 800; cursor: pointer; }.guard-notification-all:hover { background: #f1f5ff; }
 @media (max-width: 680px) { .guard-notification-widget { top: 12px; right: 16px; }.guard-notification-trigger span { display: none; }.guard-notification-trigger { width: 39px; height: 39px; justify-content: center; padding: 0; }.guard-notification-menu { top: 47px; right: -4px; width: min(380px, calc(100vw - 28px)); } }
 @media (prefers-reduced-motion: reduce) { .guard-notification-trigger { transition: none; } }
+
+/* Multi-role employee selector */
+.role-picker { display: grid; gap: 8px; }
+.role-picker .form-label { color: #526079; font-size: 11px; font-weight: 700; }
+.role-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.role-option { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 9px 11px; border: 1px solid #dfe6f1; border-radius: 9px; background: #fff; color: #526079; font-size: 11px; font-weight: 700; cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.role-option:hover { border-color: #a9bff4; background: #f8faff; }.role-option.selected { border-color: #7899e8; background: #f0f4ff; box-shadow: 0 0 0 2px rgba(77,118,222,.08); color: #3159bb; }.role-option input { width: auto; margin: 0; accent-color: #4d76de; }
+.role-picker .form-help { margin: 0; }
+@media (max-width: 560px) { .role-options { grid-template-columns: 1fr; } }

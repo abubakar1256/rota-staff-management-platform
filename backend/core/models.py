@@ -58,6 +58,7 @@ class Employee(models.Model):
     date_of_birth = models.DateField(null=True, blank=True)
     nationality = models.CharField(max_length=80, blank=True)
     position = models.CharField(max_length=100, blank=True)
+    roles = models.JSONField(default=list, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)

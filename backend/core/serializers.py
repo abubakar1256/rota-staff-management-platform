@@ -12,6 +12,26 @@ from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArr
 
 User = get_user_model()
 
+EMPLOYEE_ROLES = ["Security Guard", "CCTV Operator", "Dog Handler", "Site Supervisor", "Other"]
+
+
+def normalise_employee_roles(roles):
+    if not isinstance(roles, list):
+        raise serializers.ValidationError("Roles must be sent as a list.")
+    cleaned = []
+    for role in roles:
+        value = str(role).strip()
+        if value == "CCTV":
+            value = "CCTV Operator"
+        if value and value not in cleaned:
+            cleaned.append(value)
+    invalid = [role for role in cleaned if role not in EMPLOYEE_ROLES]
+    if invalid:
+        raise serializers.ValidationError(f"Unsupported employee role: {', '.join(invalid)}.")
+    if not cleaned:
+        raise serializers.ValidationError("Select at least one employee role.")
+    return cleaned
+
 
 def _document_for_type(documents, *document_types):
     wanted = {value.casefold() for value in document_types}
@@ -180,6 +200,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         for field in ("date_of_birth", "joining_date"):
             if data.get(field) == "":
                 data[field] = None
+        if "roles" not in data and data.get("position"):
+            data["roles"] = [part.strip() for part in str(data["position"]).replace("·", "+").replace(",", "+").split("+") if part.strip()]
         return super().to_internal_value(data)
 
     def validate_name(self, value):
@@ -195,6 +217,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return value.strip().lower()
 
     def validate(self, attrs):
+        if "roles" in attrs:
+            attrs["roles"] = normalise_employee_roles(attrs["roles"])
+            attrs["position"] = attrs["roles"][0]
         if not self.instance and not attrs.get("email"):
             raise serializers.ValidationError({"email": "Email is required because it will be used for guard portal login."})
         email = attrs.get("email")
@@ -218,7 +243,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
