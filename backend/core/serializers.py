@@ -25,9 +25,9 @@ def normalise_employee_roles(roles):
             value = "CCTV Operator"
         if value and value not in cleaned:
             cleaned.append(value)
-    invalid = [role for role in cleaned if role not in EMPLOYEE_ROLES]
-    if invalid:
-        raise serializers.ValidationError(f"Unsupported employee role: {', '.join(invalid)}.")
+    too_long = [role for role in cleaned if len(role) > 80]
+    if too_long:
+        raise serializers.ValidationError("Each employee role must be 80 characters or fewer.")
     if not cleaned:
         raise serializers.ValidationError("Select at least one employee role.")
     return cleaned

@@ -703,3 +703,14 @@ textarea, select, input { max-width: 100%; }
 .checkbox-field > .checkbox-control { display: flex; align-items: flex-start; gap: 9px; width: 100%; }
 .checkbox-field > .checkbox-control > span { display: grid; gap: 3px; }
 @media (min-width: 681px) { .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 760px); max-height: calc(100dvh - 24px); overflow: visible; } }
+
+.role-custom-row { display: flex; align-items: center; gap: 7px; min-height: 24px; }
+.role-add-custom { border: 0; padding: 3px 0; background: transparent; color: #4d70ce; font-size: 10px; font-weight: 800; cursor: pointer; }
+.role-add-custom:hover { color: #3159bb; text-decoration: underline; }
+.role-custom-form { display: flex; align-items: center; gap: 7px; width: 100%; }
+.role-custom-form input { min-width: 0; flex: 1; border: 1px solid #dfe5ee; border-radius: 7px; padding: 7px 9px; color: #2d3b54; font-size: 11px; }
+.role-custom-form input:focus { border-color: #7899e8; outline: 0; box-shadow: 0 0 0 2px rgba(77,118,222,.1); }
+.role-custom-form button { border: 1px solid #cddaf8; border-radius: 7px; padding: 7px 9px; background: #f1f5ff; color: #456ac8; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.role-custom-form .secondary-button { padding: 7px 9px; font-size: 10px; }
+@media (min-width: 681px) { .modal-card:has(input[placeholder="First name Surname"]) .form-grid label:has(textarea) { grid-column: span 2; } }
+@media (max-width: 560px) { .role-custom-form { flex-wrap: wrap; }.role-custom-form input { flex: 1 1 100%; } }
