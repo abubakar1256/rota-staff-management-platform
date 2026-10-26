@@ -73,7 +73,8 @@ function ToastHost() {
     return () => window.removeEventListener("rota:toast", receive);
   }, []);
   const guardPath = window.location.pathname === "/guard" || window.location.pathname.startsWith("/guard/");
-  return <><GlobalRequestLoader />{guardPath && <GuardNotificationBell />}<div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div></>;
+  const hasSessionToken = Boolean(localStorage.getItem("rota_token"));
+  return <><GlobalRequestLoader />{guardPath && hasSessionToken && <GuardNotificationBell />}<div className="toast-stack" aria-live="polite">{toasts.map((toast) => <div className={`toast toast-${toast.type}`} key={toast.id}><span className="toast-indicator">{toast.type === "error" ? "!" : "✓"}</span><span>{toast.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}>×</button></div>)}</div></>;
 }
 
 function GlobalRequestLoader() {
