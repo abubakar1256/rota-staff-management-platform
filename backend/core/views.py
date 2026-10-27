@@ -520,7 +520,14 @@ def password_reset_request(request):
     email = (request.data.get("email") or "").strip().lower()
     if email:
         user = User.objects.filter(email__iexact=email, is_active=True).first()
-        if user and user.email:
+        if not user:
+            employee = Employee.objects.select_related("user").filter(
+                email__iexact=email,
+                user__isnull=False,
+                user__is_active=True,
+            ).first()
+            user = employee.user if employee else None
+        if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
@@ -537,7 +544,7 @@ def password_reset_request(request):
                     send_transactional_email(
                         "Reset your ROTA password",
                         f"Hello {user.first_name or user.username},\n\nUse this secure link to reset your ROTA password:\n{reset_url}\n\nThis link expires after one use or when the token expires. If you did not request this, you can ignore this email.",
-                        user.email,
+                        email,
                     )
                 except Exception:
                     logger.exception("Password reset email delivery failed for user %s", user.pk)

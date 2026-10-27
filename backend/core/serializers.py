@@ -241,6 +241,25 @@ class EmployeeSerializer(serializers.ModelSerializer):
             validated_data["employee_id"] = f"EMP-{number:03d}"
         return super().create(validated_data)
 
+    def update(self, instance, validated_data):
+        previous_email = (instance.email or "").strip().lower()
+        email_changed = "email" in validated_data
+        instance = super().update(instance, validated_data)
+        if email_changed and instance.user_id:
+            user = instance.user
+            new_email = (instance.email or "").strip().lower()
+            user_updates = []
+            if user.email != new_email:
+                user.email = new_email
+                user_updates.append("email")
+            # Keep email-based usernames aligned without overwriting a custom username.
+            if previous_email and user.username.casefold() == previous_email.casefold() and len(new_email) <= 150 and user.username != new_email:
+                user.username = new_email
+                user_updates.append("username")
+            if user_updates:
+                user.save(update_fields=user_updates)
+        return instance
+
     class Meta:
         model = Employee
         fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
