@@ -9,14 +9,14 @@ import logging
 import os
 import re
 from io import BytesIO
-from secrets import token_urlsafe
+from secrets import randbelow, token_urlsafe
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.tokens import default_token_generator
 from django.core import signing
 from django.core.files.base import ContentFile
 from django.core.mail import send_mail
@@ -28,8 +28,6 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -42,7 +40,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
@@ -513,72 +511,118 @@ def activate_portal(request):
     return Response({"token": token.key, "user": UserSerializer(user).data, "message": "Portal activated successfully."})
 
 
+def _password_reset_user_for_email(email):
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+    if user:
+        return user
+    employee = Employee.objects.select_related("user").filter(
+        email__iexact=email,
+        user__isnull=False,
+        user__is_active=True,
+    ).first()
+    return employee.user if employee else None
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def password_reset_request(request):
-    """Send a time-limited reset link without revealing account existence."""
+    """Send a short-lived six-digit password reset code without revealing account existence."""
     email = (request.data.get("email") or "").strip().lower()
-    if email:
-        user = User.objects.filter(email__iexact=email, is_active=True).first()
-        if not user:
-            employee = Employee.objects.select_related("user").filter(
-                email__iexact=email,
-                user__isnull=False,
-                user__is_active=True,
-            ).first()
-            user = employee.user if employee else None
-        if user:
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
-            frontend_url = os.getenv("FRONTEND_URL", "").rstrip("/")
-            if frontend_url:
-                portal = (
-                    "guard"
-                    if role_of(user) == UserProfile.Role.EMPLOYEE
-                    else "client"
-                    if role_of(user) == UserProfile.Role.CLIENT_ADMIN
-                    else "admin"
-                )
-                reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}&portal={portal}"
-                try:
-                    send_transactional_email(
-                        "Reset your ROTA password",
-                        f"Hello {user.first_name or user.username},\n\nUse this secure link to reset your ROTA password:\n{reset_url}\n\nThis link expires after one use or when the token expires. If you did not request this, you can ignore this email.",
-                        email,
-                    )
-                except Exception:
-                    logger.exception("Password reset email delivery failed for user %s", user.pk)
-                    return Response({"detail": "The reset email could not be sent. Please contact the office."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-    return Response({"message": "If an active account exists for that email, a password reset link has been sent."})
+    generic_message = "If an active account exists for that email, a 6-digit verification code has been sent."
+    if not email:
+        return Response({"message": generic_message})
+
+    user = _password_reset_user_for_email(email)
+    if not user:
+        return Response({"message": generic_message})
+
+    now = timezone.now()
+    if PasswordResetOTP.objects.filter(user=user, created_at__gte=now - timedelta(seconds=60), used_at__isnull=True).exists():
+        return Response({"message": generic_message})
+
+    PasswordResetOTP.objects.filter(user=user, used_at__isnull=True).update(used_at=now)
+    code = f"{randbelow(1_000_000):06d}"
+    otp = PasswordResetOTP.objects.create(
+        user=user,
+        email=email,
+        code_hash=make_password(code),
+        expires_at=now + timedelta(minutes=10),
+    )
+    try:
+        send_transactional_email(
+            "Your ROTA password verification code",
+            f"Hello {user.first_name or user.username},\n\nYour ROTA password verification code is: {code}\n\nThis code expires in 10 minutes and can be used once. If you did not request a password reset, you can ignore this email.",
+            email,
+        )
+    except Exception:
+        otp.delete()
+        logger.exception("Password reset OTP email delivery failed for user %s", user.pk)
+        return Response({"detail": "The verification email could not be sent. Please try again later."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({"message": generic_message})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_verify(request):
+    """Verify the email OTP and issue a short-lived, one-use password reset capability."""
+    email = (request.data.get("email") or "").strip().lower()
+    code = (request.data.get("code") or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        return Response({"detail": "Enter the 6-digit verification code."}, status=status.HTTP_400_BAD_REQUEST)
+    user = _password_reset_user_for_email(email) if email else None
+    otp = PasswordResetOTP.objects.filter(
+        user=user,
+        used_at__isnull=True,
+        verified_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).first() if user else None
+    if not otp or otp.attempts >= 5:
+        return Response({"detail": "This verification code is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+    if not check_password(code, otp.code_hash):
+        otp.attempts += 1
+        otp.save(update_fields=["attempts"])
+        return Response({"detail": "This verification code is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+    reset_token = token_urlsafe(32)
+    otp.reset_token_hash = hashlib.sha256(reset_token.encode()).hexdigest()
+    otp.verified_at = timezone.now()
+    otp.save(update_fields=["reset_token_hash", "verified_at"])
+    return Response({"reset_token": reset_token, "message": "Code verified. Choose a new password."})
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def password_reset_confirm(request):
-    uidb64 = (request.data.get("uid") or "").strip()
-    token = (request.data.get("token") or "").strip()
+    reset_token = (request.data.get("reset_token") or "").strip()
     password = request.data.get("password") or ""
     confirmation = request.data.get("password_confirmation") or ""
-    if not uidb64 or not token:
-        return Response({"detail": "This password reset link is invalid."}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        user_id = force_str(urlsafe_base64_decode(uidb64))
-        user = User.objects.get(pk=user_id, is_active=True)
-    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
-        user = None
-    if not user or not default_token_generator.check_token(user, token):
-        return Response({"detail": "This password reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
-    if password != confirmation:
-        return Response({"detail": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
-    try:
-        validate_password(password, user)
-    except Exception as error:
-        messages = getattr(error, "messages", [str(error)])
-        return Response({"detail": " ".join(messages)}, status=status.HTTP_400_BAD_REQUEST)
-    user.set_password(password)
-    user.save(update_fields=["password"])
-    Token.objects.filter(user=user).delete()
-    AuditLog.objects.create(user=user, action="PASSWORD", model_name="PasswordReset", object_id=str(user.id), summary="Password reset through secure email link")
+    if not reset_token:
+        return Response({"detail": "Your verification session is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+    token_hash = hashlib.sha256(reset_token.encode()).hexdigest()
+    with transaction.atomic():
+        otp = PasswordResetOTP.objects.select_for_update().select_related("user").filter(
+            reset_token_hash=token_hash,
+            verified_at__isnull=False,
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
+            user__is_active=True,
+        ).first()
+        if not otp:
+            return Response({"detail": "Your verification session is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+        user = otp.user
+        if password != confirmation:
+            return Response({"detail": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            validate_password(password, user)
+        except Exception as error:
+            messages = getattr(error, "messages", [str(error)])
+            return Response({"detail": " ".join(messages)}, status=status.HTTP_400_BAD_REQUEST)
+        user.set_password(password)
+        user.save(update_fields=["password"])
+        otp.used_at = timezone.now()
+        otp.save(update_fields=["used_at"])
+        Token.objects.filter(user=user).delete()
+        AuditLog.objects.create(user=user, action="PASSWORD", model_name="PasswordReset", object_id=str(user.id), summary="Password reset through email OTP")
     return Response({"message": "Password reset successfully. You can now sign in."})
 
 

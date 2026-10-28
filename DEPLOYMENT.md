@@ -36,7 +36,7 @@ Railway is configured from the dashboard using the commands above; the included 
 
 ## Brevo API and password reset
 
-The application includes a secure **Forgot password?** flow for the admin and guard portals. When `BREVO_API_KEY` is configured, it sends the one-time reset link through Brevo's HTTPS transactional-email API, expires the link after use/expiry, and invalidates existing login tokens after the password is changed. Without that key, local development can still use the configured Django email backend.
+The application includes a secure **Forgot password?** flow for the admin and guard portals. When `BREVO_API_KEY` is configured, it sends a one-time six-digit verification code through Brevo's HTTPS transactional-email API. The code expires after 10 minutes, is single-use, and is protected by an attempt limit and resend cooldown. Without that key, local development can still use the configured Django email backend.
 
 Add these variables to the **backend service** in Railway:
 
@@ -47,7 +47,7 @@ DEFAULT_FROM_EMAIL=Diligent <your-verified-sender-email>
 FRONTEND_URL=https://your-frontend-domain.example.com
 ```
 
-Keep `BREVO_API_KEY` private and add it only in Railway Variables. Do not commit it to GitHub or send it in chat. After saving the variables, redeploy the backend and test from `/` and `/guard` using **Forgot password?**. The reset link will open `/reset-password` and return the user to the correct portal after success.
+Keep `BREVO_API_KEY` private and add it only in Railway Variables. Do not commit it to GitHub or send it in chat. After saving the variables, redeploy the backend and test from `/` and `/guard` using **Forgot password?**. The guard enters the emailed code in the portal, then chooses a new password.
 
 ## Google Drive approved-document sync
 

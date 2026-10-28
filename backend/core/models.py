@@ -98,6 +98,28 @@ class EmployeePortalInvite(models.Model):
         return f"Portal invite for {self.employee.name}"
 
 
+class PasswordResetOTP(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="password_reset_otps")
+    email = models.EmailField()
+    code_hash = models.CharField(max_length=256)
+    reset_token_hash = models.CharField(max_length=64, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    verified_at = models.DateTimeField(null=True, blank=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["reset_token_hash"]),
+        ]
+
+    def __str__(self):
+        return f"Password reset OTP for {self.email}"
+
+
 class GoogleDriveConnection(models.Model):
     """The organisation's encrypted Google Drive OAuth connection."""
 

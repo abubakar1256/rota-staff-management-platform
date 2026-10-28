@@ -343,27 +343,28 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
 
 function ForgotPasswordPage({ guardMode, clientMode, onBack }) {
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [phase, setPhase] = useState("request");
+  const [resendIn, setResendIn] = useState(0);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const submit = async (event) => {
+  const requestCode = async (event) => {
     event.preventDefault(); setSaving(true); setError(""); setNotice("");
-    try { const result = await api("/auth/password-reset/", { method: "POST", body: JSON.stringify({ email }) }); setNotice(result.message); } catch (err) { setError(err.message); } finally { setSaving(false); }
+    try { const result = await api("/auth/password-reset/", { method: "POST", body: JSON.stringify({ email }) }); setNotice(result.message); setPhase("verify"); setResendIn(60); } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>Reset password</h1><p className="muted">Enter the email address linked to your portal account. We will send a secure reset link if it is registered.</p><form onSubmit={submit}><label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Sending..." : "Send reset link"}</button><button type="button" className="text-button" onClick={onBack}>Back to sign in</button></form><p className="login-hint">Check your inbox and spam folder. The link can only be used once.</p></section></main>;
-}
-
-function PasswordResetPage({ uid, token, portal }) {
-  const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [saving, setSaving] = useState(false);
-  const submit = async (event) => {
+  useEffect(() => { if (!resendIn) return undefined; const timer = window.setInterval(() => setResendIn((value) => Math.max(0, value - 1)), 1000); return () => window.clearInterval(timer); }, [resendIn]);
+  const verifyCode = async (event) => {
     event.preventDefault(); setSaving(true); setError(""); setNotice("");
-    try { const result = await api("/auth/password-reset-confirm/", { method: "POST", body: JSON.stringify({ uid, token, password, password_confirmation: confirmation }) }); setNotice(result.message); window.setTimeout(() => { window.location.href = portal === "guard" ? "/guard" : portal === "client" ? "/client" : "/"; }, 1200); } catch (err) { setError(err.message); } finally { setSaving(false); }
+    try { const result = await api("/auth/password-reset-verify/", { method: "POST", body: JSON.stringify({ email, code }) }); setResetToken(result.reset_token); setPhase("password"); setNotice(result.message); } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>Choose new password</h1><p className="muted">Create a new password with at least 8 characters.</p><form onSubmit={submit}><label>New password<input required minLength="8" type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label><label>Confirm new password<input required minLength="8" type="password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Updating..." : "Reset password"}</button></form></section></main>;
+  const resetPassword = async (event) => {
+    event.preventDefault(); setSaving(true); setError(""); setNotice("");
+    const form = new FormData(event.currentTarget);
+    try { const result = await api("/auth/password-reset-confirm/", { method: "POST", body: JSON.stringify({ reset_token: resetToken, password: form.get("password"), password_confirmation: form.get("password_confirmation") }) }); setNotice(result.message); window.setTimeout(() => { window.location.href = guardMode ? "/guard" : clientMode ? "/client" : "/"; }, 1200); } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>{phase === "request" ? "Reset password" : phase === "verify" ? "Enter verification code" : "Choose new password"}</h1><p className="muted">{phase === "request" ? "Enter the email address linked to your portal account. We will send a 6-digit verification code." : phase === "verify" ? `Enter the 6-digit code sent to ${email}. It expires in 10 minutes.` : "Create a new password with at least 8 characters."}</p>{phase === "request" && <form onSubmit={requestCode}><label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Sending..." : "Send verification code"}</button><button type="button" className="text-button" onClick={onBack}>Back to sign in</button></form>}{phase === "verify" && <form onSubmit={verifyCode}><label>6-digit verification code<input required inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" autoFocus /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving || code.length !== 6}>{saving ? "Verifying..." : "Verify code"}</button><button type="button" className="text-button" disabled={saving || resendIn > 0} onClick={requestCode}>{resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}</button><button type="button" className="text-button" onClick={() => { setPhase("request"); setCode(""); setError(""); setNotice(""); setResendIn(0); }}>Use a different email</button></form>}{phase === "password" && <form onSubmit={resetPassword}><label>New password<input required minLength="8" name="password" type="password" placeholder="At least 8 characters" autoFocus /></label><label>Confirm new password<input required minLength="8" name="password_confirmation" type="password" placeholder="Repeat your password" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Updating..." : "Reset password"}</button></form>}<p className="login-hint">The verification code can be used once and expires after 10 minutes.</p></section></main>;
 }
 
 function ActivationPage({ token, onActivated }) {
@@ -1746,10 +1747,8 @@ function App() {
   }, [user, clientPath]);
   const activationToken = new URLSearchParams(window.location.search).get("activate");
   const resetParams = new URLSearchParams(window.location.search);
-  const resetUid = resetParams.get("uid");
-  const resetToken = resetParams.get("token");
   const resetPortal = resetParams.get("portal") || "admin";
-  if (resetPath) return <><ToastHost /><PasswordResetPage uid={resetUid || ""} token={resetToken || ""} portal={resetPortal} /></>;
+  if (resetPath) return <><ToastHost /><ForgotPasswordPage guardMode={resetPortal === "guard"} clientMode={resetPortal === "client"} onBack={() => { window.location.href = resetPortal === "guard" ? "/guard" : resetPortal === "client" ? "/client" : "/"; }} /></>;
   if (authLoading) return <><ToastHost /><RotaLoader overlay label="Securing your portal…" /></>;
   if (!user) return <><ToastHost />{activationToken ? <ActivationPage token={activationToken} onActivated={setUser} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} />}</>;
   const signOut = () => { localStorage.removeItem("rota_token"); setUser(null); };
