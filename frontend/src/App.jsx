@@ -1234,10 +1234,10 @@ function ComplianceRegistrationPage() {
   const canEdit = !inProcess && !approved;
   const saved = inProcess || approved;
   const documentValue = (...types) => { const item = documents.find((document) => types.includes(document.document_type)); return item ? (item.document_number || item.notes || "—") : "Not provided"; };
-  if (loading) return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Diligent Registration Form</h2></div></div><section className="panel empty-state">Loading your registration form...</section></>;
+  if (loading) return <><div className="page-heading"><div><p className="eyebrow">REGISTRATION FORM</p><h2>Registration Form</h2></div></div><section className="panel empty-state">Loading your registration form...</section></>;
   return <>
     <div className="page-heading">
-      <div><p className="eyebrow"><span className="diligent-prefix">Diligent</span> BUSINESS SERVICES</p><h2>Diligent Registration Form</h2><p className="muted">Complete each step carefully. Your Form ID is generated automatically and cannot be edited.</p></div>
+      <div><p className="eyebrow">REGISTRATION FORM</p><h2>Registration Form</h2><p className="muted">Complete each step carefully. Your Form ID is generated automatically and cannot be edited.</p></div>
       <span className={`status-pill ${approved ? "active" : rejected ? "rejected" : "pending"}`}>{approved ? "Approved" : rejected ? "Changes required" : inProcess ? "In process" : "Draft"}</span>
     </div>
     {error && <p className="error page-error">{error}</p>}
@@ -1498,7 +1498,7 @@ function ProfilePhotoCard() {
   };
   const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
   if (loading) return <section className="panel profile-photo-panel"><RotaLoader label="Loading profile picture…" compact /></section>;
-  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Profile picture</h3><p className="muted">Add a clear picture so the office can recognise you quickly.</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose profile picture"}<input type="file" accept="image/*" onChange={(event) => setPhoto(event.target.files?.[0] || null)} /></label><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
+  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Passport-size profile picture</h3><p className="muted">Use a clear front-facing portrait. It will appear on your registration PDF in passport format (35 × 45 mm).</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose passport photo"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const selected = event.target.files?.[0] || null; if (selected && selected.size > 10 * 1024 * 1024) { setError("Profile picture must be 10 MB or smaller."); setPhoto(null); return; } setError(""); setPhoto(selected); }} /></label><button className="primary-button" disabled={saving || !photo}>{saving ? "Saving..." : "Save picture"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
 }
 
 function EmployeeProfilePage({ section = "profile" }) {

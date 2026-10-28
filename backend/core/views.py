@@ -248,7 +248,7 @@ def _compliance_employee_data(employee, request):
 
 def build_compliance_pdf(employee, registration, request=None):
     buffer = BytesIO()
-    document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=14 * mm, bottomMargin=14 * mm, title="Diligent Registration Form", author="Diligent Business Services")
+    document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15 * mm, leftMargin=15 * mm, topMargin=14 * mm, bottomMargin=14 * mm, title="Registration Form", author="Diligent Business Services")
     styles = getSampleStyleSheet()
     heading_style = styles["Heading2"]
     heading_style.fontName = "Helvetica-Bold"
@@ -259,31 +259,21 @@ def build_compliance_pdf(employee, registration, request=None):
     signature_style = ParagraphStyle("ComplianceSignature", parent=body_style, fontName="Helvetica-Oblique", fontSize=16, textColor=colors.HexColor("#102a43"))
 
     story = []
-    logo_path = os.path.join(settings.BASE_DIR, "core", "assets", "diligent-business-services-logo.png")
-    header_cells = []
-    if os.path.exists(logo_path):
-        try:
-            logo = Image(logo_path, width=30 * mm, height=22 * mm, kind="proportional")
-            header_cells.append(logo)
-        except Exception:
-            header_cells.append("")
-    else:
-        header_cells.append("")
-    header_style = ParagraphStyle("ComplianceHeader", parent=body_style, leading=23)
-    header_text = Paragraph(f'<font name="Helvetica-Bold" size="11" color="#2f61c9">Diligent</font> <font name="Helvetica-Bold" size="11" color="#627d98">Business Services</font><br/><font name="Helvetica-Bold" size="20" color="#102a43">Diligent Registration Form</font><br/><font name="Helvetica" size="9" color="#334e68">Form ID: {registration.form_id}</font>', header_style)
-    header_cells.append(header_text)
-    header = Table([header_cells], colWidths=[34 * mm, 145 * mm])
-    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
-    story.append(header)
-    story.append(Spacer(1, 4 * mm))
-
     photo = next((item for item in employee.documents.all() if item.document_type.casefold() == "personal photograph" and item.file), None)
     photo_cell = ""
     if photo:
         try:
-            photo_cell = Image(photo.file.path, width=26 * mm, height=32 * mm, kind="proportional")
+            photo_cell = Image(photo.file.path, width=35 * mm, height=45 * mm)
         except Exception:
             photo_cell = ""
+
+    header_style = ParagraphStyle("ComplianceHeader", parent=body_style, leading=23)
+    header_text = Paragraph(f'<font name="Helvetica-Bold" size="20" color="#102a43">Registration Form</font><br/><font name="Helvetica" size="9" color="#334e68">Form ID: {registration.form_id}</font>', header_style)
+    header_cells = [photo_cell, header_text]
+    header = Table([header_cells], colWidths=[35 * mm, 144 * mm])
+    header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
+    story.append(header)
+    story.append(Spacer(1, 4 * mm))
 
     def value(value):
         return str(value or "—")
@@ -300,8 +290,7 @@ def build_compliance_pdf(employee, registration, request=None):
     ]
     personal_table = Table(personal_rows, colWidths=[48 * mm, 92 * mm])
     personal_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-    personal_block = Table([[personal_table, photo_cell]], colWidths=[145 * mm, 30 * mm])
-    personal_block.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    personal_block = personal_table
     def card_details(*document_types):
         wanted = {item.casefold() for item in document_types}
         item = next((document for document in employee.documents.all() if document.document_type.casefold() in wanted), None)

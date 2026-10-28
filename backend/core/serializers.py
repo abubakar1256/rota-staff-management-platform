@@ -604,6 +604,11 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
         document_type = attrs.get("document_type", getattr(self.instance, "document_type", ""))
+        uploaded_file = attrs.get("file")
+        if uploaded_file and str(document_type).strip().casefold() == "personal photograph":
+            extension = uploaded_file.name.lower().rsplit(".", 1)[-1] if "." in uploaded_file.name else ""
+            if extension not in {"jpg", "jpeg", "png", "webp"}:
+                raise serializers.ValidationError({"file": "Profile picture must be a JPG, JPEG, PNG or WEBP image."})
         existing = EmployeeDocument.objects.filter(employee=employee, document_type__iexact=document_type)
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
