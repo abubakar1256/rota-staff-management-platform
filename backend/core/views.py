@@ -35,6 +35,7 @@ from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
@@ -267,10 +268,10 @@ def build_compliance_pdf(employee, registration, request=None):
         except Exception:
             photo_cell = ""
 
-    header_style = ParagraphStyle("ComplianceHeader", parent=body_style, leading=23)
+    header_style = ParagraphStyle("ComplianceHeader", parent=body_style, leading=23, alignment=TA_CENTER)
     header_text = Paragraph(f'<font name="Helvetica-Bold" size="20" color="#102a43">Registration Form</font><br/><font name="Helvetica" size="9" color="#334e68">Form ID: {registration.form_id}</font>', header_style)
-    header_cells = [photo_cell, header_text]
-    header = Table([header_cells], colWidths=[35 * mm, 144 * mm])
+    header_cells = [photo_cell, header_text, ""]
+    header = Table([header_cells], colWidths=[35 * mm, 110 * mm, 35 * mm])
     header.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 3)]))
     story.append(header)
     story.append(Spacer(1, 4 * mm))
@@ -290,6 +291,7 @@ def build_compliance_pdf(employee, registration, request=None):
         [Paragraph("Phone Number", label_style), Paragraph(value(employee.phone), body_style)],
     ]
     personal_table = Table(personal_rows, colWidths=[48 * mm, 92 * mm])
+    personal_table.hAlign = "LEFT"
     personal_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     personal_block = personal_table
     def card_details(*document_types):
