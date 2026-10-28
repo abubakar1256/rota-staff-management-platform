@@ -282,6 +282,7 @@ def build_compliance_pdf(employee, registration, request=None):
         [Paragraph("First name / surname", label_style), Paragraph(value(employee.name), body_style)],
         [Paragraph("National Insurance Number", label_style), Paragraph(value(registration.national_insurance_number or _document_value(employee, "National Insurance Number (NI)")), body_style)],
         [Paragraph("Date of birth", label_style), Paragraph(value(employee.date_of_birth), body_style)],
+        [Paragraph("Gender", label_style), Paragraph(value(registration.gender), body_style)],
         [Paragraph("Address Line 1", label_style), Paragraph(value(registration.address_line_1 or employee.address), body_style)],
         [Paragraph("City", label_style), Paragraph(value(registration.city), body_style)],
         [Paragraph("Postcode", label_style), Paragraph(value(registration.postcode), body_style)],
@@ -333,14 +334,6 @@ def build_compliance_pdf(employee, registration, request=None):
         Spacer(1, 5 * mm),
     ])
 
-    equality_rows = [
-        [Paragraph("Ethnicity", label_style), Paragraph(value(registration.ethnicity), body_style)],
-        [Paragraph("Religion / belief", label_style), Paragraph(value(registration.religion), body_style)],
-        [Paragraph("Gender", label_style), Paragraph(value(registration.gender), body_style)],
-        [Paragraph("Sexual orientation", label_style), Paragraph(value(registration.sexuality), body_style)],
-        [Paragraph("Disability / health condition", label_style), Paragraph(value(registration.disability_health_condition), body_style)],
-    ]
-    story.extend([Paragraph("Equal opportunities", heading_style), Spacer(1, 2 * mm), section_table(equality_rows), Spacer(1, 6 * mm)])
     declaration = "I can confirm all information is correct and I understand my details will be sent to Diligent."
     story.extend([Paragraph("Declaration", heading_style), Spacer(1, 2 * mm), Paragraph(declaration, body_style), Spacer(1, 8 * mm)])
     signature_rows = [[Paragraph("Typed signature", label_style), Paragraph(value(registration.signature_name), signature_style), Paragraph("Date", label_style), Paragraph(value(registration.signed_at), body_style)]]
