@@ -646,13 +646,16 @@ def employee_compliance(request, employee_id=None):
         serializer.is_valid(raise_exception=True)
         registration = serializer.save(employee=employee)
         if registration.status == GuardComplianceRegistration.Status.PENDING_APPROVAL:
-            if not registration.submitted_at:
-                registration.submitted_at = timezone.now()
-            if not registration.signed_at:
-                registration.signed_at = timezone.localdate()
+            # A rejected or previously approved form can be submitted again after
+            # the office asks for corrections. Treat every new submission as a
+            # fresh review window and clear the previous decision.
+            registration.submitted_at = timezone.now()
+            registration.signed_at = timezone.localdate()
             registration.approval_deadline = timezone.now() + timedelta(minutes=60)
+            registration.approved_at = None
+            registration.approved_by = None
             registration.rejection_reason = ""
-            registration.save(update_fields=["submitted_at", "signed_at", "approval_deadline", "rejection_reason", "updated_at"])
+            registration.save(update_fields=["submitted_at", "signed_at", "approval_deadline", "approved_at", "approved_by", "rejection_reason", "updated_at"])
             AuditLog.objects.create(user=request.user, action="SUBMIT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Submitted Diligent registration for {employee.name}")
             for admin_user in User.objects.filter(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN], is_active=True):
                 Notification.objects.create(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals")
@@ -716,8 +719,9 @@ def approve_compliance(request, pk):
     registration.status = GuardComplianceRegistration.Status.APPROVED
     registration.approved_by = request.user
     registration.approved_at = timezone.now()
+    registration.approval_deadline = None
     registration.rejection_reason = ""
-    registration.save(update_fields=["status", "approved_by", "approved_at", "rejection_reason", "updated_at"])
+    registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "rejection_reason", "updated_at"])
     AuditLog.objects.create(user=request.user, action="APPROVE", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Approved Diligent registration for {registration.employee.name}")
     if registration.employee.user_id:
         Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.SUCCESS, title="Diligent registration approved", message="Your registration is approved. You can now download your Diligent PDF.", link="compliance")
@@ -734,11 +738,34 @@ def reject_compliance(request, pk):
     registration.status = GuardComplianceRegistration.Status.REJECTED
     registration.approved_by = request.user
     registration.approved_at = None
+    registration.approval_deadline = None
     registration.rejection_reason = reason
-    registration.save(update_fields=["status", "approved_by", "approved_at", "rejection_reason", "updated_at"])
+    registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "rejection_reason", "updated_at"])
     AuditLog.objects.create(user=request.user, action="REJECT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Rejected Diligent registration for {registration.employee.name}")
     if registration.employee.user_id:
         Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration needs changes", message=reason, link="compliance")
+    return Response(_compliance_admin_response(registration, request))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def request_compliance_resubmission(request, pk):
+    """Return a form to the guard for corrections, including after approval."""
+    if not _compliance_admin_allowed(request):
+        raise PermissionDenied("Only Admin or Super Admin users can request registration changes.")
+    reason = (request.data.get("reason") or "Please review your registration and submit it again.").strip()
+    registration = get_object_or_404(GuardComplianceRegistration.objects.select_related("employee"), pk=pk)
+    registration.status = GuardComplianceRegistration.Status.REJECTED
+    registration.approved_by = request.user
+    registration.approved_at = None
+    registration.approval_deadline = None
+    registration.submitted_at = None
+    registration.signed_at = None
+    registration.rejection_reason = reason
+    registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "submitted_at", "signed_at", "rejection_reason", "updated_at"])
+    AuditLog.objects.create(user=request.user, action="REQUEST_RESUBMISSION", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Requested resubmission of Diligent registration for {registration.employee.name}")
+    if registration.employee.user_id:
+        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration resubmission required", message=reason, link="compliance")
     return Response(_compliance_admin_response(registration, request))
 
 
