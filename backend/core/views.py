@@ -38,7 +38,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
@@ -320,7 +320,18 @@ def build_compliance_pdf(employee, registration, request=None):
         table = Table(rows, colWidths=[62 * mm, 113 * mm])
         table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d9e2ec")), ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f4f8")), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
         return table
-    story.extend([Paragraph("Employment details", heading_style), Spacer(1, 2 * mm), section_table(employment_rows), Spacer(1, 5 * mm), Paragraph("Next of kin", heading_style), Spacer(1, 2 * mm), section_table(kin_rows), Spacer(1, 5 * mm)])
+    story.extend([
+        Paragraph("Employment details", heading_style),
+        Spacer(1, 2 * mm),
+        section_table(employment_rows),
+        Spacer(1, 5 * mm),
+        KeepTogether([
+            Paragraph("Next of kin", heading_style),
+            Spacer(1, 2 * mm),
+            section_table(kin_rows),
+        ]),
+        Spacer(1, 5 * mm),
+    ])
 
     equality_rows = [
         [Paragraph("Ethnicity", label_style), Paragraph(value(registration.ethnicity), body_style)],
