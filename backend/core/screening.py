@@ -243,56 +243,9 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
         case = self.get_object()
         if case.status != "COMPLETED":
             raise ValidationError("PDF download is available after screening is completed.")
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-        stream = BytesIO()
-        doc = SimpleDocTemplate(stream, pagesize=A4, title="Employee Security Screening Form")
-        styles = getSampleStyleSheet()
-        story = [Paragraph("Employee Security Screening Form", styles["Title"]), Paragraph(escape(f"{case.form_id} | {case.employee.name} | Completed"), styles["Normal"])]
-        def entry(label, text):
-            story.append(Paragraph(escape(f"{label}: {text if text not in ('', None) else 'N/A'}").replace("\n", "<br/>"), styles["Normal"]))
-            story.append(Spacer(1, 5))
-        def fields_section(title, fields):
-            story.append(Paragraph(title, styles["Heading2"]))
-            for key, label in fields:
-                entry(label, case.form_data.get(key, ""))
-
-        def rows_section(title, key):
-            story.append(Paragraph(title, styles["Heading2"]))
-            if not case.form_data.get(key):
-                entry("Not applicable", "N/A")
-            for number, row in enumerate(case.form_data.get(key, []), 1):
-                for name in ROW_FIELDS[key]:
-                    if name == "activity_type":
-                        continue  # Legacy field, not present in the source form.
-                    entry(f"{number}. {name.replace('_', ' ').title()}", row.get(name, ""))
-
-        fields_section("1. Personal details", [("full_name", "Full name as shown on ID"), ("previous_names", "Previous names and dates used"), ("date_of_birth", "Date of birth"), ("national_insurance_number", "National Insurance number (if requested securely by the company)"), ("phone", "Contact telephone number"), ("email", "Email address"), ("job_title", "Job title / position applied for"), ("proposed_start_date", "Proposed start date")])
-        fields_section("2. Current address", [("current_address", "Full address including postcode"), ("moved_in", "Date moved to this address")])
-        rows_section("Previous addresses", "addresses")
-        rows_section("3. Employment and activity history", "activities")
-        rows_section("4. Employer / referee contact details", "referees")
-        rows_section("5. Gaps or periods not covered above", "gaps")
-        rows_section("6. Education training and qualifications", "education")
-        fields_section("7. Right to work and role-specific checks", [("sia_held", "Current SIA licence if required for this role"), ("sia_type", "Licence type (if requested)"), ("sia_number", "Licence number (if requested)"), ("history_notes", "Employment / activity history explanation")])
-        story.append(Paragraph("8. Declaration and permission to verify details", styles["Heading2"]))
-        entry("Declaration", DECLARATION)
-        entry("Accepted", "Yes" if case.form_data.get("declaration_accepted") else "No")
-        entry("Employee signature", case.form_data.get("signature_name"))
-        entry("Print full name", case.form_data.get("print_name") or case.form_data.get("full_name"))
-        entry("Date", case.form_data.get("signed_date") or case.submitted_at)
-        story.append(Paragraph("Privacy notice", styles["Heading2"]))
-        story.append(Paragraph("The information on this form will be used to carry out pre-employment security screening and to assess suitability for the role. It will be accessed only by people who need it for this purpose and handled in line with the company's privacy notice and applicable data protection law. The company should provide you with its full privacy notice, including details of the lawful basis for processing, retention periods and your data protection rights.", styles["Normal"]))
-        story.append(Paragraph("Please return the completed form using the secure method provided by the company. Do not email sensitive identity documents or your National Insurance number unless the company has confirmed that the method is secure.", styles["Normal"]))
-        if admin_allowed(request.user):
-            story.append(Paragraph("For office use only", styles["Heading2"]))
-            for key, value in case.office_data.items():
-                entry(key.replace("_", " ").title(), value)
-            entry("Screening completed by", case.completed_by.get_username() if case.completed_by else "")
-            entry("Screening completed date", case.completed_at)
-        doc.build(story)
+        from .screening_pdf import build_screening_pdf
+        pdf_bytes = build_screening_pdf(case, include_office=admin_allowed(request.user))
         filename = re.sub(r"[^A-Za-z0-9 ._-]", "", case.employee.name) or case.form_id
-        result = HttpResponse(stream.getvalue(), content_type="application/pdf")
+        result = HttpResponse(pdf_bytes, content_type="application/pdf")
         result["Content-Disposition"] = f'attachment; filename="Security Screening - {filename}.pdf"'
         return result
