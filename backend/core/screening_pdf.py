@@ -1,8 +1,9 @@
-"""Fill the original Word form's PDF, preserving its printed layout exactly.
+"""Fill the original Word form and reflow its sections to remove blank space.
 
 The blank source template contains no employee data. Coordinates are extracted
 from its actual table cells; all variable values remain escaped, selectable text.
 """
+from copy import copy
 from datetime import datetime
 from io import BytesIO
 import json
@@ -10,7 +11,8 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from django.utils import timezone
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
+from pypdf.generic import RectangleObject
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfgen.canvas import Canvas
@@ -48,6 +50,52 @@ def period(row):
     start = display_date(row.get("from_month"), month=True)
     end = display_date(row["to_month"], month=True) if row.get("to_month") else "Current"
     return f"{start} - {end}"
+
+
+def compact_pages(pages, layout, data):
+    """Move original vector table sections; retain fonts, widths and wording.
+
+    Crop only unused repeat rows and blank margins, never populated answers.
+    Keep headings with their tables and keep the signature date with signature.
+    """
+    def end_row(page, table, count):
+        rows = layout["pages"][page]["tables"][table]["rows"]
+        index = min(max(1, count), len(rows) - 1)
+        return max(box[3] for box in rows[index] if box) + .5
+
+    activity_count = len(data.get("activities", []))
+    activity = [(0, 594, end_row(0, 2, min(activity_count, 4)))]
+    if activity_count > 4:
+        activity.append((1, 45, end_row(1, 0, activity_count - 4)))
+    activity.append((1, 134, 155))
+    blocks = [
+        [(0, 45, 404)],
+        [(0, 414, 588)],
+        activity,
+        [(2, 45, end_row(2, 0, len(data.get("referees", [])))), (2, 206, 227)],
+        [(2, 234, end_row(2, 1, len(data.get("gaps", []))))],
+        [(2, 420, end_row(2, 2, len(data.get("education", []))))],
+        [(2, 568, end_row(2, 3, 3))],
+        [(3, 45, 177), (4, 45, 75)],
+        [(4, 88, 172)],
+        [(5, 45, 411)],
+    ]
+    writer = PdfWriter()
+    width, height = 595.32, 841.92
+    cursor = 45
+    target = writer.add_blank_page(width=width, height=height)
+    for block in blocks:
+        needed = sum(bottom - top for _, top, bottom in block)
+        if cursor + needed > height - 45:
+            target = writer.add_blank_page(width=width, height=height)
+            cursor = 45
+        for index, top, bottom in block:
+            region = copy(pages[index])
+            region.cropbox = RectangleObject((0, height - bottom, width, height - top))
+            target.merge_transformed_page(region, Transformation().translate(ty=top - cursor))
+            cursor += bottom - top
+        cursor += 8
+    return writer
 
 
 def build_screening_pdf(case, include_office=False):
@@ -166,6 +214,8 @@ def build_screening_pdf(case, include_office=False):
         page.merge_page(overlays.pages[index])
         writer.add_page(page)
 
+    writer = compact_pages(writer.pages, layout, data)
+
     if overflow:
         continuation = BytesIO()
         document = SimpleDocTemplate(continuation, pagesize=(595.32, 841.92), leftMargin=51, rightMargin=51, topMargin=45, bottomMargin=45)
@@ -181,22 +231,19 @@ def build_screening_pdf(case, include_office=False):
         document.build(story)
         for page in PdfReader(BytesIO(continuation.getvalue())).pages:
             writer.add_page(page)
-        # Update only page counters when continuation pages were necessary.
-        counters = BytesIO()
-        c = Canvas(counters, pagesize=(595.32, 841.92), pageCompression=0)
-        total = len(writer.pages)
-        for index in range(total):
-            c.setFillColor(colors.white)
-            c.rect(475, 20, 75, 20, fill=1, stroke=0)
-            c.setFillColor(colors.HexColor("#5F6F82"))
-            c.setFont("Helvetica", 7)
-            c.drawRightString(544.3, 27, f"Page {index + 1} of {total}")
-            if index >= len(source.pages):
-                c.drawString(51, 27, "CONFIDENTIAL — EMPLOYEE SCREENING INFORMATION")
-            c.showPage()
-        c.save()
-        for index, page in enumerate(PdfReader(BytesIO(counters.getvalue())).pages):
-            writer.pages[index].merge_page(page)
+
+    counters = BytesIO()
+    c = Canvas(counters, pagesize=(595.32, 841.92), pageCompression=0)
+    total = len(writer.pages)
+    for index in range(total):
+        c.setFillColor(colors.HexColor("#5F6F82"))
+        c.setFont("Helvetica", 7)
+        c.drawRightString(544.3, 27, f"Page {index + 1} of {total}")
+        c.drawString(51, 27, "CONFIDENTIAL — EMPLOYEE SCREENING INFORMATION")
+        c.showPage()
+    c.save()
+    for index, page in enumerate(PdfReader(BytesIO(counters.getvalue())).pages):
+        writer.pages[index].merge_page(page)
 
     writer.add_metadata({"/Title": "Employee Security Screening Form", "/Subject": case.form_id})
     result = BytesIO()

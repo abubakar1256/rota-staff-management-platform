@@ -77,11 +77,11 @@ class ScreeningWorkflowTests(APITestCase):
         self.assertTrue(pdf.content.startswith(b"%PDF"))
         from pypdf import PdfReader
         guard_pages = PdfReader(BytesIO(pdf.content)).pages
-        self.assertEqual(len(guard_pages), 6)
+        self.assertEqual(len(guard_pages), 3)
         self.assertIn("EMPLOYEE SECURITY SCREENING FORM", guard_pages[0].extract_text())
         self.assertIn("Your information", guard_pages[0].extract_text())
-        self.assertIn("FOR OFFICE USE ONLY", guard_pages[5].extract_text())
-        self.assertNotIn("VERIFIED", guard_pages[5].extract_text())
+        self.assertIn("FOR OFFICE USE ONLY", guard_pages[-1].extract_text())
+        self.assertNotIn("VERIFIED", guard_pages[-1].extract_text())
         self.assertNotIn("PRIVATE-OFFICE-ONLY", "\n".join(page.extract_text() for page in guard_pages))
         self.client.force_authenticate(self.admin)
         with patch("reportlab.rl_config.pageCompression", 0):
@@ -135,7 +135,7 @@ class ScreeningWorkflowTests(APITestCase):
     def test_new_forms_have_no_fixed_screening_period(self):
         self.assertIsNone(SecurityScreening.objects.get(pk=self.case_id).screening_months)
 
-    def test_office_pdf_preserves_template_pages_and_tables(self):
+    def test_office_pdf_compacts_blank_space_and_preserves_template_sections(self):
         from pypdf import PdfReader
         self.assertEqual(self.submit().status_code, 200)
         self.client.force_authenticate(self.admin)
@@ -143,11 +143,19 @@ class ScreeningWorkflowTests(APITestCase):
         result = self.client.get(f"/api/security-screenings/{self.case_id}/pdf/")
         self.assertEqual(result.status_code, 200)
         pages = PdfReader(BytesIO(result.content)).pages
-        self.assertEqual(len(pages), 6)
+        self.assertEqual(len(pages), 3)
         self.assertIn("EMPLOYEE SECURITY SCREENING FORM", pages[0].extract_text())
         self.assertIn("Your information", pages[0].extract_text())
         self.assertIn("01/01/1990", pages[0].extract_text())
-        self.assertIn("FOR OFFICE USE ONLY", pages[5].extract_text())
+        self.assertIn("FOR OFFICE USE ONLY", pages[-1].extract_text())
+        text = "\n".join(page.extract_text() for page in pages)
+        for heading in ("Personal details", "Current address", "Employment and activity history",
+                        "Employer / referee contact details", "Gaps or periods not covered above",
+                        "Education, training and qualifications", "Right to work and role-specific checks",
+                        "Declaration and permission to verify details", "Privacy notice"):
+            self.assertIn(heading, text)
+        for index, page in enumerate(pages, 1):
+            self.assertIn(f"Page {index} of 3", page.extract_text())
         self.assertAlmostEqual(float(pages[0].mediabox.width), 595.32, places=2)
 
     def test_pdf_retains_extra_rows_and_long_answers_in_continuations(self):
@@ -155,11 +163,12 @@ class ScreeningWorkflowTests(APITestCase):
         from pypdf import PdfReader
         case = SecurityScreening.objects.get(pk=self.case_id)
         case.form_data = deepcopy(self.data)
+        baseline_pages = len(PdfReader(BytesIO(build_screening_pdf(case, include_office=True))).pages)
         case.form_data["full_name"] = "Long answer " * 100 + "ANSWERENDMARKER"
         case.form_data["activities"] = [{"organisation": f"EMPLOYER{i}", "from_month": "2025-01", "to_month": "2025-02"} for i in range(8)]
         result = build_screening_pdf(case, include_office=True)
         pages = PdfReader(BytesIO(result)).pages
-        self.assertGreater(len(pages), 6)
+        self.assertGreater(len(pages), baseline_pages)
         text = "\n".join(page.extract_text() for page in pages)
         self.assertIn("ANSWERENDMARKER", text)
         for i in range(8):
