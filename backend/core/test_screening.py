@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from .models import AuditLog, Employee, EmployeeDocument, SecurityScreening, UserProfile
-from .screening import CHECKS, month_label, SecurityScreeningViewSet
+from .screening import CHECKS, SecurityScreeningViewSet
 
 
 class ScreeningWorkflowTests(APITestCase):
@@ -28,7 +28,7 @@ class ScreeningWorkflowTests(APITestCase):
             "full_name": "Screen Guard", "date_of_birth": "1990-01-01", "phone": "0123456789", "email": "guard@example.com",
             "job_title": "Security Guard", "current_address": "Test address", "moved_in": "2020-01", "sia_held": "N/A",
             "signature_name": "Screen Guard", "declaration_accepted": True,
-            "activities": [{"activity_type": "Employment", "from_month": month_label(today.year * 12 + today.month - 60), "to_month": "", "organisation": "Test employer"}],
+            "activities": [{"from_month": today.strftime("%Y-%m"), "to_month": "", "organisation": "Test employer"}],
         }
 
     def submit(self, data=None):
@@ -89,10 +89,7 @@ class ScreeningWorkflowTests(APITestCase):
         self.assertIsNone(case.completed_at)
         self.assertTrue(AuditLog.objects.filter(model_name="SecurityScreening", action="REVIEW").exists())
 
-    def test_gaps_bad_dates_and_foreign_documents_rejected(self):
-        incomplete = deepcopy(self.data)
-        incomplete["activities"][0]["from_month"] = timezone.localdate().strftime("%Y-%m")
-        self.assertEqual(self.submit(incomplete).status_code, 400)
+    def test_bad_dates_and_foreign_documents_rejected(self):
         invalid = deepcopy(self.data)
         invalid["activities"][0]["from_month"] = "2026-99"
         self.assertEqual(self.submit(invalid).status_code, 400)
@@ -100,13 +97,35 @@ class ScreeningWorkflowTests(APITestCase):
         invalid = {**self.data, "document_ids": [foreign.pk]}
         self.assertEqual(self.submit(invalid).status_code, 400)
 
-    def test_rejected_guard_can_resubmit_and_checks_gate_completion(self):
+    def test_rejected_guard_can_resubmit(self):
         self.assertEqual(self.submit().status_code, 200)
         self.client.force_authenticate(self.admin)
-        self.assertEqual(self.review(office_data={}).status_code, 400)
+        self.assertEqual(self.review("IN_REVIEW", office_data={}).status_code, 200)
         self.assertEqual(self.review("REJECTED", guard_message="Update your evidence").status_code, 200)
         self.client.force_authenticate(self.guard)
         self.assertEqual(self.submit().status_code, 200)
+
+    def test_legacy_period_does_not_impose_five_year_submission_rule(self):
+        SecurityScreening.objects.filter(pk=self.case_id).update(screening_months=60)
+        response = self.client.get("/api/security-screenings/my/")
+        self.assertNotIn("screening_months", response.data)
+        self.assertNotIn("gaps", response.data)
+        self.assertEqual(self.submit().status_code, 200)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.review(office_data={}).status_code, 200)
+
+    def test_source_form_allows_na_and_no_mandatory_employment_record(self):
+        data = {**self.data, "date_of_birth": "N/A", "email": "N/A", "moved_in": "N/A", "activities": [],
+                "addresses": [{"address": "N/A", "from_month": "N/A", "to_month": "N/A"}],
+                "gaps": [{"from_month": "N/A", "to_month": "N/A", "reason": "N/A"}],
+                "sia_held": "Yes", "sia_number": ""}
+        response = self.submit(data)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["form_data"]["print_name"], data["full_name"])
+        self.assertEqual(response.data["form_data"]["signed_date"], timezone.localdate().isoformat())
+
+    def test_new_forms_have_no_fixed_screening_period(self):
+        self.assertIsNone(SecurityScreening.objects.get(pk=self.case_id).screening_months)
 
     def test_office_data_cannot_be_injected_in_guard_draft(self):
         result = self.client.patch("/api/security-screenings/my/", {"form_data": {**self.data, "office_data": {"identity": "VERIFIED"}}, "status": "COMPLETED", "office_data": {"identity": "VERIFIED"}}, format="json")

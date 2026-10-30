@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from .models import AuditLog, Employee, EmployeeDocument, Notification, SecurityScreening, ScreeningSubmission
 from .permissions import role_of
 
-PERSONAL_FIELDS = ["full_name", "previous_names", "date_of_birth", "national_insurance_number", "phone", "email", "job_title", "proposed_start_date", "current_address", "moved_in", "sia_held", "sia_type", "sia_number", "history_notes", "signature_name"]
+PERSONAL_FIELDS = ["full_name", "previous_names", "date_of_birth", "national_insurance_number", "phone", "email", "job_title", "proposed_start_date", "current_address", "moved_in", "sia_held", "sia_type", "sia_number", "history_notes", "signature_name", "print_name", "signed_date"]
 ROW_FIELDS = {
     "addresses": ["address", "from_month", "to_month"],
     "activities": ["activity_type", "from_month", "to_month", "organisation", "duties", "location", "reason_ended"],
@@ -27,7 +27,11 @@ ROW_FIELDS = {
     "education": ["provider", "course", "from_month", "to_month", "evidence"],
 }
 CHECKS = ["identity", "right_to_work", "history", "gaps", "references", "other_checks"]
-DECLARATION = "I confirm that the information I have provided is complete and accurate to the best of my knowledge. I understand that the company may verify it, contact employers, referees and education providers, and request further information or supporting documents. Any additional checks will be carried out only where appropriate for the role and in accordance with applicable law and the company's screening procedure."
+DECLARATION = "I confirm that the information I have provided on this form is, to the best of my knowledge, complete and accurate. I understand that the company may make reasonable checks to verify the information supplied, including contacting employers, referees, education providers or other relevant organisations, and may ask me for further information or supporting documents.\n\nI understand that any additional checks, including criminal record or financial checks, will be carried out only where appropriate for the role and in accordance with applicable law and the company's screening procedure."
+
+
+def not_applicable(value):
+    return isinstance(value, str) and value.strip().upper() == "N/A"
 
 
 def admin_allowed(user):
@@ -38,35 +42,9 @@ def month_number(value):
     if not isinstance(value, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
         raise ValidationError("History dates must use YYYY-MM.")
     year, month = map(int, value.split("-"))
-    if not 1900 <= year <= timezone.localdate().year + 1:
-        raise ValidationError("History year is outside the supported range.")
+    if not 1 <= year <= 9999:
+        raise ValidationError("Enter a valid year.")
     return year * 12 + month - 1
-
-
-def month_label(number):
-    return f"{number // 12:04d}-{number % 12 + 1:02d}"
-
-
-def timeline_gaps(data, months):
-    today = timezone.localdate()
-    end = today.year * 12 + today.month - 1
-    start = end - months + 1
-    covered = set()
-    for row in data.get("activities", []) + data.get("gaps", []):
-        if not row.get("from_month"):
-            continue
-        left = month_number(row["from_month"])
-        right = month_number(row["to_month"]) if row.get("to_month") else end
-        covered.update(range(max(left, start), min(right, end) + 1))
-    missing = []
-    for number in range(start, end + 1):
-        if number in covered:
-            continue
-        if missing and missing[-1][1] == number - 1:
-            missing[-1][1] = number
-        else:
-            missing.append([number, number])
-    return [{"from_month": month_label(left), "to_month": month_label(right)} for left, right in missing]
 
 
 class ScreeningDataSerializer(serializers.Serializer):
@@ -82,19 +60,19 @@ class ScreeningDataSerializer(serializers.Serializer):
         return fields
 
     def validate(self, attrs):
-        for field in ("date_of_birth", "proposed_start_date"):
-            if attrs.get(field):
+        for field in ("date_of_birth", "proposed_start_date", "signed_date"):
+            if attrs.get(field) and not not_applicable(attrs[field]):
                 try:
                     parsed = date.fromisoformat(attrs[field])
                 except ValueError:
                     raise ValidationError({field: "Use YYYY-MM-DD."})
                 if field == "date_of_birth" and parsed > timezone.localdate():
                     raise ValidationError({field: "Date of birth cannot be in the future."})
-        if attrs.get("email"):
+        if attrs.get("email") and not not_applicable(attrs["email"]):
             serializers.EmailField().run_validation(attrs["email"])
         if attrs.get("sia_held", "") not in {"", "Yes", "No", "N/A"}:
             raise ValidationError({"sia_held": "Select Yes, No or N/A."})
-        if attrs.get("moved_in"):
+        if attrs.get("moved_in") and not not_applicable(attrs["moved_in"]):
             month_number(attrs["moved_in"])
         for key, allowed in ROW_FIELDS.items():
             cleaned = []
@@ -105,9 +83,9 @@ class ScreeningDataSerializer(serializers.Serializer):
                 if not any(row.values()):
                     continue
                 for name in ("from_month", "to_month"):
-                    if row.get(name):
+                    if row.get(name) and not not_applicable(row[name]):
                         month_number(row[name])
-                if row.get("from_month") and row.get("to_month") and row["from_month"] > row["to_month"]:
+                if row.get("from_month") and row.get("to_month") and not any(not_applicable(row[k]) for k in ("from_month", "to_month")) and row["from_month"] > row["to_month"]:
                     raise ValidationError({key: "From date must be before the end date."})
                 cleaned.append(row)
             attrs[key] = cleaned
@@ -120,9 +98,9 @@ class ScreeningDataSerializer(serializers.Serializer):
 
 def response_data(case, user):
     data = {"id": case.pk, "form_id": case.form_id, "employee_id": case.employee.employee_id, "employee_name": case.employee.name,
-            "status": case.status, "screening_months": case.screening_months, "form_data": case.form_data,
+            "status": case.status, "form_data": case.form_data,
             "guard_message": case.guard_message, "submitted_at": case.submitted_at, "completed_at": case.completed_at,
-            "updated_at": case.updated_at, "gaps": timeline_gaps(case.form_data, case.screening_months),
+            "updated_at": case.updated_at,
             "documents": [{"id": d.pk, "document_type": d.document_type, "verification_status": d.verification_status, "file_url": f"/api/media/document/{d.pk}/" if d.file or d.file_url else None} for d in case.employee.documents.all()]}
     if admin_allowed(user):
         data["office_data"] = case.office_data
@@ -198,21 +176,14 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
                 raise PermissionDenied("Only the guard can submit their form.")
             self.save_guard_data(case, request, case.employee)
             data = case.form_data
-            required = ["full_name", "date_of_birth", "phone", "email", "job_title", "current_address", "moved_in", "sia_held", "signature_name"]
+            required = ["full_name", "signature_name"]
             missing = [name.replace("_", " ") for name in required if not data.get(name, "").strip()]
             if missing or not data.get("declaration_accepted"):
                 raise ValidationError("Complete the declaration and required details: " + ", ".join(missing))
-            for key in ROW_FIELDS:
-                for row in data.get(key, []):
-                    needed = {"addresses": ["address", "from_month", "to_month"], "activities": ["activity_type", "from_month", "organisation"], "referees": ["employer", "name", "from_month"], "gaps": ["from_month", "to_month", "reason"], "education": ["provider", "course", "from_month"]}[key]
-                    if any(not row.get(name) for name in needed):
-                        raise ValidationError(f"Complete the required details and dates in {key}.")
-                    if key == "referees" and not (row.get("email") or row.get("phone") or row.get("notes")):
-                        raise ValidationError("Add referee contact details or explain why they are unavailable.")
-            if not data.get("activities") or timeline_gaps(data, case.screening_months):
-                raise ValidationError("Account for the complete screening period with activities or gap explanations.")
-            if data["sia_held"] == "Yes" and not data.get("sia_number"):
-                raise ValidationError("Enter your SIA licence number.")
+            if not data.get("print_name"):
+                data["print_name"] = data["full_name"]
+            if not data.get("signed_date"):
+                data["signed_date"] = timezone.localdate().isoformat()
             before = {"status": case.status}
             case.status = "SUBMITTED"
             case.submitted_at = timezone.now()
@@ -234,15 +205,14 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
             raise PermissionDenied("Only administrators can record screening checks.")
         with transaction.atomic():
             case = self.get_locked_queryset().get(pk=self.get_object().pk)
-            months = serializers.IntegerField(min_value=1, max_value=120).run_validation(request.data.get("screening_months", case.screening_months))
             decision = serializers.ChoiceField(choices=SecurityScreening.Status.values).run_validation(request.data.get("status", case.status))
             message = serializers.CharField(allow_blank=True, max_length=4000).run_validation(request.data.get("guard_message", ""))
-            before = {"status": case.status, "office_data": case.office_data, "screening_months": case.screening_months}
+            before = {"status": case.status, "office_data": case.office_data}
             office = request.data.get("office_data", {})
             if not isinstance(office, dict):
                 raise ValidationError("Office checklist must be an object.")
             cleaned = {}
-            for key in CHECKS + ["other_checks_required", "outstanding_actions", "internal_notes", "reference_records"]:
+            for key in CHECKS + ["received_by", "received_date", "gaps_follow_up", "other_checks_required", "outstanding_actions", "internal_notes", "reference_records", "decision_authorisation"]:
                 cleaned[key] = serializers.CharField(allow_blank=True, max_length=8000).run_validation(office.get(key, ""))
                 if key in CHECKS and cleaned[key] not in {"", "PENDING", "VERIFIED", "N/A"}:
                     raise ValidationError("Check results must be Pending, Verified or N/A.")
@@ -253,13 +223,10 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
                 raise ValidationError("Provide instructions for the guard.")
             if decision in {"IN_REVIEW", "COMPLETED", "REJECTED"} and not case.submissions.exists():
                 raise ValidationError("Wait for the guard to submit their form first.")
-            if decision == "COMPLETED" and (any(cleaned[key] not in {"VERIFIED", "N/A"} for key in CHECKS) or cleaned["outstanding_actions"].strip() or timeline_gaps(case.form_data, months)):
-                raise ValidationError("Resolve all checks, outstanding actions and history gaps before completing screening.")
             if decision == "SUBMITTED" and case.status != "SUBMITTED":
                 raise ValidationError("Only a guard submission can set the submitted status.")
             if case.status == "COMPLETED" and decision not in {"COMPLETED", "CHANGES_REQUIRED"}:
                 raise ValidationError("Request changes to reopen a completed screening.")
-            case.screening_months = months
             case.office_data = cleaned
             case.status = decision
             case.guard_message = message
@@ -286,21 +253,44 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
         def entry(label, text):
             story.append(Paragraph(escape(f"{label}: {text if text not in ('', None) else 'N/A'}").replace("\n", "<br/>"), styles["Normal"]))
             story.append(Spacer(1, 5))
-        for key in PERSONAL_FIELDS:
-            entry(key.replace("_", " ").title(), case.form_data.get(key, ""))
-        for key, fields in ROW_FIELDS.items():
-            story.append(Paragraph(key.title(), styles["Heading2"]))
+        def fields_section(title, fields):
+            story.append(Paragraph(title, styles["Heading2"]))
+            for key, label in fields:
+                entry(label, case.form_data.get(key, ""))
+
+        def rows_section(title, key):
+            story.append(Paragraph(title, styles["Heading2"]))
+            if not case.form_data.get(key):
+                entry("Not applicable", "N/A")
             for number, row in enumerate(case.form_data.get(key, []), 1):
-                for name in fields:
+                for name in ROW_FIELDS[key]:
+                    if name == "activity_type":
+                        continue  # Legacy field, not present in the source form.
                     entry(f"{number}. {name.replace('_', ' ').title()}", row.get(name, ""))
+
+        fields_section("1. Personal details", [("full_name", "Full name as shown on ID"), ("previous_names", "Previous names and dates used"), ("date_of_birth", "Date of birth"), ("national_insurance_number", "National Insurance number (if requested securely by the company)"), ("phone", "Contact telephone number"), ("email", "Email address"), ("job_title", "Job title / position applied for"), ("proposed_start_date", "Proposed start date")])
+        fields_section("2. Current address", [("current_address", "Full address including postcode"), ("moved_in", "Date moved to this address")])
+        rows_section("Previous addresses", "addresses")
+        rows_section("3. Employment and activity history", "activities")
+        rows_section("4. Employer / referee contact details", "referees")
+        rows_section("5. Gaps or periods not covered above", "gaps")
+        rows_section("6. Education training and qualifications", "education")
+        fields_section("7. Right to work and role-specific checks", [("sia_held", "Current SIA licence if required for this role"), ("sia_type", "Licence type (if requested)"), ("sia_number", "Licence number (if requested)"), ("history_notes", "Employment / activity history explanation")])
+        story.append(Paragraph("8. Declaration and permission to verify details", styles["Heading2"]))
         entry("Declaration", DECLARATION)
         entry("Accepted", "Yes" if case.form_data.get("declaration_accepted") else "No")
-        entry("Submitted", case.submitted_at)
-        entry("Screening completed", case.completed_at)
+        entry("Employee signature", case.form_data.get("signature_name"))
+        entry("Print full name", case.form_data.get("print_name") or case.form_data.get("full_name"))
+        entry("Date", case.form_data.get("signed_date") or case.submitted_at)
+        story.append(Paragraph("Privacy notice", styles["Heading2"]))
+        story.append(Paragraph("The information on this form will be used to carry out pre-employment security screening and to assess suitability for the role. It will be accessed only by people who need it for this purpose and handled in line with the company's privacy notice and applicable data protection law. The company should provide you with its full privacy notice, including details of the lawful basis for processing, retention periods and your data protection rights.", styles["Normal"]))
+        story.append(Paragraph("Please return the completed form using the secure method provided by the company. Do not email sensitive identity documents or your National Insurance number unless the company has confirmed that the method is secure.", styles["Normal"]))
         if admin_allowed(request.user):
             story.append(Paragraph("For office use only", styles["Heading2"]))
             for key, value in case.office_data.items():
                 entry(key.replace("_", " ").title(), value)
+            entry("Screening completed by", case.completed_by.get_username() if case.completed_by else "")
+            entry("Screening completed date", case.completed_at)
         doc.build(story)
         filename = re.sub(r"[^A-Za-z0-9 ._-]", "", case.employee.name) or case.form_id
         result = HttpResponse(stream.getvalue(), content_type="application/pdf")

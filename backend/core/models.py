@@ -604,7 +604,8 @@ class SecurityScreening(models.Model):
     employee = models.OneToOneField(Employee, on_delete=models.PROTECT, related_name="security_screening")
     form_id = models.CharField(max_length=40, unique=True, editable=False)
     status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
-    screening_months = models.PositiveSmallIntegerField(default=60)
+    # Retained for existing records; the source form prescribes no fixed period.
+    screening_months = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
     form_data = models.JSONField(default=dict, blank=True)
     office_data = models.JSONField(default=dict, blank=True)
     guard_message = models.TextField(blank=True)
