@@ -652,7 +652,7 @@ def employee_compliance(request, employee_id=None):
             registration.rejection_reason = ""
             registration.save(update_fields=["submitted_at", "signed_at", "approval_deadline", "approved_at", "approved_by", "rejection_reason", "updated_at"])
             AuditLog.objects.create(user=request.user, action="SUBMIT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Submitted Diligent registration for {employee.name}")
-            for admin_user in User.objects.filter(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN], is_active=True):
+            for admin_user in User.objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN])):
                 Notification.objects.create(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals")
         return Response({"registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data, "employee": _compliance_employee_data(employee, request)})
     documents = list(employee.documents.all())
@@ -1500,7 +1500,8 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
         leave.approved_by = request.user
         leave.approved_at = timezone.now()
         leave.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
-        Notification.objects.create(user=request.user, notification_type=Notification.Type.SUCCESS, title="Leave approved", message=f"Leave for {leave.employee.name} was approved.", link="leave")
+        if leave.employee.user_id:
+            Notification.objects.create(user=leave.employee.user, notification_type=Notification.Type.SUCCESS, title="Leave approved", message="Your leave request was approved.", link="leave")
         AuditLog.objects.create(user=request.user, action="APPROVE", model_name="LeaveRecord", object_id=leave.pk, summary=f"Approved leave for {leave.employee.name}")
         return Response(self.get_serializer(leave).data)
 
@@ -1511,7 +1512,8 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
         leave.approved_by = request.user
         leave.approved_at = timezone.now()
         leave.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
-        Notification.objects.create(user=request.user, notification_type=Notification.Type.WARNING, title="Leave rejected", message=f"Leave for {leave.employee.name} was rejected.", link="leave")
+        if leave.employee.user_id:
+            Notification.objects.create(user=leave.employee.user, notification_type=Notification.Type.WARNING, title="Leave rejected", message="Your leave request was rejected.", link="leave")
         AuditLog.objects.create(user=request.user, action="REJECT", model_name="LeaveRecord", object_id=leave.pk, summary=f"Rejected leave for {leave.employee.name}")
         return Response(self.get_serializer(leave).data)
 
@@ -2008,8 +2010,14 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsInternalUser]
 
     def get_queryset(self):
-        create_expiry_notifications(self.request.user)
-        return Notification.objects.filter(Q(user=self.request.user) | Q(user__isnull=True))
+        user = self.request.user
+        create_expiry_notifications(user)
+        # Unassigned legacy alerts belong to the admin inbox, never a guard's.
+        # Use the same scope for list, detail and mark_read to prevent ID access.
+        audience = Q(user=user)
+        if role_of(user) in {"SUPER_ADMIN", "ADMIN"}:
+            audience |= Q(user__isnull=True)
+        return Notification.objects.filter(audience)
 
     @action(detail=False, methods=["post"])
     def check_expiry(self, request):
@@ -2169,14 +2177,24 @@ def report_print(request):
 def create_expiry_notifications(user):
     today = timezone.localdate()
     window_end = today + timedelta(days=30)
-    documents = EmployeeDocument.objects.filter(expiry_date__isnull=False, expiry_date__lte=window_end).select_related("employee")
+    documents = EmployeeDocument.objects.filter(expiry_date__isnull=False, expiry_date__lte=window_end).select_related("employee__user__profile")
+    admin_inbox = user is None or role_of(user) in {"SUPER_ADMIN", "ADMIN"}
+    if not admin_inbox:
+        if role_of(user) != "EMPLOYEE":
+            return 0
+        documents = documents.filter(employee__user=user)
     created = 0
     for document in documents:
         state = "expired" if document.expiry_date < today else "expires soon"
         title = f"Document {state}"
         message = f"{document.employee.name}: {document.document_type} expires on {document.expiry_date}."
-        already_exists = Notification.objects.filter(user__isnull=True, title=title, message=message, created_at__date=today).exists()
-        if not already_exists:
-            Notification.objects.create(user=None, notification_type=Notification.Type.WARNING, title=title, message=message, link="documents")
-            created += 1
+        recipients = [None] if admin_inbox else []
+        if document.employee.user_id and role_of(document.employee.user) == "EMPLOYEE":
+            recipients.append(document.employee.user_id)
+        for recipient_id in recipients:
+            _, was_created = Notification.objects.get_or_create(
+                user_id=recipient_id, title=title, message=message, created_at__date=today,
+                defaults={"notification_type": Notification.Type.WARNING, "link": "documents"},
+            )
+            created += int(was_created)
     return created

@@ -628,6 +628,8 @@ class ScreeningSubmission(models.Model):
 
 
 class Notification(models.Model):
+    """A personal user alert, or an admin-only alert when user is null."""
+
     class Type(models.TextChoices):
         INFO = "INFO", "Info"
         WARNING = "WARNING", "Warning"

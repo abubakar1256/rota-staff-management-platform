@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -195,7 +196,7 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
             case.save()
             ScreeningSubmission.objects.create(screening=case, form_data=data)
             record(case, request.user, "SUBMIT", before)
-            for user in get_user_model().objects.filter(is_active=True).filter(profile__role__in=["ADMIN", "SUPER_ADMIN"]):
+            for user in get_user_model().objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=["ADMIN", "SUPER_ADMIN"])):
                 Notification.objects.create(user=user, title="Security screening submitted", message=f"{case.employee.name} submitted {case.form_id}.", link="security-screening")
             return Response(response_data(case, request.user))
 

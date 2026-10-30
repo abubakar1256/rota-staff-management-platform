@@ -651,16 +651,19 @@ textarea, select, input { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) { .online-dot::before, .online-dot::after { animation: none; } }
 
 /* Guard portal notification centre */
-.guard-notification-widget { position: fixed; top: 15px; right: 26px; z-index: 1050; }
+.guard-portal-shell .topbar { gap: 16px; }
+.guard-portal-shell .breadcrumb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guard-portal-shell .menu-button { flex-shrink: 0; }
+.guard-notification-widget { position: relative; flex-shrink: 0; z-index: 8; }
 .guard-notification-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 13px; border: 1px solid #dce5f3; border-radius: 999px; background: rgba(255,255,255,.96); box-shadow: 0 8px 22px rgba(31,55,96,.12); color: #30445f; font-size: 11px; font-weight: 800; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
 .guard-notification-trigger:hover, .guard-notification-trigger:focus-visible { border-color: #8ca8ee; box-shadow: 0 10px 26px rgba(55,88,170,.2); outline: none; transform: translateY(-1px); }
 .guard-notification-trigger.has-unread { border-color: #b8c9f6; color: #3159bb; }
 .guard-notification-badge { display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: #e26378; color: #fff; font-size: 10px; line-height: 1; }
-.guard-notification-menu { position: absolute; top: 47px; right: 0; width: min(380px, calc(100vw - 30px)); overflow: hidden; border: 1px solid #dce5f3; border-radius: 14px; background: #fff; box-shadow: 0 18px 42px rgba(28,48,86,.2); }
+.guard-notification-menu { position: absolute; top: calc(100% + 10px); right: 0; width: min(380px, calc(100vw - 36px)); overflow: hidden; border: 1px solid #dce5f3; border-radius: 14px; background: #fff; box-shadow: 0 18px 42px rgba(28,48,86,.2); }
 .guard-notification-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border-bottom: 1px solid #edf1f7; background: linear-gradient(135deg, #fbfcff, #f3f7ff); }
 .guard-notification-menu-header > div { display: grid; gap: 3px; }.guard-notification-menu-header strong { color: #203657; font-size: 13px; }.guard-notification-menu-header span { color: #8794a8; font-size: 10px; }
 .guard-notification-menu-header .icon-button { width: 28px; height: 28px; color: #8290a4; }
-.guard-notification-list { max-height: 390px; overflow-y: auto; }
+.guard-notification-list { max-height: min(390px, calc(100dvh - 220px)); overflow-y: auto; overscroll-behavior: contain; }
 .guard-notification-item { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 12px 14px; border-bottom: 1px solid #f0f3f8; transition: background .18s ease; }
 .guard-notification-item.unread { background: #f6f8ff; }.guard-notification-item:hover { background: #f1f5ff; }
 .guard-notification-kind { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; color: #4d76de; background: #eaf0ff; }.guard-notification-kind.success { color: #218e71; background: #e5f7f0; }.guard-notification-kind.warning { color: #b27a21; background: #fff3d9; }.guard-notification-kind.error { color: #c65d70; background: #ffebef; }
@@ -669,7 +672,13 @@ textarea, select, input { max-width: 100%; }
 .guard-notification-empty { display: grid; justify-items: center; gap: 8px; padding: 30px 18px; color: #8794a8; font-size: 11px; }.guard-notification-empty svg { color: #9aabd1; }
 .guard-notification-menu .rota-loader.compact { min-height: 82px; justify-content: center; padding: 16px; }.guard-notification-menu .rota-loader-copy span { font-size: 10px; }
 .guard-notification-all { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; padding: 12px 16px; border: 0; border-top: 1px solid #edf1f7; background: #fbfcff; color: #456ac8; font-size: 11px; font-weight: 800; cursor: pointer; }.guard-notification-all:hover { background: #f1f5ff; }
-@media (max-width: 680px) { .guard-notification-widget { top: 12px; right: 16px; }.guard-notification-trigger span { display: none; }.guard-notification-trigger { width: 39px; height: 39px; justify-content: center; padding: 0; }.guard-notification-menu { top: 47px; right: -4px; width: min(380px, calc(100vw - 28px)); } }
+@media (max-width: 680px) {
+  .guard-portal-shell .topbar { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 12px; }
+  .guard-notification-widget { padding-right: 8px; }
+  .guard-notification-label { display: none; }
+  .guard-notification-trigger { position: relative; width: 40px; height: 40px; justify-content: center; padding: 0; }
+  .guard-notification-badge { position: absolute; top: -4px; right: -8px; min-width: 25px; height: 20px; border: 2px solid #fff; padding: 0 4px; }
+}
 @media (prefers-reduced-motion: reduce) { .guard-notification-trigger { transition: none; } }
 
 /* Multi-role employee selector */
