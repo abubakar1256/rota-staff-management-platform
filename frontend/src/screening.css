@@ -1,0 +1,26 @@
+.screening-page { max-width: 1220px; margin: 0 auto; }
+.screening-page .panel { margin-bottom: 20px; }
+.screening-summary { display: flex; align-items: flex-start; flex-direction: column; gap: 10px; }
+.screening-steps { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
+.screening-steps button { background: #f4f7fd; color: #40536e; border: 1px solid #dde5f2; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+.screening-steps button.active { background: #426fdb; color: #fff; border-color: #426fdb; }
+.screening-rows { margin: 24px 0; }
+.screening-row { padding: 18px; margin: 14px 0; border: 1px solid #dfe7f2; border-radius: 12px; }
+.screening-row-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.screening-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+.screening-feedback { padding: 12px 16px; background: #fff5de; color: #684c0b; border-radius: 8px; overflow-wrap: anywhere; }
+.screening-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.screening-detail-grid > div { border-bottom: 1px solid #e4eaf3; padding-bottom: 12px; display: grid; gap: 5px; overflow-wrap: anywhere; }
+.screening-detail-grid span { font-size: 12px; color: #728198; }
+.screening-detail-grid strong { white-space: pre-wrap; }
+.screening-readonly-field { display: grid; gap: 6px; min-width: 0; }
+.screening-readonly-field span { color: #728198; font-size: 12px; }
+.screening-readonly-field strong { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 14px; color: #30445f; }
+.screening-page input[name=signature_name] { font-family: "Segoe Script", "Brush Script MT", cursive; font-size: 22px; }
+.screening-consent { display: flex; align-items: flex-start; gap: 10px; margin: 20px 0; }
+.screening-document { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e4eaf3; }
+.screening-page .form-grid { margin-top: 16px; }
+.screening-page .form-grid input, .screening-page .form-grid select, .screening-page .form-grid textarea { min-width: 0; width: 100%; }
+.screening-page .form-grid input:disabled { color: #30445f; opacity: 1; }
+.screening-page input[type=checkbox] { width: 18px; height: 18px; flex-shrink: 0; }
+@media(max-width: 700px) { .screening-detail-grid { grid-template-columns: 1fr; } .screening-page .form-grid { grid-template-columns: 1fr; } .screening-row { padding: 12px; } .screening-page .panel-header { flex-wrap: wrap; gap: 12px; } .screening-document { align-items: flex-start; flex-direction: column; } }

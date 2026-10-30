@@ -592,6 +592,40 @@ class ClientArrivalReport(models.Model):
         return f"{self.client.name} - {self.report_date} - {self.shift_type.name} arrival report"
 
 
+class SecurityScreening(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        CHANGES_REQUIRED = "CHANGES_REQUIRED", "Changes required"
+        COMPLETED = "COMPLETED", "Completed"
+        REJECTED = "REJECTED", "Rejected"
+
+    employee = models.OneToOneField(Employee, on_delete=models.PROTECT, related_name="security_screening")
+    form_id = models.CharField(max_length=40, unique=True, editable=False)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    screening_months = models.PositiveSmallIntegerField(default=60)
+    form_data = models.JSONField(default=dict, blank=True)
+    office_data = models.JSONField(default=dict, blank=True)
+    guard_message = models.TextField(blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_screenings")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.form_id:
+            self.form_id = f"SCR-{uuid4().hex[:10].upper()}"
+        super().save(*args, **kwargs)
+
+
+class ScreeningSubmission(models.Model):
+    screening = models.ForeignKey(SecurityScreening, on_delete=models.PROTECT, related_name="submissions")
+    form_data = models.JSONField()
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+
 class Notification(models.Model):
     class Type(models.TextChoices):
         INFO = "INFO", "Info"
