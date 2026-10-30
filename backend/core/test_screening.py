@@ -1,4 +1,5 @@
 from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from .models import AuditLog, Employee, EmployeeDocument, SecurityScreening, UserProfile
-from .screening import CHECKS, month_label
+from .screening import CHECKS, month_label, SecurityScreeningViewSet
 
 
 class ScreeningWorkflowTests(APITestCase):
@@ -45,6 +46,19 @@ class ScreeningWorkflowTests(APITestCase):
         self.assertEqual(self.client.get("/api/security-screenings/").status_code, 403)
         self.client.force_authenticate(None)
         self.assertIn(self.client.get("/api/security-screenings/my/").status_code, (401, 403))
+
+    def test_postgresql_locks_screening_without_locking_nullable_approver(self):
+        """Compile real PostgreSQL SQL: SQLite doesn't enforce outer-join locks."""
+        from django.db.backends.postgresql.base import DatabaseWrapper
+        pg = DatabaseWrapper({"NAME": "screening_sql_test"}, alias="screening_sql_test")
+        for user in (self.guard, self.admin):
+            view = SecurityScreeningViewSet()
+            view.request = SimpleNamespace(user=user)
+            query = view.get_locked_queryset().filter(pk=self.case_id)
+            with patch.object(pg, "get_autocommit", return_value=False):
+                sql, _ = query.query.get_compiler(connection=pg).as_sql()
+            self.assertIn('LEFT OUTER JOIN "auth_user"', sql)
+            self.assertTrue(sql.endswith('FOR UPDATE OF "core_securityscreening"'), sql)
 
     def test_submission_review_resubmission_and_private_pdf(self):
         self.assertEqual(self.submit().status_code, 200)

@@ -45,7 +45,8 @@ async function api(path, options = {}) {
       const payload = await response.json().catch(() => ({}));
       const fieldErrors = Object.entries(payload).filter(([key]) => key !== "detail" && key !== "errors").map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
       const bulkErrors = Array.isArray(payload.errors) ? payload.errors.map((item) => `${item.employee}: ${Object.values(item.errors || {}).flat().join(", ")}`).join(" | ") : "";
-      const message = payload.detail || bulkErrors || fieldErrors.join(" | ") || "Request failed";
+      const fallback = response.status >= 500 ? `The server could not complete this request (HTTP ${response.status}). Please try again or contact the office.` : `Request failed (HTTP ${response.status}). Please try again.`;
+      const message = payload.detail || bulkErrors || fieldErrors.join(" | ") || fallback;
       notifyToast(message, "error");
       throw new Error(message);
     }

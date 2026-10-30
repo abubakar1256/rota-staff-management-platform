@@ -159,6 +159,11 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         return Response(response_data(self.get_object(), request.user))
 
+    def get_locked_queryset(self):
+        # completed_by is nullable. PostgreSQL must not lock the outer-joined
+        # approver row; only this screening is being updated in the transaction.
+        return self.get_queryset().select_for_update(of=("self",))
+
     @action(detail=False, methods=["get", "patch"], url_path="my")
     def my(self, request):
         if role_of(request.user) != "EMPLOYEE":
@@ -188,7 +193,7 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
         with transaction.atomic():
-            case = self.get_queryset().select_for_update().get(pk=self.get_object().pk)
+            case = self.get_locked_queryset().get(pk=self.get_object().pk)
             if role_of(request.user) != "EMPLOYEE":
                 raise PermissionDenied("Only the guard can submit their form.")
             self.save_guard_data(case, request, case.employee)
@@ -228,7 +233,7 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
         if not admin_allowed(request.user):
             raise PermissionDenied("Only administrators can record screening checks.")
         with transaction.atomic():
-            case = self.get_queryset().select_for_update().get(pk=self.get_object().pk)
+            case = self.get_locked_queryset().get(pk=self.get_object().pk)
             months = serializers.IntegerField(min_value=1, max_value=120).run_validation(request.data.get("screening_months", case.screening_months))
             decision = serializers.ChoiceField(choices=SecurityScreening.Status.values).run_validation(request.data.get("status", case.status))
             message = serializers.CharField(allow_blank=True, max_length=4000).run_validation(request.data.get("guard_message", ""))
