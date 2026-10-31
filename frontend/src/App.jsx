@@ -4,6 +4,7 @@ import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, Ch
 import { invalidateForPath } from "./queryClient";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
 import CheckUpdatesButton from "./CheckUpdatesButton";
+import PassportPhotoCropper from "./PassportPhotoCropper";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const PORTAL_ORIGIN = import.meta.env.VITE_PORTAL_ORIGIN || ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") ? "http://192.168.1.8:5175" : window.location.origin);
@@ -1507,6 +1508,11 @@ function ProfilePhotoCard() {
   const [profile, setProfile] = useState(null);
   const [existing, setExisting] = useState(null);
   const [photo, setPhoto] = useState(null);
+  const [sourcePhoto, setSourcePhoto] = useState(null);
+  const [cropPhoto, setCropPhoto] = useState(null);
+  const [cropSettings, setCropSettings] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const fileInputRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1521,6 +1527,20 @@ function ProfilePhotoCard() {
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!photo) { setPreviewUrl(""); return undefined; }
+    const url = URL.createObjectURL(photo);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
+  const choosePhoto = (event) => {
+    const selected = event.target.files?.[0];
+    event.target.value = "";
+    if (!selected) return;
+    if (selected.size > 10 * 1024 * 1024) { setError("Profile picture must be 10 MB or smaller."); return; }
+    if (!/\.(jpe?g|png|webp)$/i.test(selected.name)) { setError("Choose a JPG, PNG or WebP photo."); return; }
+    setError(""); setNotice(""); setCropPhoto(selected);
+  };
   const save = async (event) => {
     event.preventDefault();
     const detailsForm = document.querySelector(".profile-page-shell .profile-form");
@@ -1534,12 +1554,12 @@ function ProfilePhotoCard() {
     payload.append("file", photo);
     try {
       await api(existing ? `/documents/${existing.id}/` : "/documents/", { method: existing ? "PATCH" : "POST", body: payload });
-      setPhoto(null); setNotice("Profile picture saved successfully."); await load();
+      setPhoto(null); setSourcePhoto(null); setCropSettings(null); setNotice("Profile picture saved successfully."); await load();
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
   const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
   if (loading) return <section className="panel profile-photo-panel"><RotaLoader label="Loading profile picture…" compact /></section>;
-  return <section className="panel profile-photo-panel"><div className="profile-photo-preview">{currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Passport-size profile picture</h3><p className="muted">Use a clear front-facing portrait. It will appear on your registration PDF in passport format (35 × 45 mm).</p></div><form onSubmit={save} className="profile-photo-form"><label className="profile-photo-input">{photo ? `Selected: ${photo.name}` : "Choose passport photo"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { const selected = event.target.files?.[0] || null; if (selected && selected.size > 10 * 1024 * 1024) { setError("Profile picture must be 10 MB or smaller."); setPhoto(null); return; } setError(""); setPhoto(selected); }} /></label><button className="primary-button" disabled={saving || !photo}>{saving ? "Saving..." : "Save picture"}</button></form>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>;
+  return <><section className="panel profile-photo-panel"><div className="profile-photo-preview">{previewUrl ? <img src={previewUrl} alt="Cropped passport photo ready to upload" /> : currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Passport-size profile picture</h3><p className="muted">Choose a photo, then crop and zoom to adjust it to passport format (35 × 45 mm). The same photo will appear on your registration PDF.</p></div><form onSubmit={save} className="profile-photo-form"><input ref={fileInputRef} type="file" hidden accept="image/jpeg,image/png,image/webp" disabled={saving} onChange={choosePhoto} /><button type="button" className="profile-photo-input" disabled={saving} onClick={() => fileInputRef.current?.click()}>{photo ? "Choose another photo" : "Choose photo"}</button>{photo && sourcePhoto && <button type="button" className="secondary-button" disabled={saving} onClick={() => setCropPhoto(sourcePhoto)}>Adjust crop</button>}<button className="primary-button" disabled={saving || !photo || Boolean(cropPhoto)}>{saving ? "Saving..." : "Save picture"}</button></form>{photo && <p className="profile-photo-selected">Cropped photo ready · 35 × 45 mm · Click Save picture to upload.</p>}{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>{cropPhoto && <PassportPhotoCropper file={cropPhoto} initialCrop={cropPhoto === sourcePhoto ? cropSettings : undefined} onCancel={() => setCropPhoto(null)} onConfirm={(cropped, settings) => { setPhoto(cropped); setSourcePhoto(cropPhoto); setCropSettings(settings); setCropPhoto(null); }} />}</>;
 }
 
 function EmployeeProfilePage({ section = "profile" }) {
