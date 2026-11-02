@@ -15,7 +15,7 @@ export default function GuardProfileWizard({ api, Image }) {
   const heading = useRef(null), previousStep = useRef(0);
   const load = () => {
     setLoading(true); setError("");
-    return api("/employees/me/", { silentLoading: true }).then((data) => { setProfile(data); setForm(profileDraft(data)); setAccepted(Boolean(data.profile_declaration_accepted_at)); }).catch((err) => setError(err.message)).finally(() => setLoading(false));
+    return api("/employees/me/", { silentLoading: true }).then((data) => { setProfile(data); setForm(profileDraft(data)); setAccepted(Boolean(data.profile_declaration_accepted_at)); setSubmitted(Boolean(data.profile_declaration_accepted_at)); }).catch((err) => setError(err.message)).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (previousStep.current !== step) { previousStep.current = step; heading.current?.focus({ preventScroll: true }); heading.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } }, [step]);

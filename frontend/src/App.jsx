@@ -1368,7 +1368,13 @@ function ComplianceRegistrationPage() {
 }
 
 function GuardPortal({ user, onSignOut, unreadNotifications, initialPage = "home" }) {
-  const [page, setPage] = useState(initialPage); const [mobileNav, setMobileNav] = useState(false);
+  const [page, setPage] = useState(() => new URLSearchParams(window.location.search).get("page") === "profile" ? "profile" : initialPage); const [mobileNav, setMobileNav] = useState(false);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (page === "profile") url.searchParams.set("page", "profile");
+    else url.searchParams.delete("page");
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
+  }, [page]);
   const [complianceEnabled, setComplianceEnabled] = useState(Boolean(user.compliance_registration_enabled));
   useEffect(() => { let active = true; api("/employees/me/").then((profile) => { if (active) setComplianceEnabled(Boolean(profile.compliance_registration_enabled)); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { const openNotifications = () => setPage("notifications"); window.addEventListener("rota:notifications-open", openNotifications); return () => window.removeEventListener("rota:notifications-open", openNotifications); }, []);
