@@ -4,7 +4,6 @@ import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, Ch
 import { invalidateForPath } from "./queryClient";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
 import CheckUpdatesButton from "./CheckUpdatesButton";
-import PassportPhotoCropper from "./PassportPhotoCropper";
 import { siteAttendanceModes, siteAttendanceLabel, hourlyCheckinsFor, bookOnIsLate } from "./siteAttendance";
 import { ShiftCompletionSummary, CompletedAttendanceHistory } from "./ShiftCompletionSummary";
 import TimesheetReview from "./TimesheetReview";
@@ -1569,65 +1568,8 @@ function PasswordChange() {
   return <form className="panel password-panel" onSubmit={submit}><div className="panel-header"><div><h3>Change password</h3><p className="muted">Keep your portal account secure. Use at least 8 characters.</p></div></div><div className="form-grid"><label>Current password<input required type="password" value={form.current_password} onChange={(e) => setForm({ ...form, current_password: e.target.value })} /></label><label>New password<input required minLength="8" type="password" value={form.new_password} onChange={(e) => setForm({ ...form, new_password: e.target.value })} /></label><label>Confirm new password<input required minLength="8" type="password" value={form.new_password_confirmation} onChange={(e) => setForm({ ...form, new_password_confirmation: e.target.value })} /></label></div>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<div className="modal-actions"><button className="primary-button" disabled={saving}>{saving ? "Updating..." : "Change password"}</button></div></form>;
 }
 
-function ProfilePhotoCard({ onSaved, onPendingChange } = {}) {
-  const [profile, setProfile] = useState(null);
-  const [existing, setExisting] = useState(null);
-  const [photo, setPhoto] = useState(null);
-  const [sourcePhoto, setSourcePhoto] = useState(null);
-  const [cropPhoto, setCropPhoto] = useState(null);
-  const [cropSettings, setCropSettings] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-  const fileInputRef = useRef(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const load = async () => {
-    setLoading(true); setError("");
-    try {
-      const data = await api("/employees/me/");
-      const documents = await api(`/documents/?employee=${data.id}`);
-      setProfile(data);
-      setExisting(documents.find((document) => document.document_type === "Personal Photograph") || null);
-      return data;
-    } catch (err) { setError(err.message); } finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
-  useEffect(() => { onPendingChange?.(Boolean(photo || cropPhoto || saving)); }, [photo, cropPhoto, saving, onPendingChange]);
-  useEffect(() => {
-    if (!photo) { setPreviewUrl(""); return undefined; }
-    const url = URL.createObjectURL(photo);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [photo]);
-  const choosePhoto = (event) => {
-    const selected = event.target.files?.[0];
-    event.target.value = "";
-    if (!selected) return;
-    if (selected.size > 10 * 1024 * 1024) { setError("Profile picture must be 10 MB or smaller."); return; }
-    if (!/\.(jpe?g|png|webp)$/i.test(selected.name)) { setError("Choose a JPG, PNG or WebP photo."); return; }
-    setError(""); setNotice(""); setCropPhoto(selected);
-  };
-  const save = async (event) => {
-    event.preventDefault();
-    if (!photo) return;
-    setSaving(true); setError(""); setNotice("");
-    const payload = new FormData();
-    payload.append("employee", String(profile.id));
-    payload.append("document_type", "Personal Photograph");
-    payload.append("file", photo);
-    try {
-      await api(existing ? `/documents/${existing.id}/` : "/documents/", { method: existing ? "PATCH" : "POST", body: payload });
-      setPhoto(null); setSourcePhoto(null); setCropSettings(null); setNotice("Profile picture saved successfully."); const updatedProfile = await load(); onSaved?.(updatedProfile);
-    } catch (err) { setError(err.message); } finally { setSaving(false); }
-  };
-  const currentUrl = existing ? profileDocumentUrl(existing) : profile?.profile_photo_url;
-  if (loading) return <section className="panel profile-photo-panel"><RotaLoader label="Loading profile picture…" compact /></section>;
-  return <><section className="panel profile-photo-panel"><div className="profile-photo-preview">{previewUrl ? <img src={previewUrl} alt="Cropped passport photo ready to upload" /> : currentUrl ? <ProtectedImage src={currentUrl} alt={`${profile?.name || "Guard"} profile`} /> : (profile?.name || "?").slice(0, 1).toUpperCase()}</div><div className="profile-photo-content"><div><h3>Passport-size profile picture</h3><p className="muted">Choose a photo, then crop and zoom to adjust it to passport format (35 × 45 mm). The same photo will appear on your registration PDF.</p></div><form onSubmit={save} className="profile-photo-form"><input ref={fileInputRef} type="file" hidden accept="image/jpeg,image/png,image/webp" disabled={saving} onChange={choosePhoto} /><button type="button" className="profile-photo-input" disabled={saving} onClick={() => fileInputRef.current?.click()}>{photo ? "Choose another photo" : "Choose photo"}</button>{photo && sourcePhoto && <button type="button" className="secondary-button" disabled={saving} onClick={() => setCropPhoto(sourcePhoto)}>Adjust crop</button>}<button className="primary-button" disabled={saving || !photo || Boolean(cropPhoto)}>{saving ? "Saving..." : "Save picture"}</button></form>{photo && <p className="profile-photo-selected">Cropped photo ready · 35 × 45 mm · Click Save picture to upload.</p>}{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}</div></section>{cropPhoto && <PassportPhotoCropper file={cropPhoto} initialCrop={cropPhoto === sourcePhoto ? cropSettings : undefined} onCancel={() => setCropPhoto(null)} onConfirm={(cropped, settings) => { setPhoto(cropped); setSourcePhoto(cropPhoto); setCropSettings(settings); setCropPhoto(null); }} />}</>;
-}
-
 function EmployeeProfilePage({ section = "profile" }) {
-  return <div className="profile-page-shell">{section === "profile" ? <GuardProfileWizard api={api} PhotoCard={ProfilePhotoCard} Image={ProtectedImage} /> : <EmployeeProfileContentV2 section={section} />}</div>;
+  return <div className="profile-page-shell">{section === "profile" ? <GuardProfileWizard api={api} Image={ProtectedImage} /> : <EmployeeProfileContentV2 section={section} />}</div>;
 }
 
 function EmployeeProfileContent({ section = "profile" }) {

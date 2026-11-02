@@ -85,7 +85,7 @@ Client Admin access is read-only. Guard personal documents and internal activity
 ## Guard profile completion
 
 - Newly activated guards open **My profile**. The steps are picture, personal details, contact details, emergency contact, then review and submit.
-- Guards crop and save a passport-size picture before continuing. Nationality uses a searchable country list with no default selection for a new profile.
+- Guards choose and crop a passport-size picture, then Next uploads it and opens personal details. Nationality uses a searchable country list with no default selection for a new profile.
 - **Save & next** saves that step. **Back** keeps entered values; **Save draft** allows guards to continue later.
 - Profile completion counts guard-controlled details, the saved picture and the submitted declaration. Office-managed position and joining date do not prevent guards from reaching 100%.
 - Final submission requires all profile fields, a saved picture and an explicit declaration checkbox. The server records the declaration, timestamp and submitted details in the audit log.

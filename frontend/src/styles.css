@@ -533,7 +533,7 @@ textarea, select, input { max-width: 100%; }
 @media (max-width: 760px) { .site-record-modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .site-record-modal .form-grid, .site-attendance-options { grid-template-columns: 1fr; } }
 .profile-page-shell { display: flex; flex-direction: column; gap: 18px; }
-.profile-page-shell .page-heading { order: 2; }
+.profile-page-shell > .page-heading { order: 0; }
 .profile-page-shell .profile-photo-panel { order: 1; margin-bottom: 0; }
 .profile-page-shell .profile-layout, .profile-page-shell .profile-documents-panel, .profile-page-shell .password-panel { order: 3; }
 .profile-page-shell .profile-form .modal-actions { display: none; }

@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import CountrySelect from "./CountrySelect";
+import ProfilePictureStep from "./ProfilePictureStep";
 import { findCountry } from "./countries";
 import { profileDraft, profileFields, profileFieldLabels, profilePercentage, profileSteps, stepFields } from "./profileWizard";
 import "./profileWizard.css";
 
-export default function GuardProfileWizard({ api, PhotoCard, Image }) {
+export default function GuardProfileWizard({ api, Image }) {
   const [profile, setProfile] = useState(null), [form, setForm] = useState(() => profileDraft());
   const [step, setStep] = useState(0), [loading, setLoading] = useState(true), [saving, setSaving] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const [accepted, setAccepted] = useState(false), [submitted, setSubmitted] = useState(false), [photoPending, setPhotoPending] = useState(false);
+  const [accepted, setAccepted] = useState(false), [submitted, setSubmitted] = useState(false), [photoReady, setPhotoReady] = useState(false);
+  const picture = useRef(null);
   const heading = useRef(null), previousStep = useRef(0);
   const load = () => {
     setLoading(true); setError("");
@@ -27,8 +29,17 @@ export default function GuardProfileWizard({ api, PhotoCard, Image }) {
   };
   const next = async (event) => {
     event.preventDefault(); setError(""); setNotice("");
-    if (!profile.profile_photo_url || photoPending) { setStep(0); setError("Upload and save your passport-size profile picture first."); return; }
-    if (step === 0) { setStep(1); return; }
+    if (step === 0) {
+      if (!photoReady || !picture.current) { setError("Choose and crop a photo before continuing."); return; }
+      setSaving(true);
+      try {
+        const data = await picture.current.save();
+        if (!data?.profile_photo_url) throw new Error("Your picture could not be saved. Please try again.");
+        setProfile(data); setAccepted(Boolean(data.profile_declaration_accepted_at)); setStep(1);
+      } catch (err) { setError(err.message); } finally { setSaving(false); }
+      return;
+    }
+    if (!profile.profile_photo_url) { setStep(0); setError("Choose a profile photo before continuing."); return; }
     if (step >= 1 && !findCountry(form.nationality)) { setStep(1); setError("Select your nationality from the country list."); return; }
     if (step === 4) {
       const missing = profileFields.find((field) => !String(form[field] || "").trim());
@@ -53,9 +64,9 @@ export default function GuardProfileWizard({ api, PhotoCard, Image }) {
     <section className="panel profile-wizard-progress"><div><strong>{profile.name}</strong><span>{profile.employee_id} · {profile.position || "Guard"}</span></div><div className="profile-wizard-progress-row"><strong>Profile completion</strong><span>{percentage}%</span></div><div className="progress-track" role="progressbar" aria-label="Profile completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}><span style={{ width: `${percentage}%` }} /></div><small>{percentage === 100 ? "Your details and confirmation are complete." : "Your percentage increases as you add your picture and complete your details."}</small></section>
     {submitted ? <section className="panel profile-wizard-success"><CheckCircle2 size={34} /><h3>Profile completed successfully</h3><p>Your profile is 100% complete and your declaration has been recorded.</p>{review}<button type="button" className="secondary-button" onClick={() => { setSubmitted(false); setStep(0); }}>Edit profile</button></section> : <section className="panel profile-wizard">
       <ol className="profile-wizard-steps" aria-label="Profile steps">{profileSteps.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} className={index === step ? "current" : index < step ? "done" : ""}><span>{index < step ? "✓" : index + 1}</span><strong>{label}</strong></li>)}</ol>
-      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3><p className="muted">{["Choose a clear front-facing photo, adjust the crop and save it before continuing.", "Enter your personal details. Type to search for your country.", "Keep your phone, login email and address up to date.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]}</p></div>
+      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3>{step > 0 && <p className="muted">{["", "Enter your personal details. Type to search for your country.", "Keep your phone, login email and address up to date.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]}</p>}</div>
       {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
-      {step === 0 && <PhotoCard onSaved={(data) => { if (data) setProfile(data); setAccepted(false); setNotice("Picture saved. Continue to your personal details."); }} onPendingChange={setPhotoPending} />}
+      {step === 0 && <ProfilePictureStep ref={picture} api={api} profile={profile} Image={Image} onReadyChange={setPhotoReady} onPhotoChange={() => setAccepted(false)} />}
       <form onSubmit={next} className="profile-wizard-form">
         <fieldset disabled={saving} className="profile-wizard-fields">
           {step === 1 && <div className="form-grid"><label>Full name<input required maxLength={160} autoComplete="name" value={form.name} onChange={(event) => update("name", event.target.value)} /></label><label>Date of birth<input required type="date" max={new Date().toLocaleDateString("en-CA")} value={form.date_of_birth} onChange={(event) => update("date_of_birth", event.target.value)} /></label><label className="full-width">Nationality<CountrySelect value={form.nationality} onChange={(value) => update("nationality", value)} disabled={saving} /></label></div>}
@@ -63,7 +74,7 @@ export default function GuardProfileWizard({ api, PhotoCard, Image }) {
           {step === 3 && <div className="form-grid"><label>Emergency contact name<input required maxLength={160} value={form.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} /></label><label>Emergency contact phone<input required type="tel" maxLength={40} value={form.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} /></label><label className="full-width">Relationship<input required maxLength={80} value={form.emergency_contact_relationship} onChange={(event) => update("emergency_contact_relationship", event.target.value)} placeholder="For example: spouse, parent, sibling or friend" /></label></div>}
           {step === 4 && <>{review}<label className="profile-wizard-declaration"><input type="checkbox" required checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span>{profile.profile_declaration_text}</span></label><small className="muted">Your confirmation and submission time will be recorded.</small></>}
         </fieldset>
-        <div className="profile-wizard-actions">{step > 0 && <button type="button" className="secondary-button" disabled={saving} onClick={() => { setStep((current) => current - 1); setError(""); setNotice(""); }}><ChevronLeft size={16} />Back</button>}{step > 0 && <button type="button" className="secondary-button" disabled={saving} onClick={saveDraft}>Save draft</button>}<button type="submit" className="primary-button" disabled={saving || (step === 0 && (!profile.profile_photo_url || photoPending)) || (step === 4 && !accepted)}>{saving ? "Saving…" : step === 4 ? "Submit profile" : step === 0 ? "Next" : "Save & next"}{step < 4 && <ChevronRight size={16} />}</button></div>
+        <div className="profile-wizard-actions">{step > 0 && <button type="button" className="secondary-button" disabled={saving} onClick={() => { setStep((current) => current - 1); setError(""); setNotice(""); }}><ChevronLeft size={16} />Back</button>}{step > 0 && <button type="button" className="secondary-button" disabled={saving} onClick={saveDraft}>Save draft</button>}<button type="submit" className="primary-button" disabled={saving || (step === 0 && !photoReady) || (step === 4 && !accepted)}>{saving ? "Saving…" : step === 4 ? "Submit profile" : step === 0 ? "Next" : "Save & next"}{step < 4 && <ChevronRight size={16} />}</button></div>
       </form>
     </section>}
   </>;
