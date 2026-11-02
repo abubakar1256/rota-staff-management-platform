@@ -5,6 +5,7 @@ from secrets import token_urlsafe
 from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
+from .document_requirements import documents_completion, is_british
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
@@ -43,8 +44,9 @@ def employee_compliance_issues(employee):
     issues = []
     critical_documents = [
         ("Passport", ("Passport (First 2 pages)",)),
-        ("Share Code", ("Share Code",)),
     ]
+    if not is_british(employee.nationality):
+        critical_documents.append(("Share Code", ("Share Code",)))
     for label, aliases in critical_documents:
         document = _document_for_type(documents, *aliases)
         if not document:
@@ -278,28 +280,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return PROFILE_DECLARATION
 
     def get_documents_completion(self, obj):
-        required_types = [
-            "Passport (First 2 pages)",
-            "SIA Card (Front)",
-            "SIA Card (Back)",
-            "Proof of Address 1 (last 3 months)",
-            "Proof of Address 2 (last 3 months)",
-            "Share Code",
-            "National Insurance Number (NI)",
-            "Personal Photograph",
-            "CSCS Card (Front)",
-            "CSCS Card (Back)",
-            "Driving License (Front)",
-            "Driving License (Back)",
-            "PPAC Code",
-        ]
-        document_types = set(obj.documents.values_list("document_type", flat=True))
-        completed = sum(document_type in document_types for document_type in required_types)
-        # Older records used one combined SIA entry. Keep those guards compliant
-        # until an administrator replaces it with the separate front/back files.
-        if "SIA Card (Front & Back)" in document_types:
-            completed += sum(document_type not in document_types for document_type in ("SIA Card (Front)", "SIA Card (Back)"))
-        return {"completed": completed, "required": len(required_types), "percentage": round(completed / len(required_types) * 100)}
+        return documents_completion(obj)
 
     def get_profile_photo_url(self, obj):
         document = obj.documents.filter(document_type__iexact="Personal Photograph").first()
@@ -571,7 +552,7 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmployeeDocument
-        fields = ["id", "employee", "employee_name", "document_type", "document_number", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
+        fields = ["id", "employee", "employee_name", "document_type", "document_number", "certificate_type", "certificate_name", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_at", "updated_at"]
 
     def get_secure_file_url(self, obj):
@@ -620,9 +601,20 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         existing = EmployeeDocument.objects.filter(employee=employee, document_type__iexact=document_type)
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
-        if employee and document_type and existing.exists():
+        certificate = document_type == "Certificates"
+        if certificate:
+            certificate_type = attrs.get("certificate_type", getattr(self.instance, "certificate_type", ""))
+            certificate_name = attrs.get("certificate_name", getattr(self.instance, "certificate_name", "")).strip()
+            if not certificate_type:
+                raise serializers.ValidationError({"certificate_type": "Select a certificate type."})
+            if certificate_type == "OTHER" and not certificate_name:
+                raise serializers.ValidationError({"certificate_name": "Enter the certificate name."})
+            if not (uploaded_file or getattr(self.instance, "file", None) or attrs.get("file_url") or getattr(self.instance, "file_url", "")):
+                raise serializers.ValidationError({"file": "Upload the certificate file."})
+            attrs["certificate_name"] = certificate_name if certificate_type == "OTHER" else ""
+        if employee and document_type and not certificate and existing.exists():
             raise serializers.ValidationError({"document_type": "This employee already has this document. Update the existing record instead."})
-        proof_types = {"Proof of Address 1 (last 3 months)", "Proof of Address 2 (last 3 months)"}
+        proof_types = {"Proof of Address (last 3 months)", "Proof of Address 1 (last 3 months)", "Proof of Address 2 (last 3 months)"}
         if document_type in proof_types:
             issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
             if not issue_date:
@@ -637,11 +629,13 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         if issue_date and expiry_date and expiry_date < issue_date:
             raise serializers.ValidationError({"expiry_date": "Expiry date cannot be before the issue date."})
         expiry_types = {"Passport (First 2 pages)", "SIA Card (Front)", "SIA Card (Front & Back)", "Share Code", "ACT certificate", "CSCS Card (Front)"}
-        if document_type in expiry_types and (self.instance is None or "file" in attrs or "expiry_date" in attrs) and not expiry_date:
+        requires_expiry = document_type in expiry_types or (certificate and certificate_type == "ACT")
+        if requires_expiry and (self.instance is None or "file" in attrs or "expiry_date" in attrs or "certificate_type" in attrs) and not expiry_date:
             raise serializers.ValidationError({"expiry_date": "This document requires an expiry date."})
         code_types = {"Share Code", "National Insurance Number (NI)", "PPAC Code"}
         notes = attrs.get("notes", getattr(self.instance, "notes", ""))
-        if document_type in code_types and not attrs.get("file") and not notes.strip():
+        document_number = attrs.get("document_number", getattr(self.instance, "document_number", ""))
+        if document_type in code_types and not (uploaded_file or getattr(self.instance, "file", None) or attrs.get("file_url") or getattr(self.instance, "file_url", "") or notes.strip() or document_number.strip()):
             raise serializers.ValidationError({"notes": "Enter the code/number or upload supporting evidence."})
         return attrs
 

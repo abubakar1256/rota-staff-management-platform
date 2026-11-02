@@ -379,6 +379,12 @@ class LeaveRecord(models.Model):
 
 
 class EmployeeDocument(models.Model):
+    class CertificateType(models.TextChoices):
+        ACT = "ACT", "ACT"
+        NASDU = "NASDU", "NASDU"
+        FIRE_MARSHAL = "FIRE_MARSHAL", "Fire Marshal"
+        OTHER = "OTHER", "Other"
+
     class VerificationStatus(models.TextChoices):
         PENDING = "PENDING", "Pending review"
         VERIFIED = "VERIFIED", "Verified"
@@ -387,6 +393,8 @@ class EmployeeDocument(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="documents")
     document_type = models.CharField(max_length=100)
     document_number = models.CharField(max_length=100, blank=True)
+    certificate_type = models.CharField(max_length=20, choices=CertificateType.choices, blank=True)
+    certificate_name = models.CharField(max_length=160, blank=True)
     issue_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     file_url = models.URLField(blank=True)

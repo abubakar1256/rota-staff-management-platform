@@ -1605,7 +1605,8 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             next_type = serializer.validated_data.get("document_type", serializer.instance.document_type)
             if not own_employee or serializer.instance.employee.user_id != self.request.user.id or next_employee.pk != own_employee.pk or next_type != serializer.instance.document_type:
                 raise PermissionDenied("You can only update the file or notes of your own document.")
-        if "file" in serializer.validated_data:
+        evidence_fields = {"file", "file_url", "document_number", "issue_date", "expiry_date", "notes", "certificate_type", "certificate_name"}
+        if any(field in serializer.validated_data and (field == "file" or serializer.validated_data[field] != getattr(serializer.instance, field)) for field in evidence_fields):
             document = serializer.save(
                 verification_status=EmployeeDocument.VerificationStatus.PENDING,
                 reviewed_by=None,
@@ -1617,7 +1618,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 action="UPDATE",
                 model_name="EmployeeDocument",
                 object_id=document.pk,
-                summary=f"Re-uploaded {document.document_type} for {document.employee.name}; review reset to pending",
+                summary=f"Updated {document.document_type} evidence for {document.employee.name}; review reset to pending",
             )
             return
         serializer.save()
