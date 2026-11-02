@@ -488,6 +488,12 @@ class DailyOperation(models.Model):
     def __str__(self):
         return f"{self.operation_date} - {self.site.name} - {self.shift_type.name}"
 
+    @property
+    def scheduled_start_at(self):
+        from datetime import datetime
+        from django.utils import timezone
+        return timezone.make_aware(datetime.combine(self.operation_date, self.shift_type.start_time), timezone.get_current_timezone())
+
 
 class ShiftAttendanceEvent(models.Model):
     class EventType(models.TextChoices):
@@ -510,6 +516,7 @@ class ShiftAttendanceEvent(models.Model):
     distance_m = models.FloatField(null=True, blank=True)
     location_status = models.CharField(max_length=30, choices=LocationStatus.choices, default=LocationStatus.LOCATION_UNVERIFIED)
     notes = models.CharField(max_length=250, blank=True)
+    late_reason = models.CharField(max_length=500, blank=True)
     captured_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_shift_attendance_events")
 

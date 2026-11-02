@@ -664,7 +664,7 @@ class ShiftAttendanceEventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ShiftAttendanceEvent
-        fields = ["id", "event_type", "event_label", "sequence", "photo", "photo_url", "latitude", "longitude", "accuracy_m", "distance_m", "location_status", "notes", "captured_at", "created_by"]
+        fields = ["id", "event_type", "event_label", "sequence", "photo", "photo_url", "latitude", "longitude", "accuracy_m", "distance_m", "location_status", "notes", "late_reason", "captured_at", "created_by"]
         read_only_fields = ["id", "event_label", "photo_url", "distance_m", "location_status", "captured_at", "created_by"]
 
     def get_photo_url(self, obj):
@@ -706,16 +706,25 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     expected_hourly_checkins = serializers.SerializerMethodField()
     hourly_checkins = serializers.SerializerMethodField()
     attendance_status = serializers.SerializerMethodField()
+    book_on_due_at = serializers.SerializerMethodField()
+    book_on_is_late = serializers.SerializerMethodField()
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_on_due_at", "book_on_is_late", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):
         if not obj.reached_by:
             return None
         return obj.reached_by.get_full_name() or obj.reached_by.get_username()
+
+    def get_book_on_due_at(self, obj):
+        return obj.scheduled_start_at.isoformat()
+
+    def get_book_on_is_late(self, obj):
+        event = next((event for event in obj.attendance_events.all() if event.event_type == ShiftAttendanceEvent.EventType.BOOK_ON), None)
+        return (event.captured_at if event else timezone.now()) > obj.scheduled_start_at
 
     def get_delay_minutes(self, obj):
         if not obj.reached_at:

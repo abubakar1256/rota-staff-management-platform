@@ -506,6 +506,10 @@ textarea, select, input { max-width: 100%; }
 .site-attendance-summary { color: #4a71cc; }
 .attendance-mode-chip { display: inline-block; margin: 3px 0; padding: 4px 8px; border-radius: 6px; background: #edf3ff; color: #4a6ab1; font-size: 10px; }
 .attendance-mode-label { color: #7183a0; font-size: 10px; }
+.attendance-book-on-reason { display: grid; gap: 4px; margin-top: 7px; padding: 8px 10px; border-radius: 7px; background: #fff7e9; overflow-wrap: anywhere; }
+.attendance-book-on-reason strong { color: #a17026; font-size: 10px; }
+.attendance-book-on-reason span { color: #776449; font-size: 11px; white-space: pre-wrap; }
+.late-book-on-note > .muted { margin: 2px 0 6px; font-size: 11px; }
 @media (max-width: 760px) { .site-record-modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .site-record-modal .form-grid, .site-attendance-options { grid-template-columns: 1fr; } }
 .profile-page-shell { display: flex; flex-direction: column; gap: 18px; }

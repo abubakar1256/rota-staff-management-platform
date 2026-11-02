@@ -1837,7 +1837,15 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         if event_type == ShiftAttendanceEvent.EventType.HOURLY:
             last_sequence = operation.attendance_events.filter(event_type=event_type).order_by("-sequence").values_list("sequence", flat=True).first()
             sequence = (last_sequence or 0) + 1
-        event = ShiftAttendanceEvent.objects.create(operation=operation, event_type=event_type, sequence=sequence, photo=photo, latitude=latitude, longitude=longitude, accuracy_m=accuracy_m, distance_m=distance_m, location_status=location_status, notes=(request.data.get("notes") or "")[:250], created_by=request.user)
+        late_reason = ""
+        if event_type == ShiftAttendanceEvent.EventType.BOOK_ON:
+            value = request.data.get("late_reason", "")
+            if not isinstance(value, str) or len(value.strip()) > 500:
+                return Response({"detail": "The late Book On reason must be text of 500 characters or less."}, status=status.HTTP_400_BAD_REQUEST)
+            late_reason = value.strip()
+            if timezone.now() > operation.scheduled_start_at and not late_reason:
+                return Response({"detail": "Please enter a reason for late Book On before submitting."}, status=status.HTTP_400_BAD_REQUEST)
+        event = ShiftAttendanceEvent.objects.create(operation=operation, event_type=event_type, sequence=sequence, photo=photo, latitude=latitude, longitude=longitude, accuracy_m=accuracy_m, distance_m=distance_m, location_status=location_status, notes=(request.data.get("notes") or "")[:250], late_reason=late_reason, created_by=request.user)
         if event_type == ShiftAttendanceEvent.EventType.BOOK_ON and location_status == ShiftAttendanceEvent.LocationStatus.VERIFIED:
             operation.reached_at = event.captured_at
             operation.reached_by = request.user
@@ -1847,6 +1855,23 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="ShiftAttendanceEvent", object_id=str(event.pk), summary=f"{operation.employee.name} submitted {event.get_event_type_display()} at {operation.site.name} ({event.location_status})")
         operation = self.get_queryset().get(pk=operation.pk)
         return Response({"event": ShiftAttendanceEventSerializer(event, context={"request": request}).data, "operation": self.get_serializer(operation).data}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="book-on-note")
+    def book_on_note(self, request, pk=None):
+        operation = self.get_object()
+        event = operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).first()
+        if not event:
+            return Response({"detail": "Record Book On before saving its late reason."}, status=status.HTTP_400_BAD_REQUEST)
+        if event.captured_at <= operation.scheduled_start_at:
+            return Response({"detail": "This Book On was on time; a late reason is not required."}, status=status.HTTP_400_BAD_REQUEST)
+        reason = request.data.get("reason", "")
+        if not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 500:
+            return Response({"detail": "Please enter a late Book On reason of 1 to 500 characters."}, status=status.HTTP_400_BAD_REQUEST)
+        event.late_reason = reason.strip()
+        event.save(update_fields=["late_reason"])
+        AuditLog.objects.create(user=request.user, action="ATTENDANCE", model_name="ShiftAttendanceEvent", object_id=str(event.pk), summary=f"{operation.employee.name} updated the late Book On reason at {operation.site.name}")
+        operation = self.get_queryset().get(pk=operation.pk)
+        return Response({"event": ShiftAttendanceEventSerializer(event, context={"request": request}).data, "operation": self.get_serializer(operation).data})
 
     @action(detail=True, methods=["post"], url_path="hourly-note")
     def hourly_note(self, request, pk=None):

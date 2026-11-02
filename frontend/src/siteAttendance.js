@@ -16,3 +16,13 @@ export function siteAttendanceLabel(item) {
 export function hourlyCheckinsFor(item) {
   return siteRequiresHourly(item) ? (item.hourly_checkins || []) : [];
 }
+
+export function bookOnIsLate(item, now = Date.now()) {
+  const event = (item.attendance_events || []).find((event) => event.event_type === "BOOK_ON");
+  const dueAt = Date.parse(item.book_on_due_at);
+  if (event) {
+    if (typeof item.book_on_is_late === "boolean") return item.book_on_is_late;
+    return Number.isFinite(dueAt) && Date.parse(event.captured_at) > dueAt;
+  }
+  return item.book_on_is_late === true || (Number.isFinite(dueAt) && now > dueAt);
+}

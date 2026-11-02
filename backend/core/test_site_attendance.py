@@ -9,7 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import DailyOperation, Employee, HourlyCheckinNote, ShiftAttendanceEvent, ShiftType, Site, UserProfile
+from .models import AuditLog, DailyOperation, Employee, HourlyCheckinNote, ShiftAttendanceEvent, ShiftType, Site, UserProfile
 from .serializers import DailyOperationSerializer
 
 
@@ -142,3 +142,82 @@ class SiteAttendanceModeTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.basic_site.refresh_from_db()
         self.assertEqual(self.basic_site.attendance_mode, "BOOK_ON_OFF")
+
+    def test_late_book_on_requires_a_reason_in_both_modes(self):
+        for operation in (self.basic, self.full):
+            for reason in ("", "   "):
+                response = self.submit(operation, "BOOK_ON", self.now(8, 10), late_reason=reason)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("reason for late Book On", response.data["detail"])
+            self.assertFalse(operation.attendance_events.exists())
+
+    def test_late_book_on_saves_reason_with_photo_gps_and_actual_timestamp(self):
+        for operation in (self.basic, self.full):
+            response = self.submit(operation, "BOOK_ON", self.now(8, 10), late_reason="  Delayed by traffic  ")
+            self.assertEqual(response.status_code, 201, response.data)
+            event = operation.attendance_events.get(event_type="BOOK_ON")
+            self.assertEqual(event.late_reason, "Delayed by traffic")
+            self.assertEqual(event.captured_at, self.now(8, 10))
+            self.assertEqual(event.location_status, "VERIFIED")
+            self.assertTrue(event.photo.name)
+            self.assertTrue(response.data["operation"]["book_on_is_late"])
+            self.assertEqual(response.data["event"]["late_reason"], "Delayed by traffic")
+            self.assertEqual(response.data["operation"]["book_on_due_at"], self.now(8).isoformat())
+
+    def test_invalid_late_reason_does_not_create_attendance(self):
+        response = self.submit(self.basic, "BOOK_ON", self.now(8, 10), late_reason="x" * 501)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("500", response.data["detail"])
+        self.assertFalse(self.basic.attendance_events.exists())
+
+    def test_on_time_book_on_never_becomes_late_when_read_later(self):
+        response = self.submit(self.basic, "BOOK_ON", self.now(8))
+        self.assertEqual(response.status_code, 201)
+        with patch("core.serializers.timezone.now", return_value=self.now(14)):
+            response = self.client.get(f"/api/operations/{self.basic.pk}/")
+        self.assertFalse(response.data["book_on_is_late"])
+        self.assertEqual(response.data["attendance_events"][0]["late_reason"], "")
+        response = self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": "Late"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_guard_can_add_or_update_a_legacy_late_reason_without_changing_evidence(self):
+        event = self.book_on_record(self.basic)
+        ShiftAttendanceEvent.objects.filter(pk=event.pk).update(captured_at=self.now(8, 10))
+        for reason in ("Traffic delay", "Updated traffic explanation"):
+            response = self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": reason}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            event.refresh_from_db()
+            self.assertEqual(event.late_reason, reason)
+            self.assertEqual(event.captured_at, self.now(8, 10))
+            self.assertEqual(event.photo.name, "test/book-on.jpg")
+            self.assertEqual(response.data["operation"]["attendance_events"][0]["late_reason"], reason)
+        self.assertTrue(AuditLog.objects.filter(model_name="ShiftAttendanceEvent", object_id=str(event.pk), action="ATTENDANCE").exists())
+        for reason in (" ", "x" * 501, {"invalid": "value"}):
+            self.assertEqual(self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": reason}, format="json").status_code, 400)
+
+    def test_late_reason_endpoint_requires_existing_book_on_and_correct_guard(self):
+        self.assertEqual(self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": "Traffic"}, format="json").status_code, 400)
+        event = self.book_on_record(self.basic)
+        ShiftAttendanceEvent.objects.filter(pk=event.pk).update(captured_at=self.now(8, 10))
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": "Tampered"}, format="json").status_code, 404)
+        event.refresh_from_db()
+        self.assertEqual(event.late_reason, "")
+
+    def test_overnight_late_book_on_uses_the_operation_start_date(self):
+        night = ShiftType.objects.create(name="Late reason night", start_time=time(20), end_time=time(8))
+        operation = self.operation(self.basic_site, night)
+        response = self.submit(operation, "BOOK_ON", self.now(0, 10, next_day=True))
+        self.assertEqual(response.status_code, 400)
+        response = self.submit(operation, "BOOK_ON", self.now(0, 10, next_day=True), late_reason="Emergency delay")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data["operation"]["book_on_is_late"])
+        self.assertEqual(response.data["operation"]["book_on_due_at"], self.now(20).isoformat())
+
+    def test_expired_book_off_still_accepts_a_reason_in_both_modes(self):
+        for operation in (self.basic, self.full):
+            self.book_on_record(operation)
+            with patch("core.views.timezone.now", return_value=self.now(20, 45)):
+                response = self.client.post(f"/api/operations/{operation.pk}/book-off-note/", {"reason": "Site emergency"}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["operation"]["book_off_note"]["reason"], "Site emergency")
