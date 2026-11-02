@@ -1,4 +1,5 @@
 """Finish attendance atomically without approving hours or altering evidence."""
+from .notifications import publish_notification
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
@@ -51,9 +52,9 @@ def complete_shift(operation, user):
     admins = get_user_model().objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=["SUPER_ADMIN", "ADMIN"]))
     detail = ", ".join(REVIEW_LABELS[flag] for flag in flags) if flags else "Draft timesheet ready for review"
     for admin in admins:
-        Notification.objects.create(user=admin, notification_type="WARNING" if flags else "INFO",
+        publish_notification(user=admin, notification_type="WARNING" if flags else "INFO",
                                     title="Shift completed - review required" if flags else "Shift completed",
-                                    message=f"{operation.employee.name} · {operation.site.name} · {operation.operation_date}: {detail}.", link="timesheets")
+                                    message=f"{operation.employee.name} · {operation.site.name} · {operation.operation_date}: {detail}.", link="timesheets", category="TIMESHEETS", priority="URGENT" if flags else "NORMAL", employee=operation.employee, site=operation.site, event_date=operation.operation_date, context={"timesheet_id": sheet.pk, "operation_id": operation.pk})
     return sheet
 
 

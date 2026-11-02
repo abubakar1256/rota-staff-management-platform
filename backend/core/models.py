@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower, Trim
 from uuid import uuid4
+from .notification_rules import CATEGORIES
 
 
 class UserProfile(models.Model):
@@ -681,6 +682,10 @@ class Notification(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications", null=True, blank=True)
     notification_type = models.CharField(max_length=20, choices=Type.choices, default=Type.INFO)
+    category = models.CharField(max_length=30, choices=CATEGORIES, default="SYSTEM", db_index=True)
+    priority = models.CharField(max_length=10, choices=[("NORMAL", "Normal"), ("URGENT", "Urgent")], default="NORMAL", db_index=True)
+    context = models.JSONField(default=dict, blank=True)
+    dedupe_key = models.CharField(max_length=64, unique=True, null=True, blank=True)
     title = models.CharField(max_length=160)
     message = models.TextField()
     link = models.CharField(max_length=250, blank=True)

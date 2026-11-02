@@ -1,3 +1,4 @@
+from .notifications import publish_notification
 """Private guard screening forms and the office verification workflow."""
 from datetime import date
 from io import BytesIO
@@ -197,7 +198,7 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
             ScreeningSubmission.objects.create(screening=case, form_data=data)
             record(case, request.user, "SUBMIT", before)
             for user in get_user_model().objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=["ADMIN", "SUPER_ADMIN"])):
-                Notification.objects.create(user=user, title="Security screening submitted", message=f"{case.employee.name} submitted {case.form_id}.", link="security-screening")
+                publish_notification(user=user, title="Security screening submitted", message=f"{case.employee.name} submitted {case.form_id}.", link="security-screening", employee=case.employee, context={"screening_id": case.pk, "submitted_at": str(case.submitted_at), "status": case.status})
             return Response(response_data(case, request.user))
 
     @action(detail=True, methods=["post"])
@@ -236,7 +237,7 @@ class SecurityScreeningViewSet(viewsets.GenericViewSet):
             case.save()
             record(case, request.user, "REVIEW", before)
             if before["status"] != decision and case.employee.user_id:
-                Notification.objects.create(user=case.employee.user, title="Security screening update", message=f"{case.get_status_display()}. {message}", link="security-screening")
+                publish_notification(user=case.employee.user, title="Security screening update", message=f"{case.get_status_display()}. {message}", link="security-screening", employee=case.employee, context={"screening_id": case.pk, "submitted_at": str(case.submitted_at), "status": case.status})
             return Response(response_data(case, request.user))
 
     @action(detail=True, methods=["get"])

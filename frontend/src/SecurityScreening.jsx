@@ -72,13 +72,14 @@ export function GuardScreening({ api, downloadFile, FilePreview }) {
   </>}</div>;
 }
 
-export function AdminScreening({ api, downloadFile, FilePreview }) {
+export function AdminScreening({ api, downloadFile, FilePreview, initialCaseId }) {
   const [items, setItems] = useState([]), [filter, setFilter] = useState("ALL"), [selected, setSelected] = useState(null);
   const [office, setOffice] = useState({}), [decision, setDecision] = useState("IN_REVIEW"), [message, setMessage] = useState("");
   const [error, setError] = useState(""), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [revision, setRevision] = useState("");
   const load = async () => { setLoading(true); try { setItems(await api(`/security-screenings/?status=${filter}`)); } catch (err) { setError(err.message); } finally { setLoading(false); } };
   useEffect(() => { load(); }, [filter]);
   const open = item => { setSelected(item); setOffice(item.office_data || {}); setDecision(item.status === "SUBMITTED" ? "IN_REVIEW" : item.status); setMessage(item.guard_message || ""); setRevision(""); setError(""); };
+  useEffect(() => { if (initialCaseId) { api(`/security-screenings/${initialCaseId}/`, { silentLoading: true }).then(open).catch(err => setError(err.message)); } }, [initialCaseId]);
   const save = async () => {
     setBusy(true); setError("");
     try { const result = await api(`/security-screenings/${selected.id}/review/`, { method: "POST", body: JSON.stringify({ office_data: office, status: decision, guard_message: message }) }); open(result); await load(); }

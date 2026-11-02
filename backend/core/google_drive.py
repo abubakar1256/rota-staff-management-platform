@@ -126,11 +126,10 @@ def sync_verified_document(document):
 
     if not document.file:
         return None
-    service, item = drive_service()
-    if not service or not item:
-        return None
-
     try:
+        service, item = drive_service()
+        if not service or not item:
+            return None
         from googleapiclient.http import MediaIoBaseUpload
 
         root_id = item.root_folder_id or settings.GOOGLE_DRIVE_ROOT_FOLDER_ID.strip()
@@ -160,6 +159,8 @@ def sync_verified_document(document):
     except Exception as exc:  # Drive failure must not undo office verification.
         document.drive_sync_error = str(exc)[:2000]
         document.save(update_fields=["drive_sync_error", "updated_at"])
+        from .notifications import publish_notification
+        publish_notification(title="Google Drive upload failed", message=f"{document.employee.name}: the verified document could not be copied to Google Drive. Retry from Documents.", link="documents", category="SYSTEM", priority="URGENT", notification_type="WARNING", employee=document.employee, context={"document_id": document.pk}, event_key=f"drive-failure:{document.pk}:{document.file.name}")
         raise
     finally:
         try:

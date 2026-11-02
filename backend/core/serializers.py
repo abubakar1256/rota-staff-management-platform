@@ -858,10 +858,11 @@ class ClientArrivalReportSerializer(serializers.ModelSerializer):
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    category_label = serializers.CharField(source="get_category_display", read_only=True)
     class Meta:
         model = Notification
-        fields = ["id", "notification_type", "title", "message", "link", "is_read", "created_at"]
-        read_only_fields = ["notification_type", "title", "message", "link", "created_at"]
+        fields = ["id", "notification_type", "title", "message", "link", "is_read", "created_at", "category", "category_label", "priority", "context"]
+        read_only_fields = fields
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

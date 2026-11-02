@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.password_validation import validate_password
@@ -22,7 +23,7 @@ from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Count, Prefetch, Q
 from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -42,6 +43,8 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .notification_rules import CATEGORIES
+from .notifications import publish_notification
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
@@ -571,6 +574,7 @@ def password_reset_request(request):
     except Exception:
         otp.delete()
         logger.exception("Password reset OTP email delivery failed for user %s", user.pk)
+        publish_notification(title="Email delivery failed", message="A password verification email could not be delivered. Check the email provider configuration.", category="SYSTEM", notification_type="WARNING", priority="URGENT", event_key=f"email-failure:{user.pk}:{timezone.localdate()}")
         return Response({"detail": "The verification email could not be sent. Please try again later."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     return Response({"message": generic_message})
 
@@ -672,7 +676,7 @@ def employee_compliance(request, employee_id=None):
             registration.save(update_fields=["submitted_at", "signed_at", "approval_deadline", "approved_at", "approved_by", "rejection_reason", "updated_at"])
             AuditLog.objects.create(user=request.user, action="SUBMIT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Submitted Diligent registration for {employee.name}")
             for admin_user in User.objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN])):
-                Notification.objects.create(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals")
+                publish_notification(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals", employee=employee, context={"registration_id": registration.pk, "submitted_at": registration.submitted_at.isoformat()})
         return Response({"registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data, "employee": _compliance_employee_data(employee, request)})
     documents = list(employee.documents.all())
     document_details = [{"document_type": item.document_type, "document_number": item.document_number, "expiry_date": item.expiry_date, "notes": item.notes, "secure_file_url": f"/api/media/document/{item.pk}/" if item.file else None} for item in documents]
@@ -738,7 +742,7 @@ def approve_compliance(request, pk):
     registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "rejection_reason", "updated_at"])
     AuditLog.objects.create(user=request.user, action="APPROVE", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Approved Diligent registration for {registration.employee.name}")
     if registration.employee.user_id:
-        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.SUCCESS, title="Diligent registration approved", message="Your registration is approved. You can now download your Diligent PDF.", link="compliance")
+        publish_notification(user=registration.employee.user, notification_type=Notification.Type.SUCCESS, title="Diligent registration approved", message="Your registration is approved. You can now download your Diligent PDF.", link="compliance", employee=registration.employee, context={"registration_id": registration.pk, "submitted_at": str(registration.submitted_at)})
     return Response(_compliance_admin_response(registration, request))
 
 
@@ -757,7 +761,7 @@ def reject_compliance(request, pk):
     registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "rejection_reason", "updated_at"])
     AuditLog.objects.create(user=request.user, action="REJECT", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Rejected Diligent registration for {registration.employee.name}")
     if registration.employee.user_id:
-        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration needs changes", message=reason, link="compliance")
+        publish_notification(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration needs changes", message=reason, link="compliance", employee=registration.employee, context={"registration_id": registration.pk, "submitted_at": str(registration.submitted_at)})
     return Response(_compliance_admin_response(registration, request))
 
 
@@ -779,7 +783,7 @@ def request_compliance_resubmission(request, pk):
     registration.save(update_fields=["status", "approved_by", "approved_at", "approval_deadline", "submitted_at", "signed_at", "rejection_reason", "updated_at"])
     AuditLog.objects.create(user=request.user, action="REQUEST_RESUBMISSION", model_name="GuardComplianceRegistration", object_id=registration.pk, summary=f"Requested resubmission of Diligent registration for {registration.employee.name}")
     if registration.employee.user_id:
-        Notification.objects.create(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration resubmission required", message=reason, link="compliance")
+        publish_notification(user=registration.employee.user, notification_type=Notification.Type.WARNING, title="Diligent registration resubmission required", message=reason, link="compliance", employee=registration.employee, context={"registration_id": registration.pk, "submitted_at": str(registration.submitted_at)})
     return Response(_compliance_admin_response(registration, request))
 
 
@@ -1214,6 +1218,9 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         rota_week.status = RotaWeek.Status.PUBLISHED
         rota_week.published_at = timezone.now()
         rota_week.save(update_fields=["status", "published_at", "updated_at"])
+        publish_notification(title="Weekly rota published", message=f"Rota for week commencing {rota_week.week_start} is published.", link="rota", category="ROTA_STAFFING", event_date=rota_week.week_start, context={"rota_week_id": rota_week.pk})
+        for employee in Employee.objects.filter(rota_assignments__rota_week=rota_week, user__isnull=False).distinct():
+            publish_notification(user=employee.user, title="Your rota is published", message=f"Your shifts for week commencing {rota_week.week_start} are ready to view.", link="rota", category="ROTA_STAFFING", employee=employee, event_date=rota_week.week_start, context={"rota_week_id": rota_week.pk, "published_at": rota_week.published_at.isoformat()})
         response = self.get_serializer(rota_week).data
         response["confirmation_count"] = confirmation_count
         return Response(response)
@@ -1540,8 +1547,8 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
             employee = getattr(self.request.user, "employee_record", None)
             if not employee:
                 raise PermissionDenied("Your guard profile is not linked to this account.")
-            serializer.save(employee=employee, status=LeaveRecord.Status.PENDING, created_by=self.request.user)
-            Notification.objects.create(user=None, notification_type=Notification.Type.INFO, title="New guard leave request", message=f"{employee.name} submitted a leave or replacement request.", link="leave")
+            leave = serializer.save(employee=employee, status=LeaveRecord.Status.PENDING, created_by=self.request.user)
+            publish_notification(user=None, notification_type=Notification.Type.INFO, title="New guard leave request", message=f"{employee.name} submitted a leave or replacement request.", link="leave", employee=employee, event_date=leave.start_date, context={"leave_id": leave.pk, "end_date": str(leave.end_date)})
             AuditLog.objects.create(user=self.request.user, action="CREATE", model_name="LeaveRecord", object_id=str(employee.id), summary=f"{employee.name} submitted a leave request")
             return
         serializer.save(created_by=self.request.user)
@@ -1554,7 +1561,7 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
         leave.approved_at = timezone.now()
         leave.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
         if leave.employee.user_id:
-            Notification.objects.create(user=leave.employee.user, notification_type=Notification.Type.SUCCESS, title="Leave approved", message="Your leave request was approved.", link="leave")
+            publish_notification(user=leave.employee.user, notification_type=Notification.Type.SUCCESS, title="Leave approved", message="Your leave request was approved.", link="leave", employee=leave.employee, event_date=leave.start_date, context={"leave_id": leave.pk})
         AuditLog.objects.create(user=request.user, action="APPROVE", model_name="LeaveRecord", object_id=leave.pk, summary=f"Approved leave for {leave.employee.name}")
         return Response(self.get_serializer(leave).data)
 
@@ -1566,7 +1573,7 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
         leave.approved_at = timezone.now()
         leave.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
         if leave.employee.user_id:
-            Notification.objects.create(user=leave.employee.user, notification_type=Notification.Type.WARNING, title="Leave rejected", message="Your leave request was rejected.", link="leave")
+            publish_notification(user=leave.employee.user, notification_type=Notification.Type.WARNING, title="Leave rejected", message="Your leave request was rejected.", link="leave", employee=leave.employee, event_date=leave.start_date, context={"leave_id": leave.pk})
         AuditLog.objects.create(user=request.user, action="REJECT", model_name="LeaveRecord", object_id=leave.pk, summary=f"Rejected leave for {leave.employee.name}")
         return Response(self.get_serializer(leave).data)
 
@@ -1639,12 +1646,12 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             summary=f"Verified {document.document_type} for {document.employee.name}",
         )
         if document.employee.user_id:
-            Notification.objects.create(
+            publish_notification(
                 user=document.employee.user,
                 notification_type=Notification.Type.SUCCESS,
                 title="Document verified",
                 message=f"Your {document.document_type} has been verified by the office.",
-                link="documents",
+                link="documents", employee=document.employee, context={"document_id": document.pk, "file_revision": document.file.name},
             )
         try:
             sync_verified_document(document)
@@ -1682,12 +1689,12 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             summary=f"Rejected {document.document_type} for {document.employee.name}: {reason}",
         )
         if document.employee.user_id:
-            Notification.objects.create(
+            publish_notification(
                 user=document.employee.user,
                 notification_type=Notification.Type.WARNING,
                 title="Document needs attention",
                 message=f"Your {document.document_type} was rejected. {reason}",
-                link="documents",
+                link="documents", employee=document.employee, context={"document_id": document.pk, "file_revision": document.file.name},
             )
         return Response(self.get_serializer(document).data)
 
@@ -1811,7 +1818,7 @@ class TimesheetViewSet(viewsets.ModelViewSet):
         )
         AuditLog.objects.create(user=self.request.user, action="APPROVE" if approved and not was_approved else "UPDATE", model_name="Timesheet", object_id=str(sheet.pk), summary=f"{'Approved' if approved else 'Updated'} timesheet for {sheet.employee.name}")
         if approved and not was_approved and sheet.operation_id and sheet.employee.user_id:
-            Notification.objects.create(user=sheet.employee.user, notification_type="SUCCESS", title="Shift hours approved", message=f"Your shift at {sheet.site.name} on {sheet.work_date} has been reviewed and approved.", link="attendance")
+            publish_notification(user=sheet.employee.user, notification_type="SUCCESS", title="Shift hours approved", message=f"Your shift at {sheet.site.name} on {sheet.work_date} has been reviewed and approved.", link="attendance", employee=sheet.employee, site=sheet.site, event_date=sheet.work_date, context={"timesheet_id": sheet.pk})
 
     def perform_destroy(self, instance):
         if instance.operation_id:
@@ -2135,12 +2142,43 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         create_expiry_notifications(user)
+        if role_of(user) in {"SUPER_ADMIN", "ADMIN"} and cache.add("office-notification-scan", True, timeout=30):
+            from .notification_alerts import refresh_operational_alerts
+            refresh_operational_alerts()
         # Unassigned legacy alerts belong to the admin inbox, never a guard's.
         # Use the same scope for list, detail and mark_read to prevent ID access.
         audience = Q(user=user)
         if role_of(user) in {"SUPER_ADMIN", "ADMIN"}:
             audience |= Q(user__isnull=True)
         return Notification.objects.filter(audience)
+
+    @action(detail=False, methods=["get"])
+    def inbox(self, request):
+        if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
+            raise PermissionDenied("Only Admin and Super Admin can access the office notification inbox.")
+        queryset = self.get_queryset()
+        counts = queryset.aggregate(total=Count("pk"), unread=Count("pk", filter=Q(is_read=False)), urgent=Count("pk", filter=Q(priority="URGENT", is_read=False)))
+        category_counts = {row["category"]: row for row in queryset.values("category").annotate(total=Count("pk"), unread=Count("pk", filter=Q(is_read=False)))}
+        category = request.query_params.get("category", "ALL")
+        view = request.query_params.get("view", "ALL")
+        if category != "ALL":
+            if category not in dict(CATEGORIES):
+                raise ValidationError({"category": "Choose a valid notification category."})
+            queryset = queryset.filter(category=category)
+        if view == "UNREAD":
+            queryset = queryset.filter(is_read=False)
+        elif view == "URGENT":
+            queryset = queryset.filter(priority="URGENT", is_read=False)
+        elif view != "ALL":
+            raise ValidationError({"view": "Choose All, Unread or Urgent."})
+        search = request.query_params.get("q", "").strip()[:160]
+        if search:
+            queryset = queryset.filter(Q(title__icontains=search) | Q(message__icontains=search))
+        paginator = Paginator(queryset.order_by("-created_at", "-pk"), 25)
+        page = paginator.get_page(request.query_params.get("page", 1))
+        return Response({"results": self.get_serializer(page.object_list, many=True).data,
+                         "summary": {**counts, "categories": [{"key": key, "label": label, "total": category_counts.get(key, {}).get("total", 0), "unread": category_counts.get(key, {}).get("unread", 0)} for key, label in CATEGORIES]},
+                         "pagination": {"page": page.number, "total_pages": paginator.num_pages, "total": paginator.count, "has_next": page.has_next(), "has_previous": page.has_previous()}})
 
     @action(detail=False, methods=["post"])
     def check_expiry(self, request):
@@ -2306,6 +2344,14 @@ def create_expiry_notifications(user):
         if role_of(user) != "EMPLOYEE":
             return 0
         documents = documents.filter(employee__user=user)
+    documents = list(documents)
+    guard_ids = {document.employee.user_id for document in documents if document.employee.user_id}
+    audience = Q(user_id__in=guard_ids)
+    if admin_inbox:
+        audience |= Q(user__isnull=True)
+    existing_alerts = {}
+    for alert in Notification.objects.filter(audience, title__in=["Document expired", "Document expires soon"]):
+        existing_alerts.setdefault((alert.user_id, alert.title, alert.message, alert.context.get("document_id")), alert)
     created = 0
     for document in documents:
         state = "expired" if document.expiry_date < today else "expires soon"
@@ -2315,9 +2361,20 @@ def create_expiry_notifications(user):
         if document.employee.user_id and role_of(document.employee.user) == "EMPLOYEE":
             recipients.append(document.employee.user_id)
         for recipient_id in recipients:
-            _, was_created = Notification.objects.get_or_create(
-                user_id=recipient_id, title=title, message=message, created_at__date=today,
-                defaults={"notification_type": Notification.Type.WARNING, "link": "documents"},
-            )
+            recipient = document.employee.user if recipient_id else None
+            metadata = {"document_id": document.pk, "expiry_date": str(document.expiry_date), "employee_record_id": document.employee_id, "employee_id": document.employee.employee_id, "employee_name": document.employee.name}
+            # Reuse existing reminders from before categorisation; do not repeat daily.
+            lookup = (recipient_id, title, message, document.pk)
+            legacy = existing_alerts.get(lookup) or existing_alerts.pop((recipient_id, title, message, None), None)
+            priority = "URGENT" if document.expiry_date <= today + timedelta(days=7) else "NORMAL"
+            if legacy:
+                if legacy.category != "DOCUMENT_EXPIRY" or legacy.priority != priority or legacy.context != metadata:
+                    Notification.objects.filter(pk=legacy.pk).update(category="DOCUMENT_EXPIRY", priority=priority, context=metadata)
+                existing_alerts[lookup] = legacy
+                continue
+            saved, was_created = publish_notification(user=recipient, title=title, message=message, category="DOCUMENT_EXPIRY", priority=priority,
+                                                  notification_type="WARNING", link="documents", context=metadata,
+                                                  event_key=f"expiry:{document.pk}:{document.expiry_date}:{state}")
+            existing_alerts[lookup] = saved
             created += int(was_created)
     return created
