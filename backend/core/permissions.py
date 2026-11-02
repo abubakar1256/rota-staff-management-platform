@@ -100,7 +100,7 @@ class IsAdminManagerOrEmployee(BasePermission):
         role = role_of(request.user)
         if role in {"SUPER_ADMIN", "ADMIN", "MANAGER"}:
             return True
-        return is_guard(request.user) and getattr(view, "action", None) in {"me", "change_password"}
+        return is_guard(request.user) and getattr(view, "action", None) in {"me", "change_password", "submit_profile"}
 
 
 class IsAdminManagerOrEmployeeDocument(BasePermission):

@@ -910,6 +910,40 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             serializer.save()
         return Response(self.get_serializer(employee).data)
 
+    @action(detail=False, methods=["post"], url_path="submit-profile")
+    @transaction.atomic
+    def submit_profile(self, request):
+        from .profile_completion import PROFILE_FIELDS, PROFILE_DECLARATION, PROFILE_DECLARATION_VERSION, profile_photo
+        if role_of(request.user) != "EMPLOYEE":
+            raise PermissionDenied("Only guards can submit their own profile declaration.")
+        employee = self.get_queryset().select_for_update().first()
+        if not employee:
+            return Response({"detail": "No employee profile is linked to this account."}, status=404)
+        if request.data.get("declaration_accepted") is not True:
+            return Response({"detail": "Please confirm that your information is true and correct before submitting."}, status=400)
+        blocked = set(request.data) - set(PROFILE_FIELDS) - {"declaration_accepted"}
+        if blocked:
+            return Response({"detail": "Only your personal and emergency details can be submitted here."}, status=400)
+        details = {key: value for key, value in request.data.items() if key in PROFILE_FIELDS}
+        serializer = self.get_serializer(employee, data=details, partial=True)
+        serializer.is_valid(raise_exception=True)
+        missing = [field.replace("_", " ") for field in PROFILE_FIELDS if not str(serializer.validated_data.get(field, getattr(employee, field)) or "").strip()]
+        photo = profile_photo(employee)
+        if missing or not photo:
+            if not photo:
+                missing.insert(0, "passport-size profile picture")
+            return Response({"detail": f"Please complete these details before submitting: {', '.join(missing)}."}, status=400)
+        employee = serializer.save()
+        employee.profile_declaration_accepted_at = timezone.now()
+        employee.profile_declaration_version = PROFILE_DECLARATION_VERSION
+        employee.save(update_fields=["profile_declaration_accepted_at", "profile_declaration_version", "updated_at"])
+        AuditLog.objects.create(user=request.user, action="PROFILE_SUBMIT", model_name="Employee", object_id=str(employee.pk), summary="Guard confirmed and submitted their profile.", after_data={
+            "declaration": PROFILE_DECLARATION, "version": PROFILE_DECLARATION_VERSION,
+            "accepted_at": employee.profile_declaration_accepted_at.isoformat(), "photo_document_id": photo.pk,
+            "profile": {field: str(getattr(employee, field) or "") for field in PROFILE_FIELDS},
+        })
+        return Response(self.get_serializer(employee).data)
+
     @action(detail=False, methods=["post"], url_path="change-password")
     def change_password(self, request):
         user = request.user

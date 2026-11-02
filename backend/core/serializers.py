@@ -184,6 +184,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
+    profile_declaration_text = serializers.SerializerMethodField(read_only=True)
     profile_completion = serializers.SerializerMethodField(read_only=True)
     has_portal_account = serializers.SerializerMethodField(read_only=True)
     portal_status = serializers.SerializerMethodField(read_only=True)
@@ -241,6 +242,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
+        from .profile_completion import PROFILE_FIELDS
+        if any(field in validated_data and validated_data[field] != getattr(instance, field) for field in PROFILE_FIELDS):
+            validated_data["profile_declaration_accepted_at"] = None
+            validated_data["profile_declaration_version"] = ""
         previous_email = (instance.email or "").strip().lower()
         email_changed = "email" in validated_data
         instance = super().update(instance, validated_data)
@@ -261,12 +266,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
-        read_only_fields = ["id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        read_only_fields = ["profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
-        fields = [obj.name, obj.date_of_birth, obj.nationality, obj.position, obj.phone, obj.email, obj.address, obj.emergency_contact_name or obj.emergency_contact, obj.emergency_contact_phone, obj.emergency_contact_relationship, obj.joining_date]
-        return round(sum(bool(value) for value in fields) / len(fields) * 100)
+        from .profile_completion import profile_completion
+        return profile_completion(obj)
+
+    def get_profile_declaration_text(self, obj):
+        from .profile_completion import PROFILE_DECLARATION
+        return PROFILE_DECLARATION
 
     def get_documents_completion(self, obj):
         required_types = [

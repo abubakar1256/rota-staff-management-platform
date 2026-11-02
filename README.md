@@ -82,6 +82,16 @@ Client Admin access is read-only. Guard personal documents and internal activity
 - A missed Book Off reason alone does not complete a shift or create hours. Older completed records show their existing evidence without automatically creating historical timesheets.
 - Apply backend migration `0035_completed_shift_timesheet` with `python manage.py migrate` when deploying this update.
 
+## Guard profile completion
+
+- Newly activated guards open **My profile**. The steps are picture, personal details, contact details, emergency contact, then review and submit.
+- Guards crop and save a passport-size picture before continuing. Nationality uses a searchable country list with no default selection for a new profile.
+- **Save & next** saves that step. **Back** keeps entered values; **Save draft** allows guards to continue later.
+- Profile completion counts guard-controlled details, the saved picture and the submitted declaration. Office-managed position and joining date do not prevent guards from reaching 100%.
+- Final submission requires all profile fields, a saved picture and an explicit declaration checkbox. The server records the declaration, timestamp and submitted details in the audit log.
+- Editing profile details or replacing/deleting the picture requires a fresh declaration. Reviewing the same picture in the office preserves the guard's declaration.
+- Deploy backend and frontend together and apply migration `0036_guard_profile_declaration` with `python manage.py migrate`.
+
 ## Next implementation phases
 
 1. Daily operations, attendance, and operational notes
