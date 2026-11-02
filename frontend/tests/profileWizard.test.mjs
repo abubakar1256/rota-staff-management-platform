@@ -14,7 +14,7 @@ test("country dropdown covers all 249 unique ISO country and territory codes", (
 
 test("new profiles have no preselected nationality and retain saved drafts", () => {
   assert.equal(profileDraft().nationality, "");
-  assert.equal(profileDraft({ nationality: "Pakistan", phone: "123" }).nationality, "Pakistan");
+  assert.equal(profileDraft({ nationality: "Pakistan", phone: "123" }).nationality, "Pakistani");
   assert.equal(profileDraft({ phone: "123" }).phone, "123");
 });
 
@@ -45,5 +45,5 @@ test("Next validates previous steps but permits unfinished future steps", () => 
   assert.equal(profileStepError(personal, 1), null);
   assert.equal(profileStepError(personal, 2)?.step, 2);
   assert.equal(profileStepError({ ...personal, name: "  " }, 3)?.step, 1);
-  assert.equal(profileStepError({ ...personal, nationality: "paki" }, 1)?.message, "Select your nationality from the country list.");
+  assert.equal(profileStepError({ ...personal, nationality: "paki" }, 1)?.message, "Select your nationality from the list.");
 });
