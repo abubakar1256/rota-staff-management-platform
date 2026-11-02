@@ -38,12 +38,14 @@ test("approval countdown ticking does not report a false record update", async (
   assert.equal(check.applied.length, 0);
 });
 
-test("attendance checks combine previous and selected dates in the existing order", async () => {
-  const check = setup({ data: [], paths: ["/today", "/previous"],
-    api: async (path) => [{ id: path === "/previous" ? 1 : 2 }],
-    select: ([today, previous]) => [...previous, ...today] });
+test("attendance updates request only the selected date", async () => {
+  const calls = [];
+  const path = "/operations/?operation_date=2026-11-02";
+  const check = setup({ data: [], paths: path,
+    api: async (requested) => { calls.push(requested); return [{ id: 2, operation_date: "2026-11-02" }]; } });
   assert.equal(await check.run(), "updated");
-  assert.deepEqual(check.applied, [[{ id: 1 }, { id: 2 }]]);
+  assert.deepEqual(calls, [path]);
+  assert.deepEqual(check.applied, [[{ id: 2, operation_date: "2026-11-02" }]]);
 });
 
 test("a failed multi-request check keeps all previously displayed data", async () => {
