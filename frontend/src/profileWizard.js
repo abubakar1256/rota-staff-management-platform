@@ -7,6 +7,20 @@ export const profileFieldLabels = { name: "Full name", date_of_birth: "Date of b
 export function profileDraft(profile) {
   return Object.fromEntries(profileFields.map((field) => [field, profile?.[field] || ""]));
 }
+export function profileStepError(form, step) {
+  for (const [fieldStep, fields] of Object.entries(stepFields)) {
+    if (Number(fieldStep) > step) continue;
+    for (const field of fields) {
+      if (!String(form[field] || "").trim()) {
+        return { step: Number(fieldStep), message: `Please complete ${profileFieldLabels[field].toLowerCase()}.` };
+      }
+      if (field === "nationality" && !findCountry(form[field])) {
+        return { step: Number(fieldStep), message: "Select your nationality from the country list." };
+      }
+    }
+  }
+  return null;
+}
 export function profilePercentage(form, hasPhoto, declaration) {
   const completed = profileFields.filter((field) => field === "nationality" ? Boolean(findCountry(form[field])) : Boolean(String(form[field] || "").trim())).length;
   return Math.round((completed + Number(Boolean(hasPhoto)) + Number(Boolean(declaration))) / (profileFields.length + 2) * 100);

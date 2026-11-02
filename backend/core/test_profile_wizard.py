@@ -50,12 +50,15 @@ class GuardProfileWizardTests(APITestCase):
 
     def test_incomplete_submission_never_partially_saves_profile(self):
         self.photo()
-        response = self.submit(address=" ")
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("address", response.data["detail"])
-        self.employee.refresh_from_db()
-        self.assertIsNone(self.employee.date_of_birth)
-        self.assertIsNone(self.employee.profile_declaration_accepted_at)
+        for field in self.details:
+            for value in ("", " \t "):
+                with self.subTest(field=field, value=value):
+                    response = self.submit(**{field: value})
+                    self.assertEqual(response.status_code, 400, response.data)
+                    self.employee.refresh_from_db()
+                    self.assertIsNone(self.employee.date_of_birth)
+                    self.assertIsNone(self.employee.profile_declaration_accepted_at)
+        self.assertFalse(AuditLog.objects.filter(action="PROFILE_SUBMIT").exists())
 
     def test_submission_records_confirmation_time_and_profile_snapshot(self):
         photo = self.photo()

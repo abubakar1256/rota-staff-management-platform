@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import CountrySelect from "./CountrySelect";
 import ProfilePictureStep from "./ProfilePictureStep";
 import { findCountry } from "./countries";
-import { profileDraft, profileFields, profileFieldLabels, profilePercentage, profileSteps, stepFields } from "./profileWizard";
+import { profileDraft, profileFields, profileFieldLabels, profilePercentage, profileStepError, profileSteps, stepFields } from "./profileWizard";
 import "./profileWizard.css";
 
 export default function GuardProfileWizard({ api, Image }) {
@@ -40,10 +40,9 @@ export default function GuardProfileWizard({ api, Image }) {
       return;
     }
     if (!profile.profile_photo_url) { setStep(0); setError("Choose a profile photo before continuing."); return; }
-    if (step >= 1 && !findCountry(form.nationality)) { setStep(1); setError("Select your nationality from the country list."); return; }
+    const validationError = profileStepError(form, step);
+    if (validationError) { setStep(validationError.step); setError(validationError.message); return; }
     if (step === 4) {
-      const missing = profileFields.find((field) => !String(form[field] || "").trim());
-      if (missing) { setStep(Number(Object.keys(stepFields).find((key) => stepFields[key].includes(missing)))); setError(`Please complete ${profileFieldLabels[missing].toLowerCase()}.`); return; }
       if (!accepted) { setError("Please confirm that all your information is true and correct."); return; }
     }
     setSaving(true);
@@ -64,7 +63,7 @@ export default function GuardProfileWizard({ api, Image }) {
     <section className="panel profile-wizard-progress"><div><strong>{profile.name}</strong><span>{profile.employee_id} · {profile.position || "Guard"}</span></div><div className="profile-wizard-progress-row"><strong>Profile completion</strong><span>{percentage}%</span></div><div className="progress-track" role="progressbar" aria-label="Profile completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}><span style={{ width: `${percentage}%` }} /></div><small>{percentage === 100 ? "Your details and confirmation are complete." : "Your percentage increases as you add your picture and complete your details."}</small></section>
     {submitted ? <section className="panel profile-wizard-success"><CheckCircle2 size={34} /><h3>Profile completed successfully</h3><p>Your profile is 100% complete and your declaration has been recorded.</p>{review}<button type="button" className="secondary-button" onClick={() => { setSubmitted(false); setStep(0); }}>Edit profile</button></section> : <section className="panel profile-wizard">
       <ol className="profile-wizard-steps" aria-label="Profile steps">{profileSteps.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} className={index === step ? "current" : index < step ? "done" : ""}><span>{index < step ? "✓" : index + 1}</span><strong>{label}</strong></li>)}</ol>
-      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3>{step > 0 && <p className="muted">{["", "Enter your personal details. Type to search for your country.", "Keep your phone, login email and address up to date.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]}</p>}</div>
+      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3>{step > 0 && <p className="muted">{["", "Enter your personal details. Type to search for your country.", "Keep your phone, login email and address up to date.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]} All fields are required.</p>}</div>
       {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
       {step === 0 && <ProfilePictureStep ref={picture} api={api} profile={profile} Image={Image} onReadyChange={setPhotoReady} onPhotoChange={() => setAccepted(false)} />}
       <form onSubmit={next} className="profile-wizard-form">
