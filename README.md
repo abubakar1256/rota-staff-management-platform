@@ -72,6 +72,16 @@ Client Admin access is read-only. Guard personal documents and internal activity
 - **Activity log** records create/update/delete and approval events.
 - **Reports** can export timesheets as CSV (opens in Excel) or open a print-friendly report for browser PDF saving.
 
+## Completed attendance and timesheets
+
+- A successful Book Off closes the guard's attendance controls and shows the site, date, actual Book On/Off timestamps and elapsed duration. Pictures and reasons remain available as history.
+- Each newly completed shift creates one unapproved timesheet. Retried submissions cannot create duplicates or replace approved hours. Actual elapsed hours include overnight shifts and clock changes; overtime remains an office-controlled field.
+- Active Admin and Super Admin users receive a completion notification. Late Book On, GPS exceptions and missed required hourly pictures are flagged for review. Sites using Book On/Off only do not require hourly pictures.
+- In **Timesheets**, open **Review**, inspect attendance evidence and choose **Approve timesheet**. Approval records the reviewer and timestamp, adds an audit entry and notifies only the relevant guard.
+- Attendance-linked timestamps and completed shift assignments are retained as evidence. Office users may correct recorded reasons through the audited attendance endpoints.
+- A missed Book Off reason alone does not complete a shift or create hours. Older completed records show their existing evidence without automatically creating historical timesheets.
+- Apply backend migration `0035_completed_shift_timesheet` with `python manage.py migrate` when deploying this update.
+
 ## Next implementation phases
 
 1. Daily operations, attendance, and operational notes

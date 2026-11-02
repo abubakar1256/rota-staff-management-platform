@@ -423,6 +423,7 @@ class EmployeeDocument(models.Model):
 
 
 class Timesheet(models.Model):
+    operation = models.OneToOneField("DailyOperation", on_delete=models.PROTECT, related_name="timesheet", null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="timesheets")
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="timesheets", null=True, blank=True)
     work_date = models.DateField()
@@ -430,9 +431,14 @@ class Timesheet(models.Model):
     scheduled_end = models.TimeField(null=True, blank=True)
     actual_start = models.TimeField(null=True, blank=True)
     actual_end = models.TimeField(null=True, blank=True)
+    actual_start_at = models.DateTimeField(null=True, blank=True)
+    actual_end_at = models.DateTimeField(null=True, blank=True)
+    review_flags = models.JSONField(default=list, blank=True)
     overtime_minutes = models.PositiveIntegerField(default=0)
     notes = models.CharField(max_length=250, blank=True)
     approved = models.BooleanField(default=False)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_timesheets", null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_timesheets")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -456,6 +462,8 @@ class Timesheet(models.Model):
 
     @property
     def actual_hours(self):
+        if self.actual_start_at and self.actual_end_at:
+            return round(max(0, self.actual_end_at.timestamp() - self.actual_start_at.timestamp()) / 3600, 2)
         return self._hours(self.actual_start, self.actual_end)
 
     def __str__(self):
@@ -493,6 +501,16 @@ class DailyOperation(models.Model):
         from datetime import datetime
         from django.utils import timezone
         return timezone.make_aware(datetime.combine(self.operation_date, self.shift_type.start_time), timezone.get_current_timezone())
+
+    @property
+    def expected_hourly_checkins(self):
+        from math import ceil
+        if not self.site.hourly_pictures_required:
+            return 0
+        start = self.shift_type.start_time.hour * 60 + self.shift_type.start_time.minute
+        end = self.shift_type.end_time.hour * 60 + self.shift_type.end_time.minute
+        duration = end - start if end > start else end + 24 * 60 - start
+        return max(0, ceil(duration / 60) - 1)
 
 
 class ShiftAttendanceEvent(models.Model):

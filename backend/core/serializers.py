@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
 import os
-from math import ceil
 from secrets import token_urlsafe
 
 from django.contrib.auth import authenticate, get_user_model
@@ -646,10 +645,14 @@ class TimesheetSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Timesheet
-        fields = ["id", "employee", "employee_name", "site", "site_name", "work_date", "scheduled_start", "scheduled_end", "actual_start", "actual_end", "scheduled_hours", "actual_hours", "overtime_minutes", "notes", "approved", "created_by", "created_at", "updated_at"]
-        read_only_fields = ["created_by", "scheduled_hours", "actual_hours", "created_at", "updated_at"]
+        fields = ["id", "employee", "employee_name", "site", "site_name", "work_date", "scheduled_start", "scheduled_end", "actual_start", "actual_end", "scheduled_hours", "actual_hours", "overtime_minutes", "notes", "approved", "created_by", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
+        read_only_fields = ["created_by", "scheduled_hours", "actual_hours", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
 
     def validate(self, attrs):
+        if self.instance and self.instance.operation_id:
+            protected = {"employee", "site", "work_date", "scheduled_start", "scheduled_end", "actual_start", "actual_end"}
+            if protected.intersection(attrs):
+                raise serializers.ValidationError("Attendance timesheets retain recorded evidence. Review and approve the draft without replacing its timestamps.")
         for prefix in ["scheduled", "actual"]:
             start = attrs.get(f"{prefix}_start")
             end = attrs.get(f"{prefix}_end")
@@ -683,6 +686,7 @@ class HourlyCheckinNoteSerializer(serializers.ModelSerializer):
 
 
 class DailyOperationSerializer(serializers.ModelSerializer):
+    completion_summary = serializers.SerializerMethodField()
     attendance_mode = serializers.CharField(source="site.attendance_mode", read_only=True)
     attendance_mode_label = serializers.CharField(source="site.get_attendance_mode_display", read_only=True)
     hourly_pictures_required = serializers.BooleanField(source="site.hourly_pictures_required", read_only=True)
@@ -711,8 +715,14 @@ class DailyOperationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_on_due_at", "book_on_is_late", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_on_due_at", "book_on_is_late", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "completion_summary", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        if self.instance and self.instance.attendance_events.filter(event_type="BOOK_OFF").exists():
+            if {"employee", "site", "shift_type", "operation_date"}.intersection(attrs):
+                raise serializers.ValidationError("Completed attendance retains its original guard, site, shift and date.")
+        return attrs
 
     def get_reached_by_name(self, obj):
         if not obj.reached_by:
@@ -721,6 +731,10 @@ class DailyOperationSerializer(serializers.ModelSerializer):
 
     def get_book_on_due_at(self, obj):
         return obj.scheduled_start_at.isoformat()
+
+    def get_completion_summary(self, obj):
+        from .attendance_completion import completion_summary
+        return completion_summary(obj)
 
     def get_book_on_is_late(self, obj):
         event = next((event for event in obj.attendance_events.all() if event.event_type == ShiftAttendanceEvent.EventType.BOOK_ON), None)
@@ -740,12 +754,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         return "LATE" if self.get_delay_minutes(obj) > 0 else "REACHED"
 
     def get_expected_hourly_checkins(self, obj):
-        if not obj.site.hourly_pictures_required:
-            return 0
-        start = obj.shift_type.start_time.hour * 60 + obj.shift_type.start_time.minute
-        end = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
-        duration = end - start if end > start else end + 24 * 60 - start
-        return max(0, ceil(duration / 60) - 1)
+        return obj.expected_hourly_checkins
 
     def _book_off_window(self, obj):
         current_timezone = timezone.get_current_timezone()

@@ -29,7 +29,7 @@ from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -1742,15 +1742,40 @@ class TimesheetViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        approved = serializer.validated_data.get("approved", False)
+        serializer.save(created_by=self.request.user, approved_by=self.request.user if approved else None, approved_at=timezone.now() if approved else None)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        sheet = Timesheet.objects.select_for_update().get(pk=serializer.instance.pk)
+        was_approved = sheet.approved
+        approved = serializer.validated_data.get("approved", was_approved)
+        serializer.instance = sheet
+        sheet = serializer.save(
+            approved_by=(sheet.approved_by if was_approved else self.request.user) if approved else None,
+            approved_at=(sheet.approved_at if was_approved else timezone.now()) if approved else None,
+        )
+        AuditLog.objects.create(user=self.request.user, action="APPROVE" if approved and not was_approved else "UPDATE", model_name="Timesheet", object_id=str(sheet.pk), summary=f"{'Approved' if approved else 'Updated'} timesheet for {sheet.employee.name}")
+        if approved and not was_approved and sheet.operation_id and sheet.employee.user_id:
+            Notification.objects.create(user=sheet.employee.user, notification_type="SUCCESS", title="Shift hours approved", message=f"Your shift at {sheet.site.name} on {sheet.work_date} has been reviewed and approved.", link="attendance")
+
+    def perform_destroy(self, instance):
+        if instance.operation_id:
+            raise ValidationError("Attendance timesheets are retained with their shift evidence and cannot be deleted.")
+        instance.delete()
 
 
 class DailyOperationViewSet(viewsets.ModelViewSet):
     serializer_class = DailyOperationSerializer
     permission_classes = [IsAdminManagerOrEmployeeOperation]
 
+    def perform_destroy(self, instance):
+        if Timesheet.objects.filter(operation=instance).exists():
+            raise ValidationError("Completed shifts are retained with their timesheet and attendance evidence.")
+        instance.delete()
+
     def get_queryset(self):
-        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes", "book_off_note")
+        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes", "book_off_note", "timesheet")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -1762,8 +1787,10 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         return queryset
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def attendance(self, request, pk=None):
         operation = self.get_object()
+        operation = self.get_queryset().select_for_update(of=("self",)).get(pk=operation.pk)
         if not operation.employee_id:
             return Response({"detail": "This shift has no assigned guard."}, status=status.HTTP_400_BAD_REQUEST)
         event_type = (request.data.get("event_type") or "").upper()
@@ -1846,6 +1873,13 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             if timezone.now() > operation.scheduled_start_at and not late_reason:
                 return Response({"detail": "Please enter a reason for late Book On before submitting."}, status=status.HTTP_400_BAD_REQUEST)
         event = ShiftAttendanceEvent.objects.create(operation=operation, event_type=event_type, sequence=sequence, photo=photo, latitude=latitude, longitude=longitude, accuracy_m=accuracy_m, distance_m=distance_m, location_status=location_status, notes=(request.data.get("notes") or "")[:250], late_reason=late_reason, created_by=request.user)
+        if event_type == ShiftAttendanceEvent.EventType.BOOK_OFF:
+            from .attendance_completion import complete_shift
+            operation._prefetched_objects_cache.pop("attendance_events", None)
+            try:
+                complete_shift(operation, request.user)
+            except ValueError as exc:
+                raise ValidationError(str(exc))
         if event_type == ShiftAttendanceEvent.EventType.BOOK_ON and location_status == ShiftAttendanceEvent.LocationStatus.VERIFIED:
             operation.reached_at = event.captured_at
             operation.reached_by = request.user
@@ -1859,6 +1893,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="book-on-note")
     def book_on_note(self, request, pk=None):
         operation = self.get_object()
+        if role_of(request.user) == "EMPLOYEE" and operation.attendance_events.filter(event_type="BOOK_OFF").exists():
+            return Response({"detail": "This shift is completed. Contact the office to correct its recorded reasons."}, status=status.HTTP_400_BAD_REQUEST)
         event = operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).first()
         if not event:
             return Response({"detail": "Record Book On before saving its late reason."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1876,6 +1912,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="hourly-note")
     def hourly_note(self, request, pk=None):
         operation = self.get_object()
+        if role_of(request.user) == "EMPLOYEE" and operation.attendance_events.filter(event_type="BOOK_OFF").exists():
+            return Response({"detail": "This shift is completed. Contact the office to correct its recorded reasons."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.site.hourly_pictures_required:
             return Response({"detail": "Hourly pictures and missed-hourly reasons are not required for this site."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.employee_id:
@@ -1943,6 +1981,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="mark-reached")
     def mark_reached(self, request, pk=None):
         operation = self.get_object()
+        if operation.attendance_events.filter(event_type="BOOK_OFF").exists():
+            return Response({"detail": "This shift is completed. Its attendance timestamps are locked."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.employee_id:
             return Response({"detail": "An employee must be assigned before marking reached."}, status=status.HTTP_400_BAD_REQUEST)
         operation.reached_at = timezone.now()

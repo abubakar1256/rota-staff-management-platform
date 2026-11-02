@@ -13,7 +13,7 @@ from .models import AuditLog, DailyOperation, Employee, HourlyCheckinNote, Shift
 from .serializers import DailyOperationSerializer
 
 
-class SiteAttendanceModeTests(APITestCase):
+class AttendanceFixture:
     def setUp(self):
         User = get_user_model()
         self.admin = User.objects.create_user(username="mode-admin", is_superuser=True)
@@ -45,6 +45,7 @@ class SiteAttendanceModeTests(APITestCase):
         payload = {"event_type": event_type, **extras}
         if gps:
             payload.update(latitude="51.5", longitude="-0.12", accuracy_m="8")
+        payload.update(extras)
         if photo:
             buffer = BytesIO()
             Image.new("RGB", (8, 8), "blue").save(buffer, format="JPEG")
@@ -55,6 +56,8 @@ class SiteAttendanceModeTests(APITestCase):
     def book_on_record(self, operation):
         return ShiftAttendanceEvent.objects.create(operation=operation, event_type="BOOK_ON", photo="test/book-on.jpg", created_by=self.guard)
 
+
+class SiteAttendanceModeTests(AttendanceFixture, APITestCase):
     def test_existing_site_default_retains_hourly_workflow(self):
         self.assertEqual(self.full_site.attendance_mode, "WITH_HOURLY")
         self.assertEqual(DailyOperationSerializer(self.full).data["expected_hourly_checkins"], 11)
