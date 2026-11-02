@@ -28,7 +28,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, authentication_classes, permission_classes
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -482,6 +482,25 @@ def client_login(request):
     return Response({"token": token.key, "user": UserSerializer(user).data})
 
 
+def _active_portal_invite(raw_token):
+    if not isinstance(raw_token, str) or not raw_token.strip() or len(raw_token) > 128:
+        return None
+    return EmployeePortalInvite.objects.select_related("employee", "employee__user").filter(
+        token_hash=hashlib.sha256(raw_token.strip().encode()).hexdigest(),
+        used_at__isnull=True, expires_at__gt=timezone.now(), employee__user__isnull=False,
+    ).first()
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def activation_details(request):
+    invite = _active_portal_invite(request.data.get("token"))
+    if not invite:
+        return Response({"detail": "This activation link is invalid or has expired. Ask the office to send a new invite."}, status=status.HTTP_400_BAD_REQUEST, headers={"Cache-Control": "no-store"})
+    return Response({"name": invite.employee.name, "email": invite.employee.email or invite.employee.user.email}, headers={"Cache-Control": "no-store"})
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def activate_portal(request):
@@ -492,7 +511,7 @@ def activate_portal(request):
         return Response({"detail": "Password must be at least 8 characters."}, status=status.HTTP_400_BAD_REQUEST)
     if password != confirmation:
         return Response({"detail": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
-    invite = EmployeePortalInvite.objects.select_related("employee", "employee__user").filter(token_hash=hashlib.sha256(raw_token.encode()).hexdigest(), used_at__isnull=True, expires_at__gt=timezone.now()).first()
+    invite = _active_portal_invite(raw_token)
     if not raw_token or not invite or not invite.employee.user_id:
         return Response({"detail": "This activation link is invalid or has expired. Ask the office to send a new invite."}, status=status.HTTP_400_BAD_REQUEST)
     user = invite.employee.user

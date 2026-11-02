@@ -373,8 +373,23 @@ function ActivationPage({ token, onActivated }) {
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [identity, setIdentity] = useState(null);
+  const [loadingIdentity, setLoadingIdentity] = useState(true);
+  const [identityError, setIdentityError] = useState("");
+  const [identityAttempt, setIdentityAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setIdentity(null); setIdentityError(""); setLoadingIdentity(true);
+    api("/auth/activation-details/", { method: "POST", body: JSON.stringify({ token }), silentLoading: true, silentToast: true, silentError: true, skipInvalidation: true })
+      .then((details) => { if (active) setIdentity(details); })
+      .catch((err) => { if (active) setIdentityError(err.message); })
+      .finally(() => { if (active) setLoadingIdentity(false); });
+    return () => { active = false; };
+  }, [token, identityAttempt]);
   const submit = async (event) => {
-    event.preventDefault(); setSaving(true); setError("");
+    event.preventDefault();
+    if (!identity || loadingIdentity) return;
+    setSaving(true); setError("");
     try {
       const data = await api("/auth/activate/", { method: "POST", body: JSON.stringify({ token, password, password_confirmation: confirmation }) });
       localStorage.setItem("rota_token", data.token);
@@ -382,7 +397,12 @@ function ActivationPage({ token, onActivated }) {
       onActivated(data.user);
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">EMPLOYEE PORTAL</p><h1>Set your password</h1><p className="muted">Create a private password to activate your guard portal. This invite can be used once.</p><form onSubmit={submit}><label>New password<input required minLength="8" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" /></label><label>Confirm password<input required minLength="8" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Activating..." : "Activate portal"}</button></form><p className="login-hint">After activation, use your email address as username.</p></section></main>;
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">EMPLOYEE PORTAL</p><h1>Set your password</h1><p className="muted">Create a private password to activate your guard portal. This invite can be used once.</p>
+    <form onSubmit={submit}>
+      {loadingIdentity ? <p className="muted" role="status">Loading your account details…</p> : identity && <div className="activation-identity"><label>Full name<input type="text" value={identity.name} readOnly aria-readonly="true" autoComplete="off" /></label><label>Email (login username)<input type="email" value={identity.email} readOnly aria-readonly="true" autoComplete="off" /></label><small>These details were added by your office. Contact the office if a correction is needed.</small></div>}
+      {identityError && <div className="error" role="alert"><p>{identityError}</p><button type="button" className="text-button" onClick={() => setIdentityAttempt((attempt) => attempt + 1)}>Try again</button></div>}
+      <label>New password<input required minLength="8" type="password" autoComplete="new-password" disabled={!identity || saving} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" /></label><label>Confirm password<input required minLength="8" type="password" autoComplete="new-password" disabled={!identity || saving} value={confirmation} onChange={(e) => setConfirmation(e.target.value)} /></label>{error && <p className="error" role="alert">{error}</p>}<button className="primary-button" type="submit" disabled={saving || loadingIdentity || !identity}>{saving ? "Activating..." : "Activate portal"}</button>
+    </form><p className="login-hint">After activation, use your email address as username.</p></section></main>;
 }
 
 function StatCard({ label, value, detail, icon: Icon, tone }) { return <article className={`stat-card ${tone}`}><div className="stat-icon"><Icon size={19} /></div><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>; }
