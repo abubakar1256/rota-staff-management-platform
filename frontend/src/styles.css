@@ -491,6 +491,23 @@ textarea, select, input { max-width: 100%; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); } }
 .document-review-state { display: flex; align-items: flex-start; gap: 8px; padding: 9px; border-radius: 8px; color: #9b6a18; background: #fffaf0; }.document-review-state.verified { color: #218c72; background: #f3fcf8; }.document-review-state.rejected { color: #a45d68; background: #fff4f5; }.document-review-state > div { display: grid; gap: 3px; }.document-review-state strong { font-size: 10px; }.document-review-state small { color: inherit; font-size: 10px; line-height: 1.4; }.document-review-icon { display: grid; flex: 0 0 auto; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: currentColor; background: #fff; font-weight: 900; }
 .profile-photo-panel { display: flex; align-items: center; gap: 18px; }
+.site-record-modal.modal-card { width: min(100%, 900px); }
+.site-record-modal .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.site-attendance-field { min-width: 0; margin: 2px 0 0; padding: 0; border: 0; }
+.site-attendance-field legend { margin-bottom: 8px; padding: 0; color: #66748b; font-size: 12px; font-weight: 700; }
+.site-attendance-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.site-attendance-options .site-attendance-option { display: flex; align-items: flex-start; gap: 9px; padding: 12px; border: 1px solid #dbe4f4; border-radius: 10px; background: #fff; cursor: pointer; }
+.site-attendance-option.selected { border-color: #688aff; background: #f1f5ff; box-shadow: 0 0 0 2px #688aff12; }
+.site-attendance-option input[type="radio"] { width: 16px; height: 16px; margin: 2px 0 0; padding: 0; flex-shrink: 0; accent-color: #4b73df; }
+.site-attendance-option > span { display: grid; gap: 4px; }
+.site-attendance-option strong { color: #344561; font-size: 12px; line-height: 1.45; }
+.site-attendance-option small, .site-attendance-field > p { color: #8190a8; font-size: 11px; line-height: 1.5; font-weight: 400; }
+.site-attendance-field > p { margin: 7px 0 0; }
+.site-attendance-summary { color: #4a71cc; }
+.attendance-mode-chip { display: inline-block; margin: 3px 0; padding: 4px 8px; border-radius: 6px; background: #edf3ff; color: #4a6ab1; font-size: 10px; }
+.attendance-mode-label { color: #7183a0; font-size: 10px; }
+@media (max-width: 760px) { .site-record-modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .site-record-modal .form-grid, .site-attendance-options { grid-template-columns: 1fr; } }
 .profile-page-shell { display: flex; flex-direction: column; gap: 18px; }
 .profile-page-shell .page-heading { order: 2; }
 .profile-page-shell .profile-photo-panel { order: 1; margin-bottom: 0; }

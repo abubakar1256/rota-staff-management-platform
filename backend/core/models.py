@@ -191,6 +191,10 @@ class GuardComplianceRegistration(models.Model):
 
 
 class Site(models.Model):
+    class AttendanceMode(models.TextChoices):
+        BOOK_ON_OFF = "BOOK_ON_OFF", "Book On / Book Off only"
+        WITH_HOURLY = "WITH_HOURLY", "Book On / Book Off + Hourly Picture"
+
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="sites", null=True, blank=True)
     site_id = models.CharField(max_length=40, unique=True)
     name = models.CharField(max_length=160)
@@ -201,6 +205,7 @@ class Site(models.Model):
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
     geofence_radius_m = models.PositiveIntegerField(default=150)
+    attendance_mode = models.CharField(max_length=20, choices=AttendanceMode.choices, default=AttendanceMode.WITH_HOURLY)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -210,6 +215,10 @@ class Site(models.Model):
 
     def __str__(self):
         return f"{self.site_id} - {self.name}"
+
+    @property
+    def hourly_pictures_required(self):
+        return self.attendance_mode == self.AttendanceMode.WITH_HOURLY
 
 
 class ShiftType(models.Model):

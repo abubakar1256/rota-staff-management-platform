@@ -1770,6 +1770,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         valid_types = {choice.value for choice in ShiftAttendanceEvent.EventType}
         if event_type not in valid_types:
             return Response({"detail": "event_type must be BOOK_ON, HOURLY or BOOK_OFF."}, status=status.HTTP_400_BAD_REQUEST)
+        if event_type == ShiftAttendanceEvent.EventType.HOURLY and not operation.site.hourly_pictures_required:
+            return Response({"detail": "Hourly pictures are not required for this site. Only Book On and Book Off are enabled."}, status=status.HTTP_400_BAD_REQUEST)
         photo = request.FILES.get("photo")
         if not photo or not (photo.content_type or "").startswith("image/"):
             return Response({"detail": "A live image file is required for every attendance event."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1849,6 +1851,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="hourly-note")
     def hourly_note(self, request, pk=None):
         operation = self.get_object()
+        if not operation.site.hourly_pictures_required:
+            return Response({"detail": "Hourly pictures and missed-hourly reasons are not required for this site."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.employee_id:
             return Response({"detail": "This shift has no assigned guard."}, status=status.HTTP_400_BAD_REQUEST)
         if role_of(request.user) == "EMPLOYEE" and operation.employee.user_id != request.user.id:

@@ -375,7 +375,7 @@ class SiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Site
-        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "is_active", "created_at", "updated_at"]
+        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "is_active", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at"]
 
 
@@ -683,6 +683,9 @@ class HourlyCheckinNoteSerializer(serializers.ModelSerializer):
 
 
 class DailyOperationSerializer(serializers.ModelSerializer):
+    attendance_mode = serializers.CharField(source="site.attendance_mode", read_only=True)
+    attendance_mode_label = serializers.CharField(source="site.get_attendance_mode_display", read_only=True)
+    hourly_pictures_required = serializers.BooleanField(source="site.hourly_pictures_required", read_only=True)
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
     site_latitude = serializers.FloatField(source="site.latitude", read_only=True)
@@ -706,7 +709,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def get_reached_by_name(self, obj):
@@ -728,6 +731,8 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         return "LATE" if self.get_delay_minutes(obj) > 0 else "REACHED"
 
     def get_expected_hourly_checkins(self, obj):
+        if not obj.site.hourly_pictures_required:
+            return 0
         start = obj.shift_type.start_time.hour * 60 + obj.shift_type.start_time.minute
         end = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
         duration = end - start if end > start else end + 24 * 60 - start
