@@ -142,6 +142,14 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"client_id": "Only Client Admin accounts can be linked to a client."})
         if client_id and not Client.objects.filter(pk=client_id, status=Client.Status.ACTIVE).exists():
             raise serializers.ValidationError({"client_id": "Select an active client."})
+        if attrs.get("password") and (role in {"ADMIN", "SUPER_ADMIN"} or (self.instance and self.instance.is_superuser)):
+            from .admin_auth import validate_admin_password
+            from django.core.exceptions import ValidationError
+            candidate = self.instance or User(username=attrs.get("username", ""), email=attrs.get("email", ""), first_name=attrs.get("first_name", ""), last_name=attrs.get("last_name", ""))
+            try:
+                validate_admin_password(attrs["password"], candidate)
+            except ValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages})
         return attrs
 
     def to_representation(self, instance):
@@ -182,6 +190,11 @@ class UserSerializer(serializers.ModelSerializer):
         if managed_site_ids is not None:
             profile, _ = UserProfile.objects.get_or_create(user=instance)
             profile.managed_sites.set(Site.objects.filter(pk__in=managed_site_ids))
+        if password or role or "is_active" in validated_data:
+            from .admin_auth import revoke_sessions
+            from rest_framework.authtoken.models import Token
+            revoke_sessions(instance)
+            Token.objects.filter(user=instance).delete()
         return instance
 
 

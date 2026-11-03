@@ -1,6 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .screening import SecurityScreeningViewSet
+from . import admin_security_views
 
 from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, activation_details, approve_compliance, client_login, client_me, client_portal_summary, compliance_approvals, dashboard, employee_compliance, employee_compliance_pdf, google_drive_callback, google_drive_connect, google_drive_status, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, password_reset_verify, reject_compliance, report_print, reports_summary, request_compliance_resubmission, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
 
@@ -25,6 +26,12 @@ router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
+    path("auth/admin-verify/", admin_security_views.verify_admin_login, name="admin-verify"),
+    path("auth/admin-activity/", admin_security_views.activity, name="admin-activity"),
+    path("auth/logout/", admin_security_views.logout, name="logout"),
+    path("auth/admin-security/", admin_security_views.security, name="admin-security"),
+    path("auth/login-history/", admin_security_views.login_history, name="login-history"),
+    path("auth/revoke-other-sessions/", admin_security_views.revoke_others, name="revoke-other-sessions"),
     path("auth/login/", login, name="login"),
     path("auth/guard-login/", guard_login, name="guard-login"),
     path("auth/client-login/", client_login, name="client-login"),

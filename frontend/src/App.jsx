@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Clock3, Copy, Download, ExternalLink, FileText, History, LayoutDashboard, LogOut, Menu, Pencil, Search, ShieldCheck, Trash2, Upload, Users, UserPlus, X } from "lucide-react";
-import { invalidateForPath } from "./queryClient";
+import { invalidateForPath, queryClient } from "./queryClient";
+import AdminSecurity, { AdminMFA, AdminSessionMonitor } from "./AdminSecurity";
+import { clearAuth, endAdminSession, getToken, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { siteAttendanceModes, siteAttendanceLabel, hourlyCheckinsFor, bookOnIsLate } from "./siteAttendance";
@@ -35,7 +37,7 @@ function RotaLoader({ label = "Loading your operations…", compact = false, ove
 }
 
 async function api(path, options = {}) {
-  const token = localStorage.getItem("rota_token");
+  const token = getToken();
   const headers = { ...(token ? { Authorization: `Token ${token}` } : {}), ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const showRequestLoader = !options.silentLoading;
@@ -46,6 +48,7 @@ async function api(path, options = {}) {
       headers,
     });
     if (!response.ok) {
+      if (response.status === 401 && readAdminSession() && token === getToken()) endAdminSession("Your admin session has ended. Please sign in again.");
       const payload = await response.json().catch(() => ({}));
       const fieldErrors = Object.entries(payload).filter(([key]) => key !== "detail" && key !== "errors").map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
       const bulkErrors = Array.isArray(payload.errors) ? payload.errors.map((item) => `${item.employee}: ${Object.values(item.errors || {}).flat().join(", ")}`).join(" | ") : "";
@@ -57,10 +60,10 @@ async function api(path, options = {}) {
     const responseText = await response.text();
     const result = responseText ? JSON.parse(responseText) : {};
     const method = (options.method || "GET").toUpperCase();
-    if (method !== "GET" && !options.silentToast) {
+    if (method !== "GET" && !path.startsWith("/auth/") && !options.silentToast) {
       notifyToast(method === "DELETE" ? "Deleted successfully." : method === "PATCH" ? "Changes saved successfully." : "Saved successfully.");
     }
-    if (method !== "GET" && !options.skipInvalidation) invalidateForPath(path);
+    if (method !== "GET" && !path.startsWith("/auth/") && !options.skipInvalidation) invalidateForPath(path);
     return result;
   } finally {
     if (showRequestLoader) window.dispatchEvent(new Event("rota:request-end"));
@@ -172,7 +175,7 @@ function GuardNotificationBell({ unreadCount, onNavigate }) {
 }
 
 async function downloadFile(path, filename) {
-  const token = localStorage.getItem("rota_token");
+  const token = getToken();
   const response = await fetch(`${API_BASE}${path}`, { headers: token ? { Authorization: `Token ${token}` } : {} });
   if (!response.ok) throw new Error("Export failed");
   const blob = await response.blob();
@@ -190,7 +193,7 @@ async function openProtectedFile(value, label = "File") {
   const target = window.open("", "_blank");
   if (!target) throw new Error("Please allow pop-ups to view this file.");
   try {
-    const token = localStorage.getItem("rota_token");
+    const token = getToken();
     const response = await fetch(absoluteFileUrl(value), { headers: token ? { Authorization: `Token ${token}` } : {} });
     if (!response.ok) throw new Error(`${label} could not be opened.`);
     const blobUrl = URL.createObjectURL(await response.blob());
@@ -208,7 +211,7 @@ function useProtectedBlobUrl(value) {
     let active = true;
     let objectUrl = "";
     if (!value) { setBlobUrl(""); return () => {}; }
-    const token = localStorage.getItem("rota_token");
+    const token = getToken();
     fetch(absoluteFileUrl(value), { headers: token ? { Authorization: `Token ${token}` } : {} })
       .then((response) => response.ok ? response.blob() : null)
       .then((blob) => {
@@ -234,7 +237,7 @@ function useProtectedPreviewUrl(value, enabled) {
     let objectUrl = "";
     if (!value || !enabled) { setState({ url: "", loading: false, error: "" }); return () => {}; }
     setState({ url: "", loading: true, error: "" });
-    const token = localStorage.getItem("rota_token");
+    const token = getToken();
     fetch(absoluteFileUrl(value), { headers: token ? { Authorization: `Token ${token}` } : {} })
       .then(async (response) => { if (!response.ok) throw new Error(`File could not be loaded (${response.status}).`); return response.blob(); })
       .then((blob) => { if (!active) return; objectUrl = URL.createObjectURL(blob); setState({ url: objectUrl, loading: false, error: "" }); })
@@ -252,6 +255,7 @@ function ProtectedFilePreview({ value, label = "File", buttonLabel = "View" }) {
 }
 
 const navItems = [
+  { id: "security", label: "Security", icon: ShieldCheck, adminOnly: true },
   { id: "security-screening", label: "Security Screening", icon: ShieldCheck, adminOnly: true, operatorHidden: true },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "employees", label: "Employees", icon: Users, operatorHidden: true },
@@ -331,20 +335,24 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
   const [password, setPassword] = useState(showDemo ? "Admin123!" : "");
   const [error, setError] = useState("");
   const [forgot, setForgot] = useState(false);
+  const [challenge, setChallenge] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const completeLogin = (data) => { storeLogin(data); onLogin(data.user); };
   const submit = async (event) => {
     event.preventDefault();
-    setError("");
+    setError(""); setBusy(true);
     try {
       const data = await api(clientMode ? "/auth/client-login/" : guardMode ? "/auth/guard-login/" : "/auth/login/", { method: "POST", body: JSON.stringify({ username, password }) });
+      if (data.challenge) { setPassword(""); setChallenge(data); return; }
       const role = data.user?.role || data.user?.role_display;
       if (guardMode && role !== "EMPLOYEE") throw new Error("Only guard accounts can sign in to the guard portal.");
       if (clientMode && role !== "CLIENT_ADMIN") throw new Error("Only Client Admin accounts can sign in here.");
-      localStorage.setItem("rota_token", data.token);
-      onLogin(data.user);
-    } catch (err) { setError(err.message); }
+      completeLogin(data);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
+  if (challenge) return <AdminMFA challenge={challenge} api={api} onComplete={completeLogin} onBack={() => { setChallenge(null); setError(""); }} />;
   if (forgot) return <ForgotPasswordPage guardMode={guardMode} clientMode={clientMode} onBack={() => setForgot(false)} />;
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">Sign in</button><button type="button" className="text-button" onClick={() => setForgot(true)}>Forgot password?</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button><button type="button" className="text-button" onClick={() => setForgot(true)}>Forgot password?</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
 }
 
 function ForgotPasswordPage({ guardMode, clientMode, onBack }) {
@@ -397,7 +405,7 @@ function ActivationPage({ token, onActivated }) {
     setSaving(true); setError("");
     try {
       const data = await api("/auth/activate/", { method: "POST", body: JSON.stringify({ token, password, password_confirmation: confirmation }) });
-      localStorage.setItem("rota_token", data.token);
+      storeLogin(data);
       window.history.replaceState({}, document.title, window.location.pathname);
       onActivated(data.user);
     } catch (err) { setError(err.message); } finally { setSaving(false); }
@@ -1073,7 +1081,7 @@ function ReachedReport({ report }) {
 function ReportsPage() {
   const monday = toMonday(todayIso()); const [startDate, setStartDate] = useState(monday); const [endDate, setEndDate] = useState(addDays(monday, 6)); const [report, setReport] = useState(null); const [error, setError] = useState("");
   const load = () => api(`/reports/summary/?start_date=${startDate}&end_date=${endDate}`).then(setReport).catch((err) => setError(err.message));
-  const openPrint = async () => { try { const token = localStorage.getItem("rota_token"); const response = await fetch(`${API_BASE}/exports/report-print/?start_date=${startDate}&end_date=${endDate}`, { headers: { Authorization: `Token ${token}` } }); const html = await response.text(); const printWindow = window.open("", "_blank"); if (printWindow) { printWindow.document.write(html); printWindow.document.close(); } } catch (err) { setError(err.message); } };
+  const openPrint = async () => { try { const token = getToken(); const response = await fetch(`${API_BASE}/exports/report-print/?start_date=${startDate}&end_date=${endDate}`, { headers: { Authorization: `Token ${token}` } }); const html = await response.text(); const printWindow = window.open("", "_blank"); if (printWindow) { printWindow.document.write(html); printWindow.document.close(); } } catch (err) { setError(err.message); } };
   useEffect(() => { load(); }, []);
   return <><div className="page-heading"><div><p className="eyebrow">INSIGHTS</p><h2>Reports</h2><p className="muted">Review working hours, leave activity and compliance alerts.</p></div><div className="report-filters"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /><span>to</span><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /><button className="secondary-button" onClick={() => downloadFile(`/exports/timesheets.csv?start_date=${startDate}&end_date=${endDate}`, "timesheets.csv").catch((err) => setError(err.message))}><Download size={14} /> CSV</button><button className="secondary-button" onClick={openPrint}>Print / PDF</button><CheckUpdatesButton className="primary-button" api={api} paths={`/reports/summary/?start_date=${startDate}&end_date=${endDate}`} currentData={report} onUpdate={setReport} setError={setError} /></div></div>{error && <p className="error page-error">{error}</p>}{report && <><section className="stats-grid"><StatCard label="Total actual hours" value={`${report.total_hours}h`} detail={`${report.timesheet_count} timesheet entries`} icon={Clock3} tone="blue" /><StatCard label="Overtime" value={`${Math.round(report.overtime_minutes / 60 * 10) / 10}h`} detail={`${report.overtime_minutes} minutes`} icon={BarChart3} tone="amber" /><StatCard label="Approved leave" value={report.approved_leave_records} detail="Records in selected period" icon={CalendarDays} tone="teal" /><StatCard label="Expiring documents" value={report.documents_expiring_soon} detail="Next 30 days" icon={FileText} tone="rose" /></section><section className="content-grid"><article className="panel"><div className="panel-header"><div><h3>Hours by employee</h3><p className="muted">Actual hours for selected period.</p></div></div>{report.employee_hours.length ? <div className="report-list">{report.employee_hours.map((row) => <div className="report-line" key={row.name}><strong>{row.name}</strong><span>{row.hours}h</span></div>)}</div> : <div className="empty-state">No hours in this period.</div>}</article><article className="panel"><div className="panel-header"><div><h3>Hours by site</h3><p className="muted">Client/site operational totals.</p></div></div>{report.site_hours.length ? <div className="report-list">{report.site_hours.map((row) => <div className="report-line" key={row.name}><strong>{row.name}</strong><span>{row.hours}h</span></div>)}</div> : <div className="empty-state">No site hours in this period.</div>}</article></section></>}</>;
 }
@@ -1781,7 +1789,7 @@ function App() {
   const [notificationTarget, setNotificationTarget] = useState({});
   const [user, setUser] = useState(null);
   const [guardInitialPage, setGuardInitialPage] = useState("home");
-  const [authLoading, setAuthLoading] = useState(() => Boolean(localStorage.getItem("rota_token")));
+  const [authLoading, setAuthLoading] = useState(() => Boolean(getToken()));
   const [page, setPage] = useState("dashboard");
   const dataVersion = 0;
   const [mobileNav, setMobileNav] = useState(false);
@@ -1794,9 +1802,9 @@ function App() {
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
   const resetPath = window.location.pathname === "/reset-password";
   useEffect(() => {
-    const token = localStorage.getItem("rota_token");
+    const token = getToken();
     if (!token) { setAuthLoading(false); return undefined; }
-    api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then(setUser).catch(() => localStorage.removeItem("rota_token")).finally(() => setAuthLoading(false));
+    api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then((data) => { syncAdminSession(data.admin_session); setUser(data); }).catch(() => clearAuth()).finally(() => setAuthLoading(false));
     return undefined;
   }, []);
   useEffect(() => {
@@ -1831,13 +1839,22 @@ function App() {
     window.addEventListener("rota:notifications-changed", loadNotifications);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener("rota:notifications-changed", loadNotifications); };
   }, [user, clientPath]);
+  useEffect(() => {
+    const ended = (event) => { queryClient.clear(); setUser(null); setGuardInitialPage("home"); setUnreadNotifications(0); if (event.detail?.message) notifyToast(event.detail.message, "info"); };
+    window.addEventListener("rota:session-ended", ended);
+    return () => window.removeEventListener("rota:session-ended", ended);
+  }, []);
   const activationToken = new URLSearchParams(window.location.search).get("activate");
   const resetParams = new URLSearchParams(window.location.search);
   const resetPortal = resetParams.get("portal") || "admin";
   if (resetPath) return <><ToastHost /><ForgotPasswordPage guardMode={resetPortal === "guard"} clientMode={resetPortal === "client"} onBack={() => { window.location.href = resetPortal === "guard" ? "/guard" : resetPortal === "client" ? "/client" : "/"; }} /></>;
   if (authLoading) return <><ToastHost /><RotaLoader overlay label="Securing your portal…" /></>;
   if (!user) return <><ToastHost />{activationToken ? <ActivationPage token={activationToken} onActivated={(activatedUser) => { setGuardInitialPage("profile"); setUser(activatedUser); }} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} />}</>;
-  const signOut = () => { localStorage.removeItem("rota_token"); setGuardInitialPage("home"); setUser(null); };
+  const signOut = async () => {
+    try { await api("/auth/logout/", { method: "POST", silentLoading: true, silentError: true }); }
+    catch (error) { if (getToken()) { notifyToast("Could not sign out on the server. Check your connection and try again.", "error"); return; } }
+    clearAuth(); queryClient.clear(); setGuardInitialPage("home"); setUser(null); setUnreadNotifications(0);
+  };
   const role = user.role || user.role_display;
   const isEmployee = role === "EMPLOYEE";
   const isSuperAdmin = role === "SUPER_ADMIN" || Boolean(user.is_superuser);
@@ -1848,8 +1865,8 @@ function App() {
   if ((guardPath || attendanceOnlyPath) && !isEmployee) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA GUARD PORTAL</p><h1>Guard access only</h1><p className="muted">This link is reserved for guard accounts. Admin users should use the main operations portal.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (attendanceOnlyPath) return <GuardAttendanceOnly user={user} onSignOut={signOut} />;
   if (isEmployee) return <GuardPortal user={user} onSignOut={signOut} unreadNotifications={unreadNotifications} initialPage={guardInitialPage} />;
-  const content = page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "rota" ? <Rota target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-induction" ? <GuardInductionPageV2 /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage /> : page === "operations" ? <OperationsPage /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
-  return <><ToastHost /><div className="app-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{navItems.filter((item) => isEmployee ? item.employeeOnly : !item.employeeOnly && (!item.superAdminOnly || isSuperAdmin) && (!item.adminOnly || isSuperAdmin || role === "ADMIN") && (!item.operatorHidden || !isOperator)).map(({ id, label, icon: Icon, disabled }) => <button key={id} className={page === id ? "nav-item active" : "nav-item"} disabled={disabled} onClick={() => { setNotificationTarget({}); setPage(id); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}{disabled && <small>soon</small>}</button>)}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{isEmployee ? (user.first_name || "G").slice(0, 1).toUpperCase() : (user.first_name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{isEmployee ? (user.first_name || "Guard") : (user.first_name || "System")}</strong><span>{user.role_label || user.role_display || role || "ADMIN"}</span></div></div><button className="logout-button" onClick={signOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{navItems.find((item) => item.id === page)?.label || "Dashboard"}</strong></div><div className="topbar-right"><span className="online-dot" /> System online</div></header><div className="page-content" key={dataVersion}>{content}</div></main></div></>;
+  const content = page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "rota" ? <Rota target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-induction" ? <GuardInductionPageV2 /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage /> : page === "operations" ? <OperationsPage /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
+  return <><ToastHost />{(isSuperAdmin || role === "ADMIN") && <AdminSessionMonitor api={api} />}<div className="app-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{navItems.filter((item) => isEmployee ? item.employeeOnly : !item.employeeOnly && (!item.superAdminOnly || isSuperAdmin) && (!item.adminOnly || isSuperAdmin || role === "ADMIN") && (!item.operatorHidden || !isOperator)).map(({ id, label, icon: Icon, disabled }) => <button key={id} className={page === id ? "nav-item active" : "nav-item"} disabled={disabled} onClick={() => { setNotificationTarget({}); setPage(id); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}{disabled && <small>soon</small>}</button>)}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{isEmployee ? (user.first_name || "G").slice(0, 1).toUpperCase() : (user.first_name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{isEmployee ? (user.first_name || "Guard") : (user.first_name || "System")}</strong><span>{user.role_label || user.role_display || role || "ADMIN"}</span></div></div><button className="logout-button" onClick={signOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{navItems.find((item) => item.id === page)?.label || "Dashboard"}</strong></div><div className="topbar-right"><span className="online-dot" /> System online</div></header><div className="page-content" key={dataVersion}>{content}</div></main></div></>;
 }
 
 export default App;

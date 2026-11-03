@@ -1,0 +1,27 @@
+.admin-mfa-card { width: min(100%, 540px); }
+.mfa-qr { display: block; width: 200px; height: 200px; margin: 20px auto; background: white; }
+.mfa-secret { display: block; overflow-wrap: anywhere; padding: 12px; letter-spacing: 2px; background: #f4f7ff; }
+.admin-mfa-card details { margin-bottom: 20px; }
+.admin-mfa-card summary { cursor: pointer; color: #355bc0; }
+.recovery-codes { display: grid; gap: 10px; padding: 16px; background: #f4f7ff; border: 1px solid #dce5fa; border-radius: 12px; margin: 20px 0; }
+.recovery-codes code { font-size: 14px; overflow-wrap: anywhere; }
+.security-check { display: flex !important; align-items: flex-start; gap: 10px; margin: 22px 0; font-size: 14px; }
+.security-check input { width: 18px !important; min-height: 18px; flex: 0 0 18px; margin: 2px 0; }
+.security-notice { background: #f0f5ff; border-radius: 10px; padding: 12px; font-size: 14px; }
+.security-page { display: grid; gap: 24px; }
+.security-page .panel { padding: 24px; background: white; border: 1px solid #e1e8f4; border-radius: 16px; }
+.security-page h2 { font-size: 19px; }
+.security-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.security-stats svg { color: #456bd3; }
+.security-stats h3 { font-size: 15px; margin-top: 14px; }
+.security-stats p { font-size: 14px; color: #57708c; }
+.security-panel-heading, .security-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.security-session-list article { padding: 18px 0; border-top: 1px solid #e7edf7; }
+.security-device { overflow-wrap: anywhere; max-width: 420px; font-size: 13px; }
+.security-pagination { margin-top: 20px; }
+.security-session-backdrop { position: fixed; inset: 0; z-index: 10050; background: #15244088; display: grid; place-items: center; padding: 20px; }
+.security-session-dialog { width: min(100%, 440px); background: white; padding: 28px; border-radius: 18px; box-shadow: 0 24px 80px #11204040; }
+.security-session-dialog > svg { color: #456bd3; }
+.security-session-dialog > strong { display: block; margin: 18px 0; }
+.security-session-dialog .primary-button { width: 100%; }
+@media (max-width: 760px) { .security-stats { grid-template-columns: 1fr; } .security-page .panel { padding: 18px; } .recovery-codes code { font-size: 12px; } }

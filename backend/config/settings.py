@@ -10,7 +10,7 @@ DEBUG = os.getenv("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = [host for host in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,192.168.1.5,192.168.1.8").split(",") if host]
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
+    "core.admin_config.MFAAdminConfig",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -31,6 +31,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "core.authentication.AuthNoCacheMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -88,7 +89,13 @@ else:
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "core.password_validation.AdminPasswordValidator"},
 ]
+
+ADMIN_SESSION_IDLE_SECONDS = int(os.getenv("ADMIN_SESSION_IDLE_SECONDS", "1800"))
+ADMIN_SESSION_MAX_SECONDS = int(os.getenv("ADMIN_SESSION_MAX_SECONDS", "28800"))
+ADMIN_TRUST_PROXY_HEADERS = os.getenv("ADMIN_TRUST_PROXY_HEADERS", "0") == "1"
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 LANGUAGE_CODE = "en-gb"
 TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Asia/Karachi")
@@ -132,8 +139,8 @@ GOOGLE_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        "core.authentication.SecureTokenAuthentication",
+        "core.authentication.SecureSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }

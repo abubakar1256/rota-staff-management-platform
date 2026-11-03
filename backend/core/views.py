@@ -450,18 +450,28 @@ def reset_rota_confirmations(rota_week):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def login(request):
+    from .admin_auth import is_admin_account, record_event
+    from .admin_security_views import begin_admin_login
     serializer = LoginSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
+    if not serializer.is_valid():
+        candidate = User.objects.filter(username=str(request.data.get("username", ""))[:150]).first()
+        if not candidate or is_admin_account(candidate):
+            record_event(request, "PASSWORD_FAILED", candidate, str(request.data.get("username", "")))
+        return Response(serializer.errors, status=400)
     user = serializer.validated_data["user"]
-    if request.data.get("guard_portal") and getattr(getattr(user, "profile", None), "role", None) != UserProfile.Role.EMPLOYEE:
-        return Response({"detail": "Only guard accounts can sign in to the guard portal."}, status=status.HTTP_403_FORBIDDEN)
+    if request.data.get("guard_portal") and role_of(user) != UserProfile.Role.EMPLOYEE:
+        return Response({"detail": "Only guard accounts can sign in to the guard portal."}, status=403)
+    if is_admin_account(user):
+        return begin_admin_login(user, request.data.get("password", ""), request)
     token, _ = Token.objects.get_or_create(user=user)
     return Response({"token": token.key, "user": UserSerializer(user).data})
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def guard_login(request):
     serializer = LoginSerializer(data=request.data)
@@ -474,6 +484,7 @@ def guard_login(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def client_login(request):
     serializer = LoginSerializer(data=request.data)
@@ -541,6 +552,7 @@ def _password_reset_user_for_email(email):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def password_reset_request(request):
     """Send a short-lived six-digit password reset code without revealing account existence."""
@@ -580,6 +592,7 @@ def password_reset_request(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def password_reset_verify(request):
     """Verify the email OTP and issue a short-lived, one-use password reset capability."""
@@ -609,6 +622,7 @@ def password_reset_verify(request):
 
 
 @api_view(["POST"])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def password_reset_confirm(request):
     reset_token = (request.data.get("reset_token") or "").strip()
@@ -640,6 +654,10 @@ def password_reset_confirm(request):
         otp.used_at = timezone.now()
         otp.save(update_fields=["used_at"])
         Token.objects.filter(user=user).delete()
+        from .admin_auth import is_admin_account, revoke_sessions, record_event
+        if is_admin_account(user):
+            revoke_sessions(user)
+            record_event(request, "PASSWORD_RESET", user)
         AuditLog.objects.create(user=user, action="PASSWORD", model_name="PasswordReset", object_id=str(user.id), summary="Password reset through email OTP")
     return Response({"message": "Password reset successfully. You can now sign in."})
 
@@ -790,7 +808,12 @@ def request_compliance_resubmission(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request):
-    return Response(UserSerializer(request.user).data)
+    from .admin_auth import is_admin_account, session_data
+    from .admin_security_views import current_session
+    data = UserSerializer(request.user).data
+    if is_admin_account(request.user):
+        data["admin_session"] = session_data(current_session(request))
+    return Response(data)
 
 
 @api_view(["GET"])

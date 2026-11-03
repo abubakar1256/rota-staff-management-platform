@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models.functions import Lower, Trim
 from uuid import uuid4
+from django.utils import timezone
 from .notification_rules import CATEGORIES
 
 
@@ -697,6 +698,54 @@ class Notification(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class AdminMFAProfile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="admin_mfa")
+    encrypted_secret = models.TextField(blank=True)
+    enabled_at = models.DateTimeField(null=True, blank=True)
+    last_counter = models.BigIntegerField(default=-1)
+    recovery_hashes = models.JSONField(default=list, blank=True)
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_until = models.DateTimeField(null=True, blank=True)
+
+
+class AdminLoginChallenge(models.Model):
+    key_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    credential_fingerprint = models.CharField(max_length=64)
+    encrypted_secret = models.TextField(blank=True)
+    password_change_required = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+
+class AdminSession(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    key_hash = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="admin_sessions")
+    credential_fingerprint = models.CharField(max_length=64)
+    created_at = models.DateTimeField(default=timezone.now)
+    last_activity_at = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=350, blank=True)
+
+
+class AdminLoginEvent(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="admin_login_events")
+    username = models.CharField(max_length=150, blank=True)
+    event = models.CharField(max_length=30)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=350, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
 
 
 class AuditLog(models.Model):

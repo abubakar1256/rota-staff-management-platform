@@ -92,6 +92,16 @@ Client Admin access is read-only. Guard personal documents and internal activity
 - Editing profile details or replacing/deleting the picture requires a fresh declaration. Reviewing the same picture in the office preserves the guard's declaration.
 - Deploy backend and frontend together and apply migration `0036_guard_profile_declaration` with `python manage.py migrate`.
 
+## Admin login security
+
+- Admin and Super Admin must use an authenticator app. After their password is accepted, first login shows a locally generated QR code and manual setup key. A fresh 6-digit authenticator code is required before any session is issued.
+- Existing weak passwords must be replaced during verification. Admin passwords require at least 12 characters and reject common, entirely numeric and account-similar passwords. The same policy applies to admin creation, password changes and email OTP resets. Resetting a password does not disable 2FA.
+- First enrollment shows eight single-use recovery codes. Download/store them before continuing; they cannot be displayed again. Five incorrect factors temporarily block verification for 15 minutes, across new login challenges. Used authenticator codes cannot be replayed.
+- Admin sessions expire after 30 minutes without user interaction, with an 8-hour maximum. Background polling and page reloads do not extend inactivity. A warning offers **Continue session** before idle expiry; the current form stays mounted. Admin credentials are kept in tab session storage and stored only as hashes on the server.
+- **Sign out** revokes the server session. **Security** in the admin sidebar shows authenticator status, unused recovery-code count, active sessions, sign-out-other-sessions and login history. Admin sees their own history; Super Admin sees admin account history. The Django maintenance `/admin/` portal enforces the same authenticator and deadlines and requires enrollment through the operations portal first.
+- Deploy backend and frontend together. Apply migration `0039_admin_login_security` with `python manage.py migrate`. Previous admin tokens stop working and admins must sign in again. Keep the existing `DJANGO_SECRET_KEY` stable across redeploys so stored authenticator secrets remain usable. Guard and Client Admin sign-in flows retain their existing password flow.
+- Optional backend variables: `ADMIN_SESSION_IDLE_SECONDS=1800`, `ADMIN_SESSION_MAX_SECONDS=28800`. `ADMIN_TRUST_PROXY_HEADERS=0` uses the direct connection IP; enable it only behind a trusted proxy that reliably sets `X-Forwarded-For`. Browser/device and timestamps are recorded regardless.
+
 ## Next implementation phases
 
 1. Daily operations, attendance, and operational notes
