@@ -6,6 +6,12 @@ CATEGORIES = [
     ("ROTA_STAFFING", "Rota & Staffing"), ("LEAVE_REPLACEMENT", "Leave & Replacement"),
     ("TIMESHEETS", "Timesheets"), ("SYSTEM", "System & Integrations"),
 ]
+GUARD_CATEGORIES = [
+    ("ROTA_STAFFING", "My Rota"), ("ATTENDANCE", "Attendance"),
+    ("DOCUMENT_EXPIRY", "Documents Expiry"), ("DOCUMENT_REVIEW", "Documents Updates"),
+    ("REGISTRATION_SCREENING", "Registration & Screening"),
+    ("LEAVE_REPLACEMENT", "Leave & Replacement"), ("TIMESHEETS", "Timesheets"),
+]
 
 
 def classify_notification(title, link="", message=""):

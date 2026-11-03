@@ -115,7 +115,7 @@ class NotificationInboxTests(APITestCase):
         shift = ShiftType.objects.create(name="Inbox day", start_time=time(7), end_time=time(19))
         operation = DailyOperation.objects.create(operation_date=today, site=site, shift_type=shift, employee=self.employee, created_by=self.admin)
         now = timezone.make_aware(datetime.combine(today, time(10)))
-        self.assertEqual(refresh_operational_alerts(now), 1)
+        self.assertEqual(refresh_operational_alerts(now), 2)
         self.assertEqual(refresh_operational_alerts(now), 0)
         self.assertTrue(Notification.objects.filter(title="Missed Book On", context__operation_id=operation.pk).exists())
         event = ShiftAttendanceEvent.objects.create(operation=operation, event_type="BOOK_ON", photo="tests/on.jpg", location_status="VERIFIED", created_by=self.guard)

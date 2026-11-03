@@ -14,3 +14,20 @@ export function notificationAction(item) {
   if (!allowed.has(page)) return null;
   return { page, context: item.context || {}, label: ["documents", "security-screening", "compliance-approvals", "attendance-review", "timesheets"].includes(page) ? "View / Review" : "View details" };
 }
+
+export const guardNotificationCategories = [
+  { key: "ROTA_STAFFING", label: "My Rota" }, { key: "ATTENDANCE", label: "Attendance" },
+  { key: "DOCUMENT_EXPIRY", label: "Documents Expiry" }, { key: "DOCUMENT_REVIEW", label: "Documents Updates" },
+  { key: "REGISTRATION_SCREENING", label: "Registration & Screening" },
+  { key: "LEAVE_REPLACEMENT", label: "Leave & Replacement" }, { key: "TIMESHEETS", label: "Timesheets" },
+];
+export function guardInboxPath(filters) {
+  return inboxPath(filters).replace("/notifications/inbox/", "/notifications/guard-inbox/");
+}
+export function guardNotificationAction(item) {
+  if (item.category === "SYSTEM") return null;
+  const original = String(item.link || "").split("?")[0];
+  const page = ["compliance", "compliance-approvals", "diligent-registration"].includes(original) ? "diligent-registration" : ["timesheets", "attendance-review", "attendance"].includes(original) ? "attendance" : original;
+  if (!["rota", "attendance", "documents", "security-screening", "diligent-registration", "leave"].includes(page)) return null;
+  return { page, context: item.context || {}, label: "View / Complete" };
+}

@@ -43,7 +43,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
-from .notification_rules import CATEGORIES
+from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
@@ -2142,6 +2142,9 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         create_expiry_notifications(user)
+        if role_of(user) == "EMPLOYEE" and cache.add(f"guard-notification-scan:{user.pk}", True, timeout=30):
+            from .notification_alerts import refresh_operational_alerts
+            refresh_operational_alerts(employee_user=user)
         if role_of(user) in {"SUPER_ADMIN", "ADMIN"} and cache.add("office-notification-scan", True, timeout=30):
             from .notification_alerts import refresh_operational_alerts
             refresh_operational_alerts()
@@ -2150,19 +2153,28 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         audience = Q(user=user)
         if role_of(user) in {"SUPER_ADMIN", "ADMIN"}:
             audience |= Q(user__isnull=True)
-        return Notification.objects.filter(audience)
+        queryset = Notification.objects.filter(audience)
+        return queryset.filter(category__in=dict(GUARD_CATEGORIES)) if role_of(user) == "EMPLOYEE" else queryset
 
     @action(detail=False, methods=["get"])
     def inbox(self, request):
         if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
             raise PermissionDenied("Only Admin and Super Admin can access the office notification inbox.")
-        queryset = self.get_queryset()
+        return self._inbox_data(request, self.get_queryset(), CATEGORIES)
+
+    @action(detail=False, methods=["get"], url_path="guard-inbox")
+    def guard_inbox(self, request):
+        if role_of(request.user) != "EMPLOYEE":
+            raise PermissionDenied("This inbox is only available to guards.")
+        return self._inbox_data(request, self.get_queryset(), GUARD_CATEGORIES)
+
+    def _inbox_data(self, request, queryset, categories):
         counts = queryset.aggregate(total=Count("pk"), unread=Count("pk", filter=Q(is_read=False)), urgent=Count("pk", filter=Q(priority="URGENT", is_read=False)))
         category_counts = {row["category"]: row for row in queryset.values("category").annotate(total=Count("pk"), unread=Count("pk", filter=Q(is_read=False)))}
         category = request.query_params.get("category", "ALL")
         view = request.query_params.get("view", "ALL")
         if category != "ALL":
-            if category not in dict(CATEGORIES):
+            if category not in dict(categories):
                 raise ValidationError({"category": "Choose a valid notification category."})
             queryset = queryset.filter(category=category)
         if view == "UNREAD":
@@ -2176,9 +2188,19 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(Q(title__icontains=search) | Q(message__icontains=search))
         paginator = Paginator(queryset.order_by("-created_at", "-pk"), 25)
         page = paginator.get_page(request.query_params.get("page", 1))
-        return Response({"results": self.get_serializer(page.object_list, many=True).data,
-                         "summary": {**counts, "categories": [{"key": key, "label": label, "total": category_counts.get(key, {}).get("total", 0), "unread": category_counts.get(key, {}).get("unread", 0)} for key, label in CATEGORIES]},
+        results = self.get_serializer(page.object_list, many=True).data
+        for item in results:
+            item["category_label"] = dict(categories).get(item["category"], item["category_label"])
+        return Response({"results": results,
+                         "summary": {**counts, "categories": [{"key": key, "label": label, "total": category_counts.get(key, {}).get("total", 0), "unread": category_counts.get(key, {}).get("unread", 0)} for key, label in categories]},
                          "pagination": {"page": page.number, "total_pages": paginator.num_pages, "total": paginator.count, "has_next": page.has_next(), "has_previous": page.has_previous()}})
+
+    @action(detail=False, methods=["post"], url_path="mark-all-read")
+    def mark_all_read(self, request):
+        if role_of(request.user) != "EMPLOYEE":
+            raise PermissionDenied("Guards can only mark their own personal notifications read.")
+        updated = self.get_queryset().filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({"updated": updated})
 
     @action(detail=False, methods=["post"])
     def check_expiry(self, request):
