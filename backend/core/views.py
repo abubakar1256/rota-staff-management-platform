@@ -872,15 +872,10 @@ def dashboard(request):
     today_assignments = []
     if current_rota:
         today_assignments = list(current_rota.assignments.filter(work_date=today).select_related("site", "employee"))
-    assigned_by_site = {}
-    for assignment in today_assignments:
-        if assignment.employee_id:
-            assigned_by_site[assignment.site_id] = assigned_by_site.get(assignment.site_id, 0) + 1
-    active_sites = list(Site.objects.filter(is_active=True).values("id", "required_guards"))
-    active_shift_count = ShiftType.objects.filter(is_active=True).count()
-    required_total = sum(site["required_guards"] for site in active_sites) * active_shift_count
-    assigned_total = sum(assigned_by_site.values())
-    unfilled_total = max(required_total - assigned_total, 0)
+    from .staffing import day_requirements, unfilled_count
+    active_sites = list(Site.objects.filter(is_active=True))
+    active_shifts = list(ShiftType.objects.filter(is_active=True))
+    unfilled_total = unfilled_count(day_requirements(active_sites, active_shifts, today), today_assignments)
     return Response(
         {
             "time_zone": settings.TIME_ZONE,
@@ -1863,6 +1858,26 @@ class TimesheetViewSet(viewsets.ModelViewSet):
 class DailyOperationViewSet(viewsets.ModelViewSet):
     serializer_class = DailyOperationSerializer
     permission_classes = [IsAdminManagerOrEmployeeOperation]
+
+    def list(self, request, *args, **kwargs):
+        if request.query_params.get("view") != "attendance":
+            return super().list(request, *args, **kwargs)
+        if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
+            raise PermissionDenied("The attendance staffing overview is for office staff.")
+        try:
+            selected_date = date.fromisoformat(request.query_params.get("operation_date", str(timezone.localdate())))
+        except (TypeError, ValueError):
+            raise ValidationError({"operation_date": "Use YYYY-MM-DD."})
+        from .staffing import attendance_summary_rows
+        sites = Site.objects.filter(is_active=True).order_by("name")
+        if role_of(request.user) == "MANAGER":
+            sites = sites.filter(manager_profiles__user=request.user)
+        operations = self.filter_queryset(self.get_queryset()).filter(operation_date=selected_date)
+        rows = attendance_summary_rows(operations, list(sites), list(ShiftType.objects.filter(is_active=True)),
+            selected_date, lambda operation: self.get_serializer(operation).data)
+        response = Response(rows)
+        response["Cache-Control"] = "private, no-store"
+        return response
 
     def perform_destroy(self, instance):
         if Timesheet.objects.filter(operation=instance).exists() or instance.location_updates.exists():
