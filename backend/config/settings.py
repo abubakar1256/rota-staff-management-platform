@@ -98,7 +98,7 @@ ADMIN_TRUST_PROXY_HEADERS = os.getenv("ADMIN_TRUST_PROXY_HEADERS", "0") == "1"
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 LANGUAGE_CODE = "en-gb"
-TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Asia/Karachi")
+TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "Europe/London")
 USE_I18N = True
 USE_TZ = True
 
