@@ -65,6 +65,6 @@ def range_unfilled_positions(operations, sites, shifts, start_date, end_date):
                 if missing:
                     rows.append({"id": f"unfilled-{current}-{site.pk}-{shift.pk}", "date": current,
                         "site": site.pk, "site_name": site.name, "shift_name": shift.name,
-                        "scheduled_start": shift.start_time, "unfilled": missing})
+                        "scheduled_start": shift.start_time, "scheduled_end": shift.end_time, "unfilled": missing})
         current += timedelta(days=1)
     return rows

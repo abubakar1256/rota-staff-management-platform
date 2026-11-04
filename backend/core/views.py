@@ -168,7 +168,7 @@ def arrival_snapshot(operation):
 
 def build_arrival_pdf(report_date, shift, operations, sites=None):
     from xml.sax.saxutils import escape
-    from .arrival_reporting import arrival_report
+    from .arrival_reporting import arrival_report, format_arrival_delay
     operations = list(operations)
     if sites is None:
         sites = Site.objects.filter(pk__in={item.site_id for item in operations}, is_active=True)
@@ -194,9 +194,10 @@ def build_arrival_pdf(report_date, shift, operations, sites=None):
     for item in data["arrival_rows"]:
         status_label = {"REACHED": "Reached", "LATE": "Late", "NOT_REACHED": "Not reached", "UPCOMING": "Upcoming"}[item["arrival_status"]]
         reached = timezone.localtime(item["reached_at"]).strftime("%d %b %Y %H:%M %Z") if item["reached_at"] else "-"
-        delay = f"{item['delay_minutes']} min" if item["delay_minutes"] else "On time" if item["reached_at"] else "-"
+        delay = format_arrival_delay(item["delay_minutes"])
+        scheduled = f"{item['scheduled_start']:%H:%M}-{item['scheduled_end']:%H:%M}"
         rows.append([cell(value) for value in [item["employee_name"], item["employee_id"], item["site_name"],
-            shift.start_time.strftime("%H:%M"), reached, delay, status_label, item["reached_by_name"]]])
+            scheduled, reached, delay, status_label, item["reached_by_name"]]])
     if len(rows) == 1:
         rows.append([cell("No assigned guards")] + [cell("-") for _ in columns[1:]])
     table = Table(rows, repeatRows=1, colWidths=[38 * mm, 24 * mm, 40 * mm, 23 * mm, 39 * mm, 18 * mm, 25 * mm, 40 * mm])

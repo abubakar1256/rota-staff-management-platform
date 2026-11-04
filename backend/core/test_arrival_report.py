@@ -65,6 +65,8 @@ class ArrivalReportTests(APITestCase):
         row = next(row for row in self.report()["arrival_rows"] if row["id"] == self.late.pk)
         self.assertEqual(row["arrival_status"], "LATE")
         self.assertEqual(row["delay_minutes"], 168)
+        self.assertEqual(row["scheduled_start"], time(7))
+        self.assertEqual(row["scheduled_end"], time(19))
         self.assertEqual(row["reached_at"], self.stamp(4, 9, 48))
         self.assertEqual(self.report()["time_zone"], "Europe/London")
 
@@ -109,3 +111,15 @@ class ArrivalReportTests(APITestCase):
         for query in ("start_date=wrong", "end_date=wrong", "start_date=2026-11-08&end_date=2026-11-02"):
             with self.subTest(query=query):
                 self.assertEqual(self.client.get(f"/api/reports/summary/?{query}").status_code, 400)
+
+    def test_delay_labels_cover_hour_boundaries_without_changing_minutes(self):
+        from .arrival_reporting import format_arrival_delay
+        for minutes, expected in [(None, "-"), (0, "On time"), (59, "59 min"),
+                (60, "1hr"), (62, "1hr 2min"), (120, "2hr"), (168, "2hr 48min")]:
+            with self.subTest(minutes=minutes):
+                self.assertEqual(format_arrival_delay(minutes), expected)
+        row = next(row for row in self.report()["arrival_rows"] if row["id"] == self.late.pk)
+        self.assertEqual(row["delay_minutes"], 168)
+        night = next(row for row in self.report()["arrival_rows"] if row["id"] == self.tonight.pk)
+        self.assertEqual(night["scheduled_start"], time(19))
+        self.assertEqual(night["scheduled_end"], time(7))
