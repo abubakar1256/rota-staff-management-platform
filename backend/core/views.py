@@ -178,7 +178,8 @@ def build_arrival_pdf(report_date, shift, operations, sites=None):
         "on_time": arrival["reached"], "late": arrival["late"], "not_reached": arrival["not_reached"],
         "upcoming": arrival["upcoming"], "unassigned": arrival["not_assigned"]}
     buffer = BytesIO()
-    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=12 * mm, leftMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm)
+    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=12 * mm, leftMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"Site arrival report - {report_date} - {shift.name}", author="RotaOps")
     styles = getSampleStyleSheet()
     body = ParagraphStyle("Arrival body", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, leading=11)
     header = ParagraphStyle("Arrival header", parent=body, fontName="Helvetica-Bold", textColor=colors.white)
@@ -334,17 +335,12 @@ def build_compliance_pdf(employee, registration, request=None):
     return buffer.getvalue()
 
 
-def generate_daily_arrival_reports(report_date, user, shift_types=None):
-    shifts = list(shift_types or ShiftType.objects.filter(is_active=True).order_by("start_time", "name"))
-    generated = []
-    for shift in shifts:
-        operations = list(DailyOperation.objects.filter(operation_date=report_date, shift_type=shift).select_related("employee", "site", "shift_type", "reached_by").order_by("site__name", "employee__name"))
-        pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations, sites=Site.objects.filter(is_active=True))
-        report, _ = DailyArrivalReport.objects.get_or_create(report_date=report_date, shift_type=shift)
-        if report.pdf_file:
-            report.pdf_file.delete(save=False)
-        filename = f"arrival-report-{report_date}-{re.sub(r'[^a-z0-9]+', '-', shift.name.lower()).strip('-')}.pdf"
-        report.pdf_file.save(filename, ContentFile(pdf_bytes), save=False)
+def _store_arrival_pdf(report, filename, pdf_bytes, counts, user):
+    # Keep the previous PDF available if storage or saving the replacement fails.
+    storage, previous_name = report.pdf_file.storage, report.pdf_file.name
+    report.pdf_file.save(filename, ContentFile(pdf_bytes), save=False)
+    replacement_name = report.pdf_file.name
+    try:
         report.scheduled_count = counts["scheduled"]
         report.reached_count = counts["reached"]
         report.late_count = counts["late"]
@@ -352,6 +348,26 @@ def generate_daily_arrival_reports(report_date, user, shift_types=None):
         report.unassigned_count = counts["unassigned"]
         report.generated_by = user
         report.save()
+    except Exception:
+        if replacement_name != previous_name:
+            storage.delete(replacement_name)
+        raise
+    if previous_name and previous_name != replacement_name:
+        try:
+            storage.delete(previous_name)
+        except OSError:
+            logger.warning("Previous arrival PDF could not be removed after replacement", exc_info=True)
+
+
+def generate_daily_arrival_reports(report_date, user, shift_types=None):
+    shifts = list(shift_types or ShiftType.objects.filter(is_active=True).order_by("start_time", "name"))
+    generated = []
+    for shift in shifts:
+        operations = list(DailyOperation.objects.filter(operation_date=report_date, shift_type=shift).select_related("employee", "site", "shift_type", "reached_by").order_by("site__name", "employee__name"))
+        pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations, sites=Site.objects.filter(is_active=True))
+        report, _ = DailyArrivalReport.objects.get_or_create(report_date=report_date, shift_type=shift)
+        filename = f"arrival-report-{report_date}-{re.sub(r'[^a-z0-9]+', '-', shift.name.lower()).strip('-')}.pdf"
+        _store_arrival_pdf(report, filename, pdf_bytes, counts, user)
         generated.append(report)
     generate_client_arrival_reports(report_date, user, shifts)
     return generated
@@ -368,17 +384,8 @@ def generate_client_arrival_reports(report_date, user, shift_types=None):
                 continue
             pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations, sites=Site.objects.filter(client=client, is_active=True))
             report, _ = ClientArrivalReport.objects.get_or_create(client=client, report_date=report_date, shift_type=shift)
-            if report.pdf_file:
-                report.pdf_file.delete(save=False)
             filename = f"client-{client.client_id}-{report_date}-{re.sub(r'[^a-z0-9]+', '-', shift.name.lower()).strip('-')}.pdf"
-            report.pdf_file.save(filename, ContentFile(pdf_bytes), save=False)
-            report.scheduled_count = counts["scheduled"]
-            report.reached_count = counts["reached"]
-            report.late_count = counts["late"]
-            report.not_reached_count = counts["not_reached"]
-            report.unassigned_count = counts["unassigned"]
-            report.generated_by = user
-            report.save()
+            _store_arrival_pdf(report, filename, pdf_bytes, counts, user)
 
 
 def sync_rota_date_operations(rota_week, selected_date, user):
@@ -2201,6 +2208,18 @@ class DailyArrivalReportViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "date must be YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
         reports = generate_daily_arrival_reports(report_date, request.user)
         return Response(self.get_serializer(reports, many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def regenerate(self, request, pk=None):
+        if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
+            raise PermissionDenied("Only Admin or Super Admin can replace saved arrival PDFs.")
+        report = self.get_object()
+        reports = generate_daily_arrival_reports(report.report_date, request.user, shift_types=[report.shift_type])
+        AuditLog.objects.create(user=request.user, action="UPDATE", model_name="DailyArrivalReport",
+            object_id=str(report.pk), summary=f"Regenerated {report.report_date} {report.shift_type.name} arrival PDF from current records")
+        response = Response(self.get_serializer(reports[0]).data)
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):

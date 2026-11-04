@@ -808,3 +808,7 @@ textarea, select, input { max-width: 100%; }
   .modal-card:has(input[placeholder="First name Surname"]) .checkbox-field { padding: 7px 9px; }
   .modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 7px; }
 }
+
+.saved-report-row > .saved-report-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.saved-report-actions button { white-space: nowrap; }
+@media (max-width: 680px) { .saved-report-row > .saved-report-actions { width: 100%; } .saved-report-actions button { flex: 1; } }
