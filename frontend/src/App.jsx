@@ -6,6 +6,7 @@ import AdminSecurity, { AdminMFA, AdminSessionMonitor } from "./AdminSecurity";
 import DashboardClock from "./DashboardClock";
 import GuardLocationMonitor from "./GuardLocationMonitor";
 import LocationTracker from "./LocationTracker";
+import CompleteShiftReview from "./CompleteShiftReview";
 import { ukDate, formatUkAttendanceTime } from "./ukTime.js";
 import { clearAuth, endAdminSession, getToken, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
@@ -1418,13 +1419,14 @@ function LegacyAttendanceReviewPage() {
 function AttendanceReviewPage({ target = {}, canTrack = true }) {
   const [tab, setTab] = useState(canTrack && target.location_tracking ? "location" : "attendance");
   useEffect(() => { if (canTrack && target.location_tracking) setTab("location"); }, [canTrack, target.operation_id, target.location_tracking]);
-  if (!canTrack) return <AttendanceSummaryPage target={target} />;
-  return <><div className="control-room-tabs" role="tablist" aria-label="Control Room views"><button role="tab" aria-selected={tab === "attendance"} onClick={() => setTab("attendance")}>Shift attendance</button><button role="tab" aria-selected={tab === "location"} onClick={() => setTab("location")}>Location tracker</button></div>{tab === "location" ? <LocationTracker api={api} target={target} /> : <AttendanceSummaryPage target={target} />}</>;
+  if (!canTrack) return <AttendanceSummaryPage target={target} canTrack={false} />;
+  return <><div className="control-room-tabs" role="tablist" aria-label="Control Room views"><button role="tab" aria-selected={tab === "attendance"} onClick={() => setTab("attendance")}>Shift attendance</button><button role="tab" aria-selected={tab === "location"} onClick={() => setTab("location")}>Location tracker</button></div>{tab === "location" ? <LocationTracker api={api} target={target} /> : <AttendanceSummaryPage target={target} canTrack={canTrack} />}</>;
 }
 
-function AttendanceSummaryPage({ target = {} }) {
+function AttendanceSummaryPage({ target = {}, canTrack = true }) {
   const [date, setDate] = useState(target.event_date || ukDate());
   const [items, setItems] = useState([]);
+  const [selectedShift, setSelectedShift] = useState(target.location_tracking ? null : target.operation_id || null);
   const [siteFilter, setSiteFilter] = useState(target.site_id ? String(target.site_id) : "ALL");
   const [search, setSearch] = useState(target.employee_name || "");
   const [error, setError] = useState("");
@@ -1481,7 +1483,7 @@ function AttendanceSummaryPage({ target = {} }) {
   return <>
     <div className="page-heading control-room-heading">
       <div><p className="eyebrow">CONTROL ROOM</p><h2>Shift attendance</h2><p className="muted">Track today’s guards by site: who is assigned, who has arrived and who is still outstanding. Times shown in Europe/London (GMT/BST).</p></div>
-      <div className="report-filters"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /><CheckUpdatesButton api={api} paths={`/operations/?operation_date=${date}`} currentData={items} onUpdate={setItems} setError={setError} disabled={loading} /></div>
+      <div className="report-filters"><input type="date" value={date} onChange={(event) => { setSelectedShift(null); setDate(event.target.value); }} /><CheckUpdatesButton api={api} paths={`/operations/?operation_date=${date}`} currentData={items} onUpdate={setItems} setError={setError} disabled={loading} /></div>
     </div>
     {error && <p className="error page-error">{error}</p>}
 
@@ -1512,7 +1514,7 @@ function AttendanceSummaryPage({ target = {} }) {
         const siteState = siteUnfilled ? "Needs cover" : siteAssigned.length && siteArrived === siteAssigned.length ? "All arrived" : "In progress";
         const renderGuard = (item) => {
             const state = statusFor(item); const bookOn = eventFor(item, "BOOK_ON"); const bookOff = eventFor(item, "BOOK_OFF"); const hourly = (item.hourly_checkins || []).filter((checkin) => checkin.status === "COMPLETED").length;
-            return <div className="attendance-guard-row" key={item.id}><div className="attendance-guard-avatar">{item.employee_name ? item.employee_name.slice(0, 1).toUpperCase() : "?"}</div><div className="attendance-guard-details"><strong>{item.employee_name || "Unfilled shift"}</strong><small className="attendance-mode-label">{siteAttendanceLabel(item)}</small><span>{item.shift_name || "Shift"} · {formatShiftTime(item)}</span><div className="attendance-time-row"><span>{bookOn ? `Book On ${formatTime(bookOn.captured_at)}` : "Book On pending"}</span>{bookOff && <span>Book Off {formatTime(bookOff.captured_at)}</span>}{item.employee && item.expected_hourly_checkins > 0 && <span>{hourly}/{item.expected_hourly_checkins} hourly checks</span>}</div>{bookOn?.late_reason && <div className="attendance-book-on-reason"><strong>Late Book On reason</strong><span>{bookOn.late_reason}</span></div>}</div><div className="attendance-status-block"><span className={`status-pill ${state.className}`}>{state.label}</span><small>{state.hint}</small>{(bookOn?.photo_url || bookOff?.photo_url) && <div className="attendance-quick-evidence">{bookOn?.photo_url && <ProtectedFilePreview value={bookOn.photo_url} label={`${item.employee_name} · Book On`} buttonLabel="View Book On" />}{bookOff?.photo_url && <ProtectedFilePreview value={bookOff.photo_url} label={`${item.employee_name} · Book Off`} buttonLabel="View Book Off" />}</div>}</div></div>;
+            return <div className="attendance-guard-row" key={item.id}><div className="attendance-guard-avatar">{item.employee_name ? item.employee_name.slice(0, 1).toUpperCase() : "?"}</div><div className="attendance-guard-details"><strong>{item.employee_name || "Unfilled shift"}</strong><small className="attendance-mode-label">{siteAttendanceLabel(item)}</small><span>{item.shift_name || "Shift"} · {formatShiftTime(item)}</span><div className="attendance-time-row"><span>{bookOn ? `Book On ${formatTime(bookOn.captured_at)}` : "Book On pending"}</span>{bookOff && <span>Book Off {formatTime(bookOff.captured_at)}</span>}{item.employee && item.expected_hourly_checkins > 0 && <span>{hourly}/{item.expected_hourly_checkins} hourly checks</span>}</div>{bookOn?.late_reason && <div className="attendance-book-on-reason"><strong>Late Book On reason</strong><span>{bookOn.late_reason}</span></div>}</div><div className="attendance-status-block">{item.employee && <button type="button" className="mini-button complete-shift-button" onClick={() => setSelectedShift(item.id)}><History size={13} />View complete shift</button>}<span className={`status-pill ${state.className}`}>{state.label}</span><small>{state.hint}</small>{(bookOn?.photo_url || bookOff?.photo_url) && <div className="attendance-quick-evidence">{bookOn?.photo_url && <ProtectedFilePreview value={bookOn.photo_url} label={`${item.employee_name} · Book On`} buttonLabel="View Book On" />}{bookOff?.photo_url && <ProtectedFilePreview value={bookOff.photo_url} label={`${item.employee_name} · Book Off`} buttonLabel="View Book Off" />}</div>}</div></div>;
         };
         return <article className={`attendance-site-card ${siteUnfilled ? "needs-attention" : ""}`} key={siteName}>
           <div className="attendance-site-header"><div><p className="eyebrow">SITE</p><h3>{siteName}</h3><span>{siteItems.length} shift{siteItems.length === 1 ? "" : "s"} scheduled</span></div><span className={`status-pill ${siteUnfilled ? "pending" : siteArrived === siteAssigned.length ? "present" : "neutral"}`}>{siteState}</span></div>
@@ -1527,6 +1529,7 @@ function AttendanceSummaryPage({ target = {} }) {
       <div className="panel"><div className="panel-header"><div><h3>Still to arrive</h3><p className="muted">Assigned guards without a Book On event.</p></div><span className="status-pill pending">{pendingItems.length}</span></div>{pendingItems.length ? <div className="attention-list">{pendingItems.map((item) => <div className="attention-item" key={item.id}><div><strong>{item.employee_name}</strong><span>{item.site_name} · {item.shift_name} · {formatShiftTime(item)}</span></div><span className="status-pill pending">Awaiting</span></div>)}</div> : <div className="tracker-empty"><CheckCircle2 size={18} /><span>Everyone assigned has arrived.</span></div>}</div>
       <div className="panel"><div className="panel-header"><div><h3>Control room alerts</h3><p className="muted">Items that may need an operator’s attention.</p></div><span className={`status-pill ${unfilledItems.length || exceptions ? "pending" : "present"}`}>{unfilledItems.length + exceptions}</span></div>{unfilledItems.length || exceptions ? <div className="attention-list">{unfilledItems.length > 0 && <div className="attention-item"><div><strong>{unfilledItems.length} unfilled shift{unfilledItems.length === 1 ? "" : "s"}</strong><span>Assign cover from Weekly rota.</span></div><span className="status-pill pending">Action needed</span></div>}{exceptions > 0 && <div className="attention-item"><div><strong>{exceptions} location exception{exceptions === 1 ? "" : "s"}</strong><span>Review attendance evidence and GPS status.</span></div><span className="status-pill outside_site">Review</span></div>}</div> : <div className="tracker-empty"><CheckCircle2 size={18} /><span>No alerts for this date.</span></div>}</div>
     </section>
+    {selectedShift && <CompleteShiftReview key={selectedShift} operationId={selectedShift} api={api} FilePreview={ProtectedFilePreview} canTrack={canTrack} onUpdate={(updated) => setItems((current) => current.map((item) => item.id === updated.id ? updated : item))} onClose={() => setSelectedShift(null)} />}
   </>;
 }
 
