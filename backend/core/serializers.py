@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from math import isfinite
 import os
 from secrets import token_urlsafe
 
@@ -374,6 +375,19 @@ class GuardComplianceRegistrationSerializer(serializers.ModelSerializer):
 
 class SiteSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source="client.name", read_only=True, allow_null=True)
+    latitude = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    longitude = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
+    geofence_radius_m = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_latitude(self, value):
+        if value is not None and not isfinite(value):
+            raise serializers.ValidationError("Enter a valid latitude between -90 and 90.")
+        return value
+
+    def validate_longitude(self, value):
+        if value is not None and not isfinite(value):
+            raise serializers.ValidationError("Enter a valid longitude between -180 and 180.")
+        return value
 
     class Meta:
         model = Site

@@ -48,7 +48,13 @@ class ShiftCompletionTests(AttendanceFixture, APITestCase):
         self.assertEqual(set(notices.values_list("link", flat=True)), {"timesheets"})
 
     def test_late_location_and_missing_hourly_exceptions_require_office_review(self):
-        summary = self.finish(self.full, start=self.now(8, 10), late_reason="Traffic", accuracy_m="500")
+        # Previously recorded location exceptions remain reviewable after strict geofencing.
+        on = self.book_on_record(self.full)
+        ShiftAttendanceEvent.objects.filter(pk=on.pk).update(captured_at=self.now(8, 10),
+            location_status="LOCATION_UNVERIFIED", accuracy_m=500, late_reason="Traffic")
+        response = self.submit(self.full, "BOOK_OFF", self.now(20, 10))
+        self.assertEqual(response.status_code, 201, response.data)
+        summary = response.data["operation"]["completion_summary"]
         self.assertEqual(set(summary["review_flags"]), {"LATE_BOOK_ON", "LOCATION_EXCEPTION", "MISSED_HOURLY_PICTURES"})
         self.assertEqual(summary["timesheet_status"], "REVIEW_REQUIRED")
         self.assertTrue(Notification.objects.filter(user=self.admin, title="Shift completed - review required", notification_type="WARNING").exists())

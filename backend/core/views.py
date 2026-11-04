@@ -4,7 +4,7 @@ from email.utils import parseaddr
 import hashlib
 import json
 import mimetypes
-from math import asin, cos, radians, sin, sqrt
+from math import asin, ceil, cos, isfinite, radians, sin, sqrt
 import logging
 import os
 import re
@@ -108,7 +108,7 @@ def haversine_distance_m(latitude_a, longitude_a, latitude_b, longitude_b):
     lat_delta = radians(latitude_b - latitude_a)
     lon_delta = radians(longitude_b - longitude_a)
     a = sin(lat_delta / 2) ** 2 + cos(radians(latitude_a)) * cos(radians(latitude_b)) * sin(lon_delta / 2) ** 2
-    return earth_radius_m * 2 * asin(sqrt(a))
+    return earth_radius_m * 2 * asin(sqrt(min(1, max(0, a))))
 
 
 def send_transactional_email(subject, message, recipient):
@@ -1968,23 +1968,29 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             accuracy_m = float(request.data.get("accuracy_m")) if request.data.get("accuracy_m") not in (None, "") else None
         except (TypeError, ValueError):
             return Response({"detail": "Location coordinates must be valid numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        if ((latitude is not None and (not isfinite(latitude) or not -90 <= latitude <= 90))
+                or (longitude is not None and (not isfinite(longitude) or not -180 <= longitude <= 180))
+                or (accuracy_m is not None and (not isfinite(accuracy_m) or accuracy_m < 0))):
+            return Response({"detail": "Use valid GPS coordinates and a non-negative accuracy value."}, status=status.HTTP_400_BAD_REQUEST)
         if (latitude is None) != (longitude is None):
             return Response({"detail": "Both latitude and longitude are required together."}, status=status.HTTP_400_BAD_REQUEST)
-        if role_of(request.user) == "EMPLOYEE" and (latitude is None or longitude is None):
+        if latitude is None or longitude is None:
             return Response({"detail": "Set your GPS location before submitting attendance."}, status=status.HTTP_400_BAD_REQUEST)
-        if role_of(request.user) == "EMPLOYEE" and (operation.site.latitude is None or operation.site.longitude is None):
+        site_latitude, site_longitude, radius = operation.site.latitude, operation.site.longitude, operation.site.geofence_radius_m
+        if (site_latitude is None or site_longitude is None
+                or not isfinite(site_latitude) or not -90 <= site_latitude <= 90
+                or not isfinite(site_longitude) or not -180 <= site_longitude <= 180
+                or radius <= 0):
             return Response({"detail": "This site does not have GPS coordinates configured. Ask the office to update the site first."}, status=status.HTTP_400_BAD_REQUEST)
-        distance_m = None
-        if latitude is not None and operation.site.latitude is not None and operation.site.longitude is not None:
-            distance_m = round(haversine_distance_m(latitude, longitude, operation.site.latitude, operation.site.longitude), 2)
-            if accuracy_m is not None and accuracy_m > max(operation.site.geofence_radius_m, 200):
-                location_status = ShiftAttendanceEvent.LocationStatus.LOCATION_UNVERIFIED
-            elif distance_m > operation.site.geofence_radius_m:
-                location_status = ShiftAttendanceEvent.LocationStatus.OUTSIDE_SITE
-            else:
-                location_status = ShiftAttendanceEvent.LocationStatus.VERIFIED
-        else:
-            location_status = ShiftAttendanceEvent.LocationStatus.LOCATION_UNVERIFIED
+        distance = haversine_distance_m(latitude, longitude, site_latitude, site_longitude)
+        if distance > radius:
+            return Response({"detail": f"You are outside this site's {radius}m geofence (about {ceil(distance)}m from the site). Move inside the site boundary before submitting attendance.",
+                "code": "OUTSIDE_SITE", "distance_m": round(distance, 2), "geofence_radius_m": radius}, status=status.HTTP_400_BAD_REQUEST)
+        if accuracy_m is None or accuracy_m > radius:
+            return Response({"detail": f"GPS accuracy is too low to verify this site's {radius}m geofence. Enable precise location, move to an open area and set GPS again.",
+                "code": "LOCATION_UNVERIFIED"}, status=status.HTTP_400_BAD_REQUEST)
+        distance_m = round(distance, 2)
+        location_status = ShiftAttendanceEvent.LocationStatus.VERIFIED
         late_reason = ""
         if event_type == ShiftAttendanceEvent.EventType.BOOK_ON:
             value = request.data.get("late_reason", "")
