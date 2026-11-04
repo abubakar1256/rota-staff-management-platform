@@ -883,6 +883,8 @@ def dashboard(request):
     unfilled_total = max(required_total - assigned_total, 0)
     return Response(
         {
+            "time_zone": settings.TIME_ZONE,
+            "server_time": timezone.now().isoformat(),
             "active_employees": Employee.objects.filter(status=Employee.Status.ACTIVE).count(),
             "active_sites": len(active_sites),
             "employees_on_leave": LeaveRecord.objects.filter(status=LeaveRecord.Status.APPROVED, start_date__lte=today, end_date__gte=today).values("employee_id").distinct().count(),

@@ -1,0 +1,14 @@
+.dashboard-clock { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 18px 28px; margin-bottom: 22px; padding: 20px 24px; border: 1px solid #dce5f5; border-radius: 16px; background: linear-gradient(115deg, #fff 20%, #f0f5ff); box-shadow: 0 5px 18px #233e7510; }
+.dashboard-clock-location { display: flex; align-items: center; gap: 13px; }
+.dashboard-clock-icon { display: grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; color: #456cdb; background: #eaf0ff; border: 1px solid #dce6ff; border-radius: 14px; }
+.dashboard-clock-location strong { display: block; color: #243654; font-size: 14px; font-weight: 750; }
+.dashboard-clock-location div > span { display: block; margin-top: 5px; color: #72829d; font-size: 12px; }
+.dashboard-clock-display { text-align: right; }
+.dashboard-clock-time-row { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.dashboard-clock-time { color: #142d54; font-size: clamp(25px, 2.5vw, 33px); font-weight: 750; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -.025em; white-space: nowrap; }
+.dashboard-clock-zone { padding: 5px 9px; border: 1px solid #d7e2ff; border-radius: 7px; color: #4268cb; background: #eaf0ff; font-size: 11px; font-weight: 800; letter-spacing: .04em; }
+.dashboard-clock-details { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; color: #72829d; font-size: 12px; }
+.dashboard-clock-live { display: inline-flex; align-items: center; gap: 5px; color: #278673; font-size: 10px; font-weight: 700; }
+.dashboard-clock-live i { width: 5px; height: 5px; border-radius: 50%; background: #2bb889; }
+.dashboard-clock-loading { color: #72829d; font-size: 12px; }
+@media (max-width: 540px) { .dashboard-clock { padding: 18px; gap: 18px; } .dashboard-clock-display { width: 100%; text-align: left; } .dashboard-clock-time-row, .dashboard-clock-details { justify-content: flex-start; } .dashboard-clock-time { font-size: 31px; } }
