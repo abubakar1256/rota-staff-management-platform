@@ -126,3 +126,38 @@ class NotificationInboxTests(APITestCase):
         self.assertEqual(refresh_operational_alerts(now), 0)
         self.assertEqual(Notification.objects.count(), before)
         self.assertFalse(Notification.objects.filter(title="Missed hourly picture").exists())
+
+    def test_admin_mark_all_read_covers_every_page_and_category_in_own_inbox(self):
+        shared = [Notification.objects.create(title=f"Shared alert {index}", category="ATTENDANCE", priority="URGENT") for index in range(28)]
+        personal = Notification.objects.create(user=self.admin, title="My document alert", category="DOCUMENT_EXPIRY")
+        protected = [Notification.objects.create(user=self.guard, title="Guard personal alert", category="ATTENDANCE"),
+            Notification.objects.create(user=self.other_admin, title="Other admin alert", category="SYSTEM")]
+        already = Notification.objects.create(user=self.admin, title="Already read", category="SYSTEM", is_read=True)
+        self.assertEqual(self.inbox("?category=DOCUMENT_EXPIRY&view=UNREAD")["pagination"]["total"],1)
+        response = self.client.post("/api/notifications/mark-all-read/?category=DOCUMENT_EXPIRY&page=2",
+            {"user":self.guard.pk,"ids":[row.pk for row in protected]},format="json")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["updated"],29)
+        self.assertFalse(Notification.objects.filter(pk__in=[row.pk for row in shared]+[personal.pk],is_read=False).exists())
+        self.assertFalse(Notification.objects.filter(pk__in=[row.pk for row in protected],is_read=True).exists())
+        self.assertEqual(self.inbox()["summary"]["unread"],0)
+        self.assertEqual(self.inbox()["summary"]["urgent"],0)
+        self.assertEqual(self.client.post("/api/notifications/mark-all-read/").data["updated"],0)
+        self.assertEqual(Notification.objects.count(),32)
+
+    def test_super_admin_can_mark_own_inbox_but_other_office_roles_cannot_bulk_mark(self):
+        User=get_user_model()
+        protected=Notification.objects.create(title="Office alert",category="ATTENDANCE")
+        for role in ("MANAGER","OPERATOR","RECEPTIONIST","CLIENT_ADMIN"):
+            user=User.objects.create_user(username=f"bulk-{role}")
+            UserProfile.objects.update_or_create(user=user,defaults={"role":role})
+            self.client.force_authenticate(user)
+            self.assertEqual(self.client.post("/api/notifications/mark-all-read/").status_code,403,role)
+        self.client.force_authenticate(None)
+        self.assertIn(self.client.post("/api/notifications/mark-all-read/").status_code,(401,403))
+        protected.refresh_from_db();self.assertFalse(protected.is_read)
+        super_admin=User.objects.create_user(username="bulk-super-admin",is_superuser=True)
+        self.client.force_authenticate(super_admin)
+        response=self.client.post("/api/notifications/mark-all-read/")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["updated"],1)

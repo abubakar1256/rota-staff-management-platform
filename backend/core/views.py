@@ -2285,9 +2285,11 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="mark-all-read")
     def mark_all_read(self, request):
-        if role_of(request.user) != "EMPLOYEE":
-            raise PermissionDenied("Guards can only mark their own personal notifications read.")
-        updated = self.get_queryset().filter(user=request.user, is_read=False).update(is_read=True)
+        if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "EMPLOYEE"}:
+            raise PermissionDenied("Bulk marking is available in admin and guard inboxes only.")
+        # Use exactly the same audience as list/mark_read. Ignore IDs or user
+        # selectors supplied by the caller; filters and pagination do not limit all.
+        updated = self.get_queryset().filter(is_read=False).update(is_read=True)
         return Response({"updated": updated})
 
     @action(detail=False, methods=["post"])

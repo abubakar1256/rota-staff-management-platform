@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Bell, CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, Search } from "lucide-react";
+import { AlertTriangle, Bell, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight, ExternalLink, Search } from "lucide-react";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { guardInboxPath, guardNotificationAction, guardNotificationCategories, inboxPath, notificationAction, notificationCategories } from "./notificationInbox";
 import "./notificationInbox.css";
@@ -10,6 +10,7 @@ export default function AdminNotifications({ api, onNavigate, audience = "admin"
   const [category, setCategory] = useState("ALL"), [view, setView] = useState("ALL"), [search, setSearch] = useState(""), [searchInput, setSearchInput] = useState(""), [page, setPage] = useState(1);
   const [data, setData] = useState(null), [loadedPath, setLoadedPath] = useState(""), [loading, setLoading] = useState(true), [error, setError] = useState(""), [marking, setMarking] = useState(null);
   const request = useRef(0);
+  const mutationPending = useRef(false);
   const path = (guard ? guardInboxPath : inboxPath)({ category, view, search, page });
   const load = async () => {
     const current = ++request.current; setLoading(true); setError("");
@@ -20,27 +21,32 @@ export default function AdminNotifications({ api, onNavigate, audience = "admin"
   useEffect(() => { load(); return () => { request.current++; }; }, [path]);
   const filter = (setter, value) => { setPage(1); setter(value); };
   const markRead = async (item) => {
+    if (mutationPending.current) return;
+    mutationPending.current = true;
     setMarking(item.id); setError("");
     try {
       await api(`/notifications/${item.id}/mark_read/`, { method: "POST", body: "{}", silentLoading: true, silentToast: true });
       window.dispatchEvent(new Event("rota:notifications-changed"));
       if (page > 1 && data.results.length === 1 && view !== "ALL") setPage((value) => value - 1);
       else await load();
-    } catch (err) { setError(err.message); } finally { setMarking(null); }
+    } catch (err) { setError(err.message); } finally { mutationPending.current = false; setMarking(null); }
   };
   const markAllRead = async () => {
+    if (mutationPending.current) return;
+    mutationPending.current = true;
     setMarking("all"); setError("");
     try {
-      await api("/notifications/mark-all-read/", { method: "POST", body: "{}", silentLoading: true, silentToast: true });
+      const result = await api("/notifications/mark-all-read/", { method: "POST", body: "{}", silentLoading: true, silentToast: true });
       window.dispatchEvent(new Event("rota:notifications-changed"));
+      window.dispatchEvent(new CustomEvent("rota:toast", { detail: { type: "success", message: result.updated ? "All notifications marked as read." : "No unread notifications remaining." } }));
       if (page !== 1) setPage(1); else await load();
-    } catch (err) { setError(err.message); } finally { setMarking(null); }
+    } catch (err) { setError(err.message); } finally { mutationPending.current = false; setMarking(null); }
   };
   const summary = data?.summary || { total: 0, unread: 0, urgent: 0, categories: [] };
   const currentData = loadedPath === path ? data : null;
   const categoryCounts = new Map(summary.categories.map((item) => [item.key, item]));
   return <>
-    <div className="page-heading"><div><p className="eyebrow">{guard ? "GUARD INBOX" : "OFFICE INBOX"}</p><h2>Notifications</h2><p className="muted">{guard ? "Your shifts, documents and application updates in one place." : "Review urgent exceptions, pending approvals and updates by category."}</p></div><div className="page-heading-actions">{guard && <button type="button" className="secondary-button" disabled={loading || Boolean(marking) || !data?.summary?.unread} onClick={markAllRead}>{marking === "all" ? "Saving…" : "Mark all read"}</button>}<CheckUpdatesButton api={api} paths={path} currentData={data} onUpdate={(result) => { setData(result); setLoadedPath(path); setError(""); }} setError={setError} disabled={loading || Boolean(marking)} /></div></div>
+    <div className="page-heading"><div><p className="eyebrow">{guard ? "GUARD INBOX" : "OFFICE INBOX"}</p><h2>Notifications</h2><p className="muted">{guard ? "Your shifts, documents and application updates in one place." : "Review urgent exceptions, pending approvals and updates by category."}</p></div><div className="page-heading-actions"><button type="button" className="secondary-button mark-all-read-button" title="Mark unread notifications across all categories and pages in your inbox as read" aria-busy={marking === "all"} disabled={loading || Boolean(marking) || !data?.summary?.unread} onClick={markAllRead}><CheckCheck size={16} />{marking === "all" ? "Marking as read…" : "Mark all as read"}</button><CheckUpdatesButton key={marking == null ? "idle" : `mark-${marking}`} api={api} paths={path} currentData={data} onUpdate={(result) => { setData(result); setLoadedPath(path); setError(""); }} setError={setError} disabled={loading || Boolean(marking)} /></div></div>
     {error && <p className="error page-error" role="alert">{error}</p>}
     <section className="panel admin-notification-controls" aria-label="Notification filters">
       <div className="admin-inbox-tabs" role="group" aria-label="Notification view">{[["ALL", "All", summary.total], ["UNREAD", "Unread", summary.unread], ["URGENT", "Urgent", summary.urgent]].map(([key, label, count]) => <button type="button" key={key} disabled={Boolean(marking)} aria-pressed={view === key} className={view === key ? "selected" : ""} onClick={() => filter(setView, key)}>{key === "URGENT" ? <AlertTriangle size={16} /> : <Bell size={16} />}{label}<span>{count}</span></button>)}</div>

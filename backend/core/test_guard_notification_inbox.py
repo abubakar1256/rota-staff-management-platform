@@ -67,7 +67,7 @@ class GuardNotificationInboxTests(APITestCase):
         self.assertEqual(self.inbox("?view=URGENT")["pagination"]["total"], 0)
         self.assertEqual(self.inbox("?view=UNREAD")["pagination"]["total"], 1)
 
-    def test_guard_cannot_access_other_alerts_or_admin_inbox_and_admin_cannot_use_guard_bulk_action(self):
+    def test_guard_cannot_access_other_alerts_or_admin_inbox_and_admin_cannot_use_guard_inbox(self):
         for user in (None, self.other, self.admin):
             item = Notification.objects.create(user=user, category="ATTENDANCE", title="Restricted")
             self.assertEqual(self.client.get(f"/api/notifications/{item.pk}/").status_code, 404)
@@ -75,7 +75,7 @@ class GuardNotificationInboxTests(APITestCase):
         self.assertEqual(self.client.get("/api/notifications/inbox/").status_code, 403)
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.get("/api/notifications/guard-inbox/").status_code, 403)
-        self.assertEqual(self.client.post("/api/notifications/mark-all-read/").status_code, 403)
+        self.assertEqual(self.client.post("/api/notifications/mark-all-read/").status_code, 200)
 
     def operation(self, employee, hourly=False):
         client, _ = Client.objects.get_or_create(client_id="GIN-C", defaults={"name": "Guard inbox client"})
