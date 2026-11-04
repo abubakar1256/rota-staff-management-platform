@@ -81,6 +81,15 @@ def next_due(state):
     return baseline.astimezone(datetime_timezone.utc) + INTERVAL
 
 
+def next_capture_due(state):
+    # A new tracking session needs a first fix immediately. The overdue grace
+    # period still runs from the session start, not from this capture deadline.
+    if (not state.last_location_at or state.last_location_at < state.tracking_started_at
+            or not valid_coordinates(state.latitude, state.longitude, state.accuracy_m)):
+        return state.tracking_started_at
+    return next_due(state)
+
+
 def incident_key(state):
     return f"duty-location:{state.operation_id}:{state.tracking_started_at.isoformat()}:{state.incident_sequence}"
 
@@ -136,7 +145,7 @@ def snapshot(operation, state=None, now=None):
         "last_contact_at": state.last_contact_at.isoformat() if state and state.last_contact_at else None,
         "last_location_at": state.last_location_at.isoformat() if state and state.last_location_at else None,
         "point": {"latitude": state.latitude, "longitude": state.longitude, "accuracy_m": state.accuracy_m} if state and state.latitude is not None else None,
-        "next_due_at": next_due(state).isoformat() if state and info["active"] else None,
+        "next_due_at": next_capture_due(state).isoformat() if state and info["active"] else None,
         "stop_at": info["end"].isoformat(), "interval_seconds": int(INTERVAL.total_seconds()), "grace_seconds": int(GRACE.total_seconds())}
 
 

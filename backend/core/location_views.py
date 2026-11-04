@@ -127,7 +127,7 @@ def submit_location(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def tracking_tracker(request):
-    query = operations_for(request.user)
+    query = operations_for(request.user).filter(employee__isnull=False)
     raw = request.query_params.get("date", str(timezone.localdate()))
     try:
         selected = date.fromisoformat(raw)

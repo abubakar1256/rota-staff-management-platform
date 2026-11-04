@@ -158,7 +158,39 @@ class LocationTrackingTests(APITestCase):
         self.client.force_authenticate(self.guard)
         result = self.active().data["results"][0]
         self.assertFalse(result["overdue"])
-        self.assertEqual(datetime.fromisoformat(result["next_due_at"]), self.current + timedelta(minutes=30))
+        self.assertEqual(result["status"], "WAITING")
+        self.assertEqual(datetime.fromisoformat(result["next_due_at"]), self.current)
+        self.assertLess(datetime.fromisoformat(result["last_location_at"]), self.current)
+        self.current += timedelta(minutes=34)
+        self.assertEqual(refresh_location_alerts(), 0)
+        self.current += timedelta(minutes=1)
+        self.assertEqual(refresh_location_alerts(), 1)
+
+    def test_first_fix_is_immediate_but_missing_gps_keeps_the_full_overdue_grace(self):
+        self.operation.attendance_events.update(latitude=None, longitude=None, accuracy_m=None)
+        result = self.active().data["results"][0]
+        self.assertEqual(result["status"], "WAITING")
+        self.assertIsNone(result["last_location_at"])
+        self.assertEqual(datetime.fromisoformat(result["next_due_at"]), self.current)
+        self.current += timedelta(minutes=34)
+        self.report("HEARTBEAT")
+        self.assertEqual(refresh_location_alerts(), 0)
+        self.current += timedelta(minutes=1)
+        self.assertEqual(refresh_location_alerts(), 1)
+        restored = self.report().data["tracking"]
+        self.assertFalse(restored["overdue"])
+        self.assertEqual(datetime.fromisoformat(restored["next_due_at"]), self.current + timedelta(minutes=30))
+
+    def test_tracker_excludes_unassigned_slots_but_keeps_guards_awaiting_book_on(self):
+        unassigned = DailyOperation.objects.create(operation_date=self.current.date(), site=self.site,
+            shift_type=self.shift, created_by=self.admin)
+        pending = DailyOperation.objects.create(operation_date=self.current.date(), employee=self.other_employee,
+            site=self.site, shift_type=self.shift, created_by=self.admin)
+        self.client.force_authenticate(self.admin)
+        rows = self.client.get("/api/location-tracking/tracker/").data["results"]
+        self.assertEqual({row["operation_id"] for row in rows}, {self.operation.pk, pending.pk})
+        self.assertNotIn(unassigned.pk, {row["operation_id"] for row in rows})
+        self.assertEqual(next(row for row in rows if row["operation_id"] == pending.pk)["status"], "NOT_BOOKED_ON")
 
     def test_overnight_shift_is_in_today_tracker_and_stops_the_next_morning(self):
         self.shift.start_time, self.shift.end_time = time(20), time(8); self.shift.save()

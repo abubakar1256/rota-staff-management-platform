@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatDashboardClock } from "../src/ukTime.js";
+import { formatDashboardClock, ukDate, formatUkAttendanceTime } from "../src/ukTime.js";
 
 test("London winter time uses GMT and summer time uses BST", () => {
   assert.deepEqual(formatDashboardClock("2026-11-04T08:24:01Z"), { time: "08:24:01 am", date: "Wednesday, 4 November 2026", abbreviation: "GMT" });
@@ -28,5 +28,16 @@ test("the dashboard date stays in London even on a Pakistan device", () => {
     process.env.TZ = "Asia/Karachi";
     assert.equal(formatDashboardClock("2026-11-03T23:30:00Z").date, "Tuesday, 3 November 2026");
     assert.equal(formatDashboardClock("2026-11-03T23:30:00Z").time, "11:30:00 pm");
+  } finally { if (oldZone === undefined) delete process.env.TZ; else process.env.TZ = oldZone; }
+});
+
+test("control room dates and attendance use London GMT/BST on a Pakistan device", () => {
+  const oldZone = process.env.TZ;
+  try {
+    process.env.TZ = "Asia/Karachi";
+    assert.equal(ukDate(new Date("2026-11-03T23:30:00Z")), "2026-11-03");
+    assert.equal(formatUkAttendanceTime("2026-11-04T14:48:00+05:00"), "09:48 GMT");
+    assert.equal(formatUkAttendanceTime("2026-07-04T09:48:00Z"), "10:48 BST");
+    assert.equal(formatUkAttendanceTime(null), "—");
   } finally { if (oldZone === undefined) delete process.env.TZ; else process.env.TZ = oldZone; }
 });

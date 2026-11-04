@@ -18,8 +18,17 @@ function fixture() {
   };
   const client = new DutyLocationClient({ api, clock: () => elapsed, visible: () => visible, onChange: (value) => states.push(value),
     getPosition: async () => { captures++; if (failure) throw failure; return { coords: { latitude: 51.5, longitude: -.12, accuracy: 9 }, timestamp: base + elapsed }; } });
-  return { client, calls, states, setTime: (value) => { elapsed = value; }, setActive: (value) => { active = value; }, setVisible: (value) => { visible = value; }, fail: (value) => { failure = value; }, captures: () => captures };
+  return { client, calls, states, setItem: (value) => { item = { ...item, ...value }; }, setTime: (value) => { elapsed = value; }, setActive: (value) => { active = value; }, setVisible: (value) => { visible = value; }, fail: (value) => { failure = value; }, captures: () => captures };
 }
+
+test("a newly enabled session without a current GPS fix captures immediately", async () => {
+  const f = fixture(); f.setItem({ status: "WAITING", next_due_at: new Date(base).toISOString() });
+  await f.client.tick();
+  assert.equal(f.captures(), 1);
+  assert.equal(f.calls.at(-1).body.status, "UPDATED");
+  f.setTime(60000); await f.client.tick();
+  assert.equal(f.captures(), 1);
+});
 
 test("a fresh Book On point waits 30 minutes; heartbeat contains no fake location", async () => {
   const f = fixture(); await f.client.tick();

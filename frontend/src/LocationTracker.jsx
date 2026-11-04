@@ -1,19 +1,15 @@
 import { useEffect, useState } from "react";
 import { MapPin, History, X, ExternalLink } from "lucide-react";
 import "./locationTracking.css";
+import { ukDate } from "./ukTime.js";
 
-export function ukTrackingDate(now = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
-  const part = (type) => parts.find((item) => item.type === type).value;
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
 const formatTime = (value) => value ? new Date(value).toLocaleString("en-GB", { timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short" }) : "Not received";
 const statusLabel = { UPDATED: "Updated", PERMISSION_DENIED: "Permission denied", UNAVAILABLE: "Location unavailable", TIMEOUT: "Location timed out" };
 const mapUrl = (point) => `https://www.openstreetmap.org/?mlat=${encodeURIComponent(point.latitude)}&mlon=${encodeURIComponent(point.longitude)}#map=17/${encodeURIComponent(point.latitude)}/${encodeURIComponent(point.longitude)}`;
 function MapLink({ point }) { return point && <a className="mini-button" href={mapUrl(point)} target="_blank" rel="noopener noreferrer"><MapPin size={14} />Map<ExternalLink size={12} /></a>; }
 
 export default function LocationTracker({ api, target = {} }) {
-  const [date, setDate] = useState(target.event_date || ukTrackingDate());
+  const [date, setDate] = useState(target.event_date || ukDate());
   const [items, setItems] = useState([]), [site, setSite] = useState(target.site_id ? String(target.site_id) : "ALL"), [search, setSearch] = useState("");
   const [error, setError] = useState(""), [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null), [history, setHistory] = useState(null), [historyPage, setHistoryPage] = useState(1);

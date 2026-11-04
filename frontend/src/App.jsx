@@ -6,6 +6,7 @@ import AdminSecurity, { AdminMFA, AdminSessionMonitor } from "./AdminSecurity";
 import DashboardClock from "./DashboardClock";
 import GuardLocationMonitor from "./GuardLocationMonitor";
 import LocationTracker from "./LocationTracker";
+import { ukDate, formatUkAttendanceTime } from "./ukTime.js";
 import { clearAuth, endAdminSession, getToken, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
 import CheckUpdatesButton from "./CheckUpdatesButton";
@@ -1422,7 +1423,7 @@ function AttendanceReviewPage({ target = {}, canTrack = true }) {
 }
 
 function AttendanceSummaryPage({ target = {} }) {
-  const [date, setDate] = useState(target.event_date || todayIso());
+  const [date, setDate] = useState(target.event_date || ukDate());
   const [items, setItems] = useState([]);
   const [siteFilter, setSiteFilter] = useState(target.site_id ? String(target.site_id) : "ALL");
   const [search, setSearch] = useState(target.employee_name || "");
@@ -1442,8 +1443,8 @@ function AttendanceSummaryPage({ target = {} }) {
 
   const eventsFor = (item) => item.attendance_events || [];
   const eventFor = (item, type) => eventsFor(item).find((event) => event.event_type === type);
-  const timeFor = (event) => event?.captured_at ? new Date(event.captured_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
-  const formatTime = (value) => value ? new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+  const timeFor = (event) => formatUkAttendanceTime(event?.captured_at);
+  const formatTime = formatUkAttendanceTime;
   const formatShiftTime = (item) => `${String(item.scheduled_start || "").slice(0, 5)}–${String(item.scheduled_end || "").slice(0, 5)}`;
   const isArrived = (item) => item.attendance_status === "ON_DUTY" || item.attendance_status === "BOOKED_OFF" || Boolean(eventFor(item, "BOOK_ON"));
   const isCompleted = (item) => item.attendance_status === "BOOKED_OFF" || Boolean(eventFor(item, "BOOK_OFF"));
@@ -1479,13 +1480,13 @@ function AttendanceSummaryPage({ target = {} }) {
 
   return <>
     <div className="page-heading control-room-heading">
-      <div><p className="eyebrow">CONTROL ROOM</p><h2>Shift attendance</h2><p className="muted">Track today’s guards by site: who is assigned, who has arrived and who is still outstanding.</p></div>
+      <div><p className="eyebrow">CONTROL ROOM</p><h2>Shift attendance</h2><p className="muted">Track today’s guards by site: who is assigned, who has arrived and who is still outstanding. Times shown in Europe/London (GMT/BST).</p></div>
       <div className="report-filters"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /><CheckUpdatesButton api={api} paths={`/operations/?operation_date=${date}`} currentData={items} onUpdate={setItems} setError={setError} disabled={loading} /></div>
     </div>
     {error && <p className="error page-error">{error}</p>}
 
     <section className="control-room-overview panel">
-      <div className="panel-header"><div><h3>Today’s operations</h3><p className="muted">Live attendance readiness across every active site.</p></div><span className="status-pill present">{date === todayIso() ? "Live today" : date}</span></div>
+      <div className="panel-header"><div><h3>Today’s operations</h3><p className="muted">Live attendance readiness across every active site.</p></div><span className="status-pill present">{date === ukDate() ? "Live today" : date}</span></div>
       <div className="control-room-progress-row"><div><strong>{arrivedItems.length} of {assignedItems.length} guards arrived</strong><span>{pendingItems.length ? `${pendingItems.length} still awaiting Book On` : "All assigned guards have checked in"}</span></div><strong className="control-room-progress-value">{progress}%</strong></div>
       <div className="control-room-progress-track"><span style={{ width: `${progress}%` }} /></div>
       <div className="attendance-legend"><span><i className="legend-dot arrived" /> Arrived / on duty</span><span><i className="legend-dot pending" /> Awaiting arrival</span><span><i className="legend-dot completed" /> Completed</span><span><i className="legend-dot unfilled" /> Unfilled</span></div>
@@ -1506,15 +1507,18 @@ function AttendanceSummaryPage({ target = {} }) {
         const siteAssigned = siteItems.filter((item) => item.employee);
         const siteArrived = siteAssigned.filter(isArrived).length;
         const siteCompleted = siteAssigned.filter(isCompleted).length;
-        const siteUnfilled = siteItems.filter((item) => !item.employee).length;
+        const siteMissing = siteItems.filter((item) => !item.employee);
+        const siteUnfilled = siteMissing.length;
         const siteState = siteUnfilled ? "Needs cover" : siteAssigned.length && siteArrived === siteAssigned.length ? "All arrived" : "In progress";
+        const renderGuard = (item) => {
+            const state = statusFor(item); const bookOn = eventFor(item, "BOOK_ON"); const bookOff = eventFor(item, "BOOK_OFF"); const hourly = (item.hourly_checkins || []).filter((checkin) => checkin.status === "COMPLETED").length;
+            return <div className="attendance-guard-row" key={item.id}><div className="attendance-guard-avatar">{item.employee_name ? item.employee_name.slice(0, 1).toUpperCase() : "?"}</div><div className="attendance-guard-details"><strong>{item.employee_name || "Unfilled shift"}</strong><small className="attendance-mode-label">{siteAttendanceLabel(item)}</small><span>{item.shift_name || "Shift"} · {formatShiftTime(item)}</span><div className="attendance-time-row"><span>{bookOn ? `Book On ${formatTime(bookOn.captured_at)}` : "Book On pending"}</span>{bookOff && <span>Book Off {formatTime(bookOff.captured_at)}</span>}{item.employee && item.expected_hourly_checkins > 0 && <span>{hourly}/{item.expected_hourly_checkins} hourly checks</span>}</div>{bookOn?.late_reason && <div className="attendance-book-on-reason"><strong>Late Book On reason</strong><span>{bookOn.late_reason}</span></div>}</div><div className="attendance-status-block"><span className={`status-pill ${state.className}`}>{state.label}</span><small>{state.hint}</small>{(bookOn?.photo_url || bookOff?.photo_url) && <div className="attendance-quick-evidence">{bookOn?.photo_url && <ProtectedFilePreview value={bookOn.photo_url} label={`${item.employee_name} · Book On`} buttonLabel="View Book On" />}{bookOff?.photo_url && <ProtectedFilePreview value={bookOff.photo_url} label={`${item.employee_name} · Book Off`} buttonLabel="View Book Off" />}</div>}</div></div>;
+        };
         return <article className={`attendance-site-card ${siteUnfilled ? "needs-attention" : ""}`} key={siteName}>
           <div className="attendance-site-header"><div><p className="eyebrow">SITE</p><h3>{siteName}</h3><span>{siteItems.length} shift{siteItems.length === 1 ? "" : "s"} scheduled</span></div><span className={`status-pill ${siteUnfilled ? "pending" : siteArrived === siteAssigned.length ? "present" : "neutral"}`}>{siteState}</span></div>
           <div className="attendance-site-summary"><span><strong>{siteArrived}</strong> arrived</span><span><strong>{Math.max(siteAssigned.length - siteArrived, 0)}</strong> pending</span><span><strong>{siteCompleted}</strong> completed</span></div>
-          <div className="attendance-guard-list">{siteItems.sort((a, b) => `${a.scheduled_start || ""}${a.employee_name || ""}`.localeCompare(`${b.scheduled_start || ""}${b.employee_name || ""}`)).map((item) => {
-            const state = statusFor(item); const bookOn = eventFor(item, "BOOK_ON"); const bookOff = eventFor(item, "BOOK_OFF"); const hourly = (item.hourly_checkins || []).filter((checkin) => checkin.status === "COMPLETED").length;
-            return <div className="attendance-guard-row" key={item.id}><div className="attendance-guard-avatar">{item.employee_name ? item.employee_name.slice(0, 1).toUpperCase() : "?"}</div><div className="attendance-guard-details"><strong>{item.employee_name || "Unfilled shift"}</strong><small className="attendance-mode-label">{siteAttendanceLabel(item)}</small><span>{item.shift_name || "Shift"} · {formatShiftTime(item)}</span><div className="attendance-time-row"><span>{bookOn ? `Book On ${formatTime(bookOn.captured_at)}` : "Book On pending"}</span>{bookOff && <span>Book Off {formatTime(bookOff.captured_at)}</span>}{item.employee && item.expected_hourly_checkins > 0 && <span>{hourly}/{item.expected_hourly_checkins} hourly checks</span>}</div>{bookOn?.late_reason && <div className="attendance-book-on-reason"><strong>Late Book On reason</strong><span>{bookOn.late_reason}</span></div>}</div><div className="attendance-status-block"><span className={`status-pill ${state.className}`}>{state.label}</span><small>{state.hint}</small>{(bookOn?.photo_url || bookOff?.photo_url) && <div className="attendance-quick-evidence">{bookOn?.photo_url && <ProtectedFilePreview value={bookOn.photo_url} label={`${item.employee_name} · Book On`} buttonLabel="View Book On" />}{bookOff?.photo_url && <ProtectedFilePreview value={bookOff.photo_url} label={`${item.employee_name} · Book Off`} buttonLabel="View Book Off" />}</div>}</div></div>;
-          })}</div>
+          <div className="attendance-guard-list">{siteAssigned.sort((a, b) => `${a.scheduled_start || ""}${a.employee_name || ""}`.localeCompare(`${b.scheduled_start || ""}${b.employee_name || ""}`)).map(renderGuard)}</div>
+          {siteUnfilled > 0 && <details className="attendance-unfilled"><summary>{siteUnfilled} unfilled shift{siteUnfilled === 1 ? "" : "s"}<span>View details</span></summary><div className="attendance-guard-list">{siteMissing.map(renderGuard)}</div></details>}
         </article>;
       })}</div> : <div className="empty-state compact-empty"><ClipboardList size={28} /><strong>No matching site records</strong><span>Try another site, guard or date.</span></div>}
     </section>
