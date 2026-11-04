@@ -2043,6 +2043,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="hourly-note")
     def hourly_note(self, request, pk=None):
+        from .attendance_windows import HOURLY_PICTURE_WINDOW
         operation = self.get_object()
         if role_of(request.user) == "EMPLOYEE" and operation.attendance_events.filter(event_type="BOOK_OFF").exists():
             return Response({"detail": "This shift is completed. Contact the office to correct its recorded reasons."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2070,7 +2071,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Book On must be completed before explaining a missed hourly picture."}, status=status.HTTP_400_BAD_REQUEST)
         current_timezone = timezone.get_current_timezone()
         shift_start = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
-        deadline_at = shift_start + timedelta(hours=sequence, minutes=30)
+        deadline_at = shift_start + timedelta(hours=sequence) + HOURLY_PICTURE_WINDOW
         if timezone.now() <= deadline_at:
             return Response({"detail": f"Hourly check-in {sequence} is not missed yet. You can add a reason after {deadline_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
         note, _ = HourlyCheckinNote.objects.update_or_create(operation=operation, sequence=sequence, defaults={"reason": reason, "created_by": request.user})

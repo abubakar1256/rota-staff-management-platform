@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 from .models import DailyOperation
+from .attendance_windows import HOURLY_PICTURE_WINDOW
 from .notifications import publish_notification
 
 
@@ -58,7 +59,7 @@ def refresh_operational_alerts(now=None, employee_user=None):
             received = {event.sequence for event in events if event.event_type == "HOURLY"}
             for sequence in range(1, operation.expected_hourly_checkins + 1):
                 due = start + timedelta(hours=sequence)
-                deadline = start + timedelta(hours=sequence, minutes=30)
+                deadline = due + HOURLY_PICTURE_WINDOW
                 if deadline < now and sequence not in received and (not book_off or deadline <= book_off.captured_at):
                     created += alert(f"missing-hourly:{sequence}", "Missed hourly picture", f"Hourly picture {sequence} was not received in its window.")
                 elif sequence not in received and not book_off and due <= now <= deadline:

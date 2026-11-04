@@ -814,6 +814,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         return {"reason": note.reason, "created_at": note.created_at.isoformat(), "updated_at": note.updated_at.isoformat()}
 
     def get_hourly_checkins(self, obj):
+        from .attendance_windows import HOURLY_PICTURE_WINDOW
         expected = self.get_expected_hourly_checkins(obj)
         current_timezone = timezone.get_current_timezone()
         shift_start = timezone.make_aware(datetime.combine(obj.operation_date, obj.shift_type.start_time), current_timezone)
@@ -823,7 +824,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         result = []
         for sequence in range(1, expected + 1):
             due_at = shift_start + timedelta(hours=sequence)
-            deadline_at = due_at + timedelta(minutes=30)
+            deadline_at = due_at + HOURLY_PICTURE_WINDOW
             event = events.get(sequence)
             note = notes.get(sequence)
             result.append({

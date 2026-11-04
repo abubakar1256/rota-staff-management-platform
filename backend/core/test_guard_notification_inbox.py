@@ -104,6 +104,9 @@ class GuardNotificationInboxTests(APITestCase):
         ShiftAttendanceEvent.objects.filter(pk=event.pk).update(captured_at=operation.scheduled_start_at)
         refresh_operational_alerts(operation.scheduled_start_at + timedelta(hours=1, minutes=10), employee_user=self.guard)
         self.assertTrue(Notification.objects.filter(user=self.guard, title="Hourly picture reminder").exists())
-        refresh_operational_alerts(operation.scheduled_start_at + timedelta(hours=1, minutes=40), employee_user=self.guard)
+        for elapsed in (timedelta(hours=1, minutes=40), timedelta(hours=2)):
+            refresh_operational_alerts(operation.scheduled_start_at + elapsed, employee_user=self.guard)
+            self.assertFalse(Notification.objects.filter(user=self.guard, title="Missed hourly picture").exists())
+        refresh_operational_alerts(operation.scheduled_start_at + timedelta(hours=2, seconds=1), employee_user=self.guard)
         self.assertTrue(Notification.objects.filter(user=self.guard, title="Missed hourly picture", priority="URGENT").exists())
         self.assertFalse(Notification.objects.filter(user__isnull=True).exists())

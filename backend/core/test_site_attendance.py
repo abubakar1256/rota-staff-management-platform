@@ -254,7 +254,7 @@ class HourlySlotSubmissionTests(AttendanceFixture, APITestCase):
     def test_expired_and_future_slots_cannot_be_backfilled_or_submitted_early(self):
         expired = self.submit(self.full, "HOURLY", self.now(11, 10), sequence=1)
         self.assertEqual(expired.status_code, 400)
-        self.assertIn("check-in 1 expired at 09:30", expired.data["detail"])
+        self.assertIn("check-in 1 expired at 10:00", expired.data["detail"])
         future = self.submit(self.full, "HOURLY", self.now(11, 10), sequence=4)
         self.assertEqual(future.status_code, 400)
         self.assertIn("check-in 4 is available from 12:00", future.data["detail"])
@@ -282,8 +282,51 @@ class HourlySlotSubmissionTests(AttendanceFixture, APITestCase):
         self.assertEqual(response.data["event"]["sequence"], 5)
 
     def test_slot_deadline_is_inclusive_and_a_later_upload_is_rejected(self):
-        late = self.submit(self.full, "HOURLY", self.now(11, 30) + timedelta(seconds=1), sequence=3)
+        late = self.submit(self.full, "HOURLY", self.now(12) + timedelta(seconds=1), sequence=3)
         self.assertEqual(late.status_code, 400)
         self.assertFalse(self.full.attendance_events.filter(event_type="HOURLY").exists())
-        on_deadline = self.submit(self.full, "HOURLY", self.now(11, 30), sequence=3)
+        on_deadline = self.submit(self.full, "HOURLY", self.now(12), sequence=3)
         self.assertEqual(on_deadline.status_code, 201, on_deadline.data)
+
+    def test_second_half_hour_remains_available_and_accepts_a_live_picture(self):
+        for minute in (31, 59):
+            with patch("core.serializers.timezone.now", return_value=self.now(11, minute)):
+                slot = DailyOperationSerializer(self.full).data["hourly_checkins"][2]
+            self.assertEqual(slot["status"], "AVAILABLE")
+            self.assertEqual(slot["due_at"], self.now(11).isoformat())
+            self.assertEqual(slot["deadline_at"], self.now(12).isoformat())
+        response = self.submit(self.full, "HOURLY", self.now(11, 59), sequence=3)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["event"]["sequence"], 3)
+
+    def test_missed_reason_is_only_accepted_after_the_complete_hour_expires(self):
+        url = f"/api/operations/{self.full.pk}/hourly-note/"
+        for at in (self.now(11, 31), self.now(11, 59), self.now(12)):
+            with patch("core.views.timezone.now", return_value=at):
+                response = self.client.post(url, {"sequence": 3, "reason": "Site emergency"}, format="json")
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertIn("not missed yet", response.data["detail"])
+        self.assertFalse(HourlyCheckinNote.objects.filter(operation=self.full).exists())
+        with patch("core.views.timezone.now", return_value=self.now(12) + timedelta(seconds=1)):
+            response = self.client.post(url, {"sequence": 3, "reason": "Site emergency"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["operation"]["hourly_checkins"][2]["status"], "EXPIRED")
+        self.assertEqual(response.data["operation"]["hourly_checkins"][2]["missed_reason"], "Site emergency")
+
+    def test_final_hour_reaches_shift_end_and_book_off_keeps_its_own_window(self):
+        with patch("core.serializers.timezone.now", return_value=self.now(19, 59)):
+            data = DailyOperationSerializer(self.full).data
+        final = data["hourly_checkins"][-1]
+        self.assertEqual(final["due_at"], self.now(19).isoformat())
+        self.assertEqual(final["deadline_at"], self.now(20).isoformat())
+        self.assertEqual(final["status"], "AVAILABLE")
+        self.assertEqual(data["book_off_deadline_at"], self.now(20, 30).isoformat())
+
+    def test_overnight_slot_has_the_full_hour_after_midnight(self):
+        night = ShiftType.objects.create(name="Full hour night", start_time=time(20), end_time=time(8))
+        operation = self.operation(self.full_site, night)
+        self.assertEqual(self.submit(operation, "BOOK_ON", self.now(20)).status_code, 201)
+        response = self.submit(operation, "HOURLY", self.now(1, 59, next_day=True), sequence=5)
+        self.assertEqual(response.status_code, 201, response.data)
+        slot = response.data["operation"]["hourly_checkins"][4]
+        self.assertEqual(slot["deadline_at"], self.now(2, next_day=True).isoformat())
