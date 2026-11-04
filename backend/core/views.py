@@ -1917,21 +1917,37 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
                 return Response({"detail": f"Book Off is available from {due_at.astimezone(current_timezone).strftime('%H:%M')} at the end of your shift."}, status=status.HTTP_400_BAD_REQUEST)
             if now > deadline_at:
                 return Response({"detail": f"Book Off window expired at {deadline_at.astimezone(current_timezone).strftime('%H:%M')}. Add a reason below and contact the office."}, status=status.HTTP_400_BAD_REQUEST)
+        sequence = 0
         if event_type == ShiftAttendanceEvent.EventType.HOURLY:
-            hourly_count = operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.HOURLY).count()
-            expected_hourly = DailyOperationSerializer().get_expected_hourly_checkins(operation)
-            if hourly_count >= expected_hourly:
-                return Response({"detail": "All scheduled hourly check-ins for this shift are complete."}, status=status.HTTP_400_BAD_REQUEST)
+            checkins = DailyOperationSerializer().get_hourly_checkins(operation)
+            requested_sequence = request.data.get("sequence")
+            if requested_sequence is None:
+                # Older portals omit the slot number. Use the currently open
+                # window rather than counting uploads: earlier slots may be missed.
+                checkin = next((item for item in checkins if item["status"] == "AVAILABLE"), None)
+                checkin = checkin or next((item for item in checkins if item["status"] == "UPCOMING"), None)
+                checkin = checkin or next((item for item in reversed(checkins) if item["status"] == "EXPIRED"), None)
+                if checkin is None:
+                    return Response({"detail": "All scheduled hourly check-ins for this shift are complete."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                if (isinstance(requested_sequence, bool) or not isinstance(requested_sequence, (str, int))
+                        or not str(requested_sequence).strip().isdecimal()
+                        or len(str(requested_sequence).strip()) > 3):
+                    return Response({"detail": "A valid hourly check-in number is required."}, status=status.HTTP_400_BAD_REQUEST)
+                number = int(requested_sequence)
+                checkin = next((item for item in checkins if item["sequence"] == number), None)
+                if checkin is None:
+                    return Response({"detail": "This hourly check-in number is not scheduled for this shift."}, status=status.HTTP_400_BAD_REQUEST)
+            sequence = checkin["sequence"]
+            if checkin["status"] == "COMPLETED":
+                return Response({"detail": f"Hourly check-in {sequence} has already been recorded for this shift."}, status=status.HTTP_400_BAD_REQUEST)
             current_timezone = timezone.get_current_timezone()
-            shift_start = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
-            sequence = hourly_count + 1
-            due_at = shift_start + timedelta(hours=sequence)
-            deadline_at = due_at + timedelta(minutes=30)
-            now = timezone.now()
-            if now < due_at:
-                return Response({"detail": f"Hourly check-in {sequence} is available from {due_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
-            if now > deadline_at:
-                return Response({"detail": f"Hourly check-in {sequence} expired at {deadline_at.astimezone(current_timezone).strftime('%H:%M')}. Contact the office if you missed it."}, status=status.HTTP_400_BAD_REQUEST)
+            if checkin["status"] == "UPCOMING":
+                due_at = datetime.fromisoformat(checkin["due_at"])
+                return Response({"detail": f"Hourly check-in {sequence} is available from {due_at.astimezone(current_timezone).strftime('%H:%M %Z')}."}, status=status.HTTP_400_BAD_REQUEST)
+            if checkin["status"] == "EXPIRED":
+                deadline_at = datetime.fromisoformat(checkin["deadline_at"])
+                return Response({"detail": f"Hourly check-in {sequence} expired at {deadline_at.astimezone(current_timezone).strftime('%H:%M %Z')}. Add a reason below and contact the office if needed."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             latitude = float(request.data.get("latitude")) if request.data.get("latitude") not in (None, "") else None
             longitude = float(request.data.get("longitude")) if request.data.get("longitude") not in (None, "") else None
@@ -1955,10 +1971,6 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
                 location_status = ShiftAttendanceEvent.LocationStatus.VERIFIED
         else:
             location_status = ShiftAttendanceEvent.LocationStatus.LOCATION_UNVERIFIED
-        sequence = 0
-        if event_type == ShiftAttendanceEvent.EventType.HOURLY:
-            last_sequence = operation.attendance_events.filter(event_type=event_type).order_by("-sequence").values_list("sequence", flat=True).first()
-            sequence = (last_sequence or 0) + 1
         late_reason = ""
         if event_type == ShiftAttendanceEvent.EventType.BOOK_ON:
             value = request.data.get("late_reason", "")

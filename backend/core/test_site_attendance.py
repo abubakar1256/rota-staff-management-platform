@@ -224,3 +224,66 @@ class SiteAttendanceModeTests(AttendanceFixture, APITestCase):
                 response = self.client.post(f"/api/operations/{operation.pk}/book-off-note/", {"reason": "Site emergency"}, format="json")
             self.assertEqual(response.status_code, 200, response.data)
             self.assertEqual(response.data["operation"]["book_off_note"]["reason"], "Site emergency")
+
+
+class HourlySlotSubmissionTests(AttendanceFixture, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.submit(self.full, "BOOK_ON", self.now(8)).status_code, 201)
+
+    def test_current_picture_uses_its_slot_after_earlier_pictures_were_missed(self):
+        for sequence in (1, 2):
+            HourlyCheckinNote.objects.create(operation=self.full, sequence=sequence,
+                reason="Site incident", created_by=self.guard)
+        response = self.submit(self.full, "HOURLY", self.now(11, 10), sequence=3)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["event"]["sequence"], 3)
+        checkins = response.data["operation"]["hourly_checkins"]
+        self.assertEqual([row["status"] for row in checkins[:3]], ["EXPIRED", "EXPIRED", "COMPLETED"])
+        self.assertEqual([row["missed_reason"] for row in checkins[:2]], ["Site incident", "Site incident"])
+        later = self.submit(self.full, "HOURLY", self.now(12, 10), sequence=4)
+        self.assertEqual(later.status_code, 201, later.data)
+        self.assertEqual(later.data["event"]["sequence"], 4)
+        self.assertEqual(set(self.full.attendance_events.filter(event_type="HOURLY").values_list("sequence", flat=True)), {3, 4})
+
+    def test_older_portal_without_slot_number_uses_the_current_open_window(self):
+        response = self.submit(self.full, "HOURLY", self.now(11, 10))
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["event"]["sequence"], 3)
+
+    def test_expired_and_future_slots_cannot_be_backfilled_or_submitted_early(self):
+        expired = self.submit(self.full, "HOURLY", self.now(11, 10), sequence=1)
+        self.assertEqual(expired.status_code, 400)
+        self.assertIn("check-in 1 expired at 09:30", expired.data["detail"])
+        future = self.submit(self.full, "HOURLY", self.now(11, 10), sequence=4)
+        self.assertEqual(future.status_code, 400)
+        self.assertIn("check-in 4 is available from 12:00", future.data["detail"])
+        self.assertFalse(self.full.attendance_events.filter(event_type="HOURLY").exists())
+
+    def test_duplicate_current_slot_is_rejected_without_creating_extra_evidence(self):
+        self.assertEqual(self.submit(self.full, "HOURLY", self.now(11, 10), sequence=3).status_code, 201)
+        response = self.submit(self.full, "HOURLY", self.now(11, 11), sequence=3)
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("already been recorded", response.data["detail"])
+        self.assertEqual(self.full.attendance_events.filter(event_type="HOURLY").count(), 1)
+
+    def test_invalid_slot_numbers_never_store_a_picture(self):
+        for sequence in (0, -1, 12, "wrong", "1.5", "²", True, "999999999999999999999"):
+            with self.subTest(sequence=sequence):
+                self.assertEqual(self.submit(self.full, "HOURLY", self.now(11, 10), sequence=sequence).status_code, 400)
+        self.assertFalse(self.full.attendance_events.filter(event_type="HOURLY").exists())
+
+    def test_overnight_shift_accepts_the_correct_slot_after_midnight(self):
+        night = ShiftType.objects.create(name="Hourly overnight", start_time=time(20), end_time=time(8))
+        operation = self.operation(self.full_site, night)
+        self.assertEqual(self.submit(operation, "BOOK_ON", self.now(20)).status_code, 201)
+        response = self.submit(operation, "HOURLY", self.now(1, 10, next_day=True), sequence=5)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["event"]["sequence"], 5)
+
+    def test_slot_deadline_is_inclusive_and_a_later_upload_is_rejected(self):
+        late = self.submit(self.full, "HOURLY", self.now(11, 30) + timedelta(seconds=1), sequence=3)
+        self.assertEqual(late.status_code, 400)
+        self.assertFalse(self.full.attendance_events.filter(event_type="HOURLY").exists())
+        on_deadline = self.submit(self.full, "HOURLY", self.now(11, 30), sequence=3)
+        self.assertEqual(on_deadline.status_code, 201, on_deadline.data)
