@@ -773,17 +773,12 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         return (event.captured_at if event else timezone.now()) > obj.scheduled_start_at
 
     def get_delay_minutes(self, obj):
-        if not obj.reached_at:
-            return None
-        scheduled = timezone.make_aware(datetime.combine(obj.operation_date, obj.shift_type.start_time), timezone.get_current_timezone())
-        return max(0, round((obj.reached_at - scheduled).total_seconds() / 60))
+        from .arrival_reporting import arrival_snapshot
+        return arrival_snapshot(obj)[1]
 
     def get_arrival_status(self, obj):
-        if not obj.employee_id:
-            return "NOT_ASSIGNED"
-        if not obj.reached_at:
-            return "NOT_REACHED"
-        return "LATE" if self.get_delay_minutes(obj) > 0 else "REACHED"
+        from .arrival_reporting import arrival_snapshot
+        return arrival_snapshot(obj)[0]
 
     def get_expected_hourly_checkins(self, obj):
         return obj.expected_hourly_checkins

@@ -4,6 +4,15 @@ from django.utils import timezone
 from .staffing import range_unfilled_positions
 
 
+def arrival_snapshot(operation, now=None):
+    if not operation.employee_id:
+        return "NOT_ASSIGNED", None
+    if operation.reached_at:
+        delay = max(0, round((operation.reached_at.timestamp() - operation.scheduled_start_at.timestamp()) / 60))
+        return ("LATE" if delay else "REACHED"), delay
+    return ("UPCOMING" if (now or timezone.now()) < operation.scheduled_start_at else "NOT_REACHED"), None
+
+
 def arrival_report(operations, sites, shifts, start_date, end_date):
     operations = list(operations)
     counts = {"scheduled": 0, "reached": 0, "late": 0, "not_reached": 0, "upcoming": 0, "not_assigned": 0}
@@ -13,15 +22,8 @@ def arrival_report(operations, sites, shifts, start_date, end_date):
         if not operation.employee_id:
             continue
         counts["scheduled"] += 1
-        scheduled = operation.scheduled_start_at
-        if operation.reached_at:
-            delay = max(0, round((operation.reached_at.timestamp() - scheduled.timestamp()) / 60))
-            status = "LATE" if delay else "REACHED"
-            counts["late" if delay else "reached"] += 1
-        else:
-            delay = None
-            status = "UPCOMING" if now < scheduled else "NOT_REACHED"
-            counts["upcoming" if status == "UPCOMING" else "not_reached"] += 1
+        status, delay = arrival_snapshot(operation, now)
+        counts[{"LATE": "late", "REACHED": "reached", "UPCOMING": "upcoming", "NOT_REACHED": "not_reached"}[status]] += 1
         rows.append({"id": operation.pk, "date": operation.operation_date,
             "employee": operation.employee_id, "employee_id": operation.employee.employee_id,
             "employee_name": operation.employee.name, "site": operation.site_id, "site_name": operation.site.name,

@@ -162,67 +162,52 @@ def send_transactional_email(subject, message, recipient):
 
 
 def arrival_snapshot(operation):
-    if not operation.employee_id:
-        return "NOT_ASSIGNED", None
-    if not operation.reached_at:
-        return "NOT_REACHED", None
-    scheduled = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), timezone.get_current_timezone())
-    delay_minutes = max(0, round((operation.reached_at - scheduled).total_seconds() / 60))
-    return ("LATE" if delay_minutes else "REACHED"), delay_minutes
+    from .arrival_reporting import arrival_snapshot as snapshot
+    return snapshot(operation)
 
 
-def build_arrival_pdf(report_date, shift, operations):
+def build_arrival_pdf(report_date, shift, operations, sites=None):
+    from xml.sax.saxutils import escape
+    from .arrival_reporting import arrival_report
+    operations = list(operations)
+    if sites is None:
+        sites = Site.objects.filter(pk__in={item.site_id for item in operations}, is_active=True)
+    data = arrival_report(operations, list(sites), [shift], report_date, report_date)
+    arrival = data["arrival_summary"]
+    counts = {"scheduled": arrival["scheduled"], "reached": arrival["reached"] + arrival["late"],
+        "on_time": arrival["reached"], "late": arrival["late"], "not_reached": arrival["not_reached"],
+        "upcoming": arrival["upcoming"], "unassigned": arrival["not_assigned"]}
     buffer = BytesIO()
     document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=12 * mm, leftMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm)
     styles = getSampleStyleSheet()
-    title_style = styles["Title"]
-    title_style.fontName = "Helvetica-Bold"
-    body_style = styles["BodyText"]
-    body_style.fontName = "Helvetica"
-    body_style.fontSize = 8
-    story = [Paragraph("Daily site arrival report", title_style), Paragraph(f"{report_date} | {shift.name} ({shift.start_time.strftime('%H:%M')}-{shift.end_time.strftime('%H:%M')})", body_style), Spacer(1, 7 * mm)]
-    rows = [["Employee", "Employee ID", "Site", "Scheduled", "Reached at", "Delay", "Status", "Verified by"]]
-    counts = {"scheduled": len(operations), "reached": 0, "late": 0, "not_reached": 0, "unassigned": 0}
-    for operation in operations:
-        arrival_status, delay_minutes = arrival_snapshot(operation)
-        if arrival_status == "REACHED":
-            counts["reached"] += 1
-        elif arrival_status == "LATE":
-            counts["late"] += 1
-        elif arrival_status == "NOT_REACHED":
-            counts["not_reached"] += 1
-        else:
-            counts["unassigned"] += 1
-        status_label = {"REACHED": "Reached", "LATE": "Late", "NOT_REACHED": "Not reached", "NOT_ASSIGNED": "Not assigned"}[arrival_status]
-        reached_at = timezone.localtime(operation.reached_at).strftime("%d %b %Y %H:%M") if operation.reached_at else "-"
-        verified_by = operation.reached_by.get_full_name() or operation.reached_by.get_username() if operation.reached_by else "-"
-        rows.append([
-            operation.employee.name if operation.employee else "Unassigned",
-            operation.employee.employee_id if operation.employee else "-",
-            operation.site.name,
-            operation.shift_type.start_time.strftime("%H:%M"),
-            reached_at,
-            f"{delay_minutes} min" if delay_minutes else ("On time" if arrival_status in {"REACHED", "LATE"} else "-"),
-            status_label,
-            verified_by,
-        ])
+    body = ParagraphStyle("Arrival body", parent=styles["BodyText"], fontName="Helvetica", fontSize=8, leading=11)
+    header = ParagraphStyle("Arrival header", parent=body, fontName="Helvetica-Bold", textColor=colors.white)
+    cell = lambda value, style=body: Paragraph(escape(str(value if value not in (None, "") else "-")), style)
+    zone = timezone.get_current_timezone_name()
+    story = [Paragraph("Daily site arrival report", styles["Title"]),
+        cell(f"{report_date} | {shift.name} ({shift.start_time:%H:%M}-{shift.end_time:%H:%M}) | {zone}"), Spacer(1, 5 * mm),
+        cell(f"Assigned: {counts['scheduled']} | Reached total: {counts['reached']} | On time: {counts['on_time']} | Late: {counts['late']} | Not reached: {counts['not_reached']} | Upcoming: {counts['upcoming']}"),
+        Spacer(1, 4 * mm)]
+    columns = ["Employee", "Employee ID", "Site", "Scheduled", "Reached at", "Delay", "Status", "Recorded by"]
+    rows = [[cell(value, header) for value in columns]]
+    for item in data["arrival_rows"]:
+        status_label = {"REACHED": "Reached", "LATE": "Late", "NOT_REACHED": "Not reached", "UPCOMING": "Upcoming"}[item["arrival_status"]]
+        reached = timezone.localtime(item["reached_at"]).strftime("%d %b %Y %H:%M %Z") if item["reached_at"] else "-"
+        delay = f"{item['delay_minutes']} min" if item["delay_minutes"] else "On time" if item["reached_at"] else "-"
+        rows.append([cell(value) for value in [item["employee_name"], item["employee_id"], item["site_name"],
+            shift.start_time.strftime("%H:%M"), reached, delay, status_label, item["reached_by_name"]]])
     if len(rows) == 1:
-        rows.append(["No scheduled employees", "-", "-", "-", "-", "-", "-", "-"])
-    table = Table(rows, repeatRows=1, colWidths=[38 * mm, 26 * mm, 40 * mm, 24 * mm, 34 * mm, 20 * mm, 25 * mm, 35 * mm])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#182137")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#dbe2ec")),
+        rows.append([cell("No assigned guards")] + [cell("-") for _ in columns[1:]])
+    table = Table(rows, repeatRows=1, colWidths=[38 * mm, 24 * mm, 40 * mm, 23 * mm, 39 * mm, 18 * mm, 25 * mm, 40 * mm])
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#182137")),
+        ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#dbe2ec")),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f8fc")]),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    story.extend([Paragraph(f"Scheduled: {counts['scheduled']} | Reached: {counts['reached']} | Late: {counts['late']} | Not reached: {counts['not_reached']} | Unassigned: {counts['unassigned']}", body_style), Spacer(1, 4 * mm), table])
+        ("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    story.append(table)
+    story.extend([Spacer(1, 5 * mm), cell(f"Unfilled guard positions: {counts['unassigned']} (separate from assigned arrivals)")])
+    for item in data["arrival_unfilled"]:
+        story.append(cell(f"{item['site_name']} | {item['shift_name']} | {item['unfilled']} needed"))
     document.build(story)
     return buffer.getvalue(), counts
 
@@ -354,7 +339,7 @@ def generate_daily_arrival_reports(report_date, user, shift_types=None):
     generated = []
     for shift in shifts:
         operations = list(DailyOperation.objects.filter(operation_date=report_date, shift_type=shift).select_related("employee", "site", "shift_type", "reached_by").order_by("site__name", "employee__name"))
-        pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations)
+        pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations, sites=Site.objects.filter(is_active=True))
         report, _ = DailyArrivalReport.objects.get_or_create(report_date=report_date, shift_type=shift)
         if report.pdf_file:
             report.pdf_file.delete(save=False)
@@ -381,7 +366,7 @@ def generate_client_arrival_reports(report_date, user, shift_types=None):
             operations = list(DailyOperation.objects.filter(operation_date=report_date, shift_type=shift, site__client=client).select_related("employee", "site", "shift_type", "reached_by").order_by("site__name", "employee__name"))
             if not operations:
                 continue
-            pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations)
+            pdf_bytes, counts = build_arrival_pdf(report_date, shift, operations, sites=Site.objects.filter(client=client, is_active=True))
             report, _ = ClientArrivalReport.objects.get_or_create(client=client, report_date=report_date, shift_type=shift)
             if report.pdf_file:
                 report.pdf_file.delete(save=False)
@@ -1860,7 +1845,8 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminManagerOrEmployeeOperation]
 
     def list(self, request, *args, **kwargs):
-        if request.query_params.get("view") != "attendance":
+        view = request.query_params.get("view")
+        if view not in {"attendance", "operations"}:
             return super().list(request, *args, **kwargs)
         if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
             raise PermissionDenied("The attendance staffing overview is for office staff.")
@@ -1872,10 +1858,15 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         sites = Site.objects.filter(is_active=True).order_by("name")
         if role_of(request.user) == "MANAGER":
             sites = sites.filter(manager_profiles__user=request.user)
-        operations = self.filter_queryset(self.get_queryset()).filter(operation_date=selected_date)
+        operations = list(self.filter_queryset(self.get_queryset()).filter(operation_date=selected_date))
         rows = attendance_summary_rows(operations, list(sites), list(ShiftType.objects.filter(is_active=True)),
             selected_date, lambda operation: self.get_serializer(operation).data)
-        response = Response(rows)
+        if view == "operations":
+            notes = [self.get_serializer(item).data for item in operations if item.employee_id is None
+                and (item.notes.strip() or item.follow_up.strip() not in {"", "Replacement needed"})]
+            response = Response({"operations": rows, "unassigned_notes": notes})
+        else:
+            response = Response(rows)
         response["Cache-Control"] = "private, no-store"
         return response
 
@@ -1885,7 +1876,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         instance.delete()
 
     def get_queryset(self):
-        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type").prefetch_related("attendance_events", "hourly_checkin_notes", "book_off_note", "timesheet")
+        queryset = DailyOperation.objects.select_related("employee", "site", "shift_type", "reached_by").prefetch_related("attendance_events", "hourly_checkin_notes", "book_off_note", "timesheet")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -2112,12 +2103,17 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"], url_path="mark-reached")
+    @transaction.atomic
     def mark_reached(self, request, pk=None):
-        operation = self.get_object()
+        operation = self.get_queryset().select_for_update(of=("self",)).get(pk=self.get_object().pk)
         if operation.attendance_events.filter(event_type="BOOK_OFF").exists():
             return Response({"detail": "This shift is completed. Its attendance timestamps are locked."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.employee_id:
             return Response({"detail": "An employee must be assigned before marking reached."}, status=status.HTTP_400_BAD_REQUEST)
+        if operation.reached_at:
+            return Response(self.get_serializer(operation).data)
+        if operation.operation_date > timezone.localdate():
+            return Response({"detail": "An arrival cannot be recorded for a future date."}, status=status.HTTP_400_BAD_REQUEST)
         operation.reached_at = timezone.now()
         operation.reached_by = request.user
         operation.status = DailyOperation.Status.PRESENT
@@ -2360,9 +2356,20 @@ def reports_summary(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def timesheets_csv(request):
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
+        raise PermissionDenied("Working hours exports are for office staff.")
     start_date = request.query_params.get("start_date")
     end_date = request.query_params.get("end_date")
+    try:
+        start_date = date.fromisoformat(start_date) if start_date else None
+        end_date = date.fromisoformat(end_date) if end_date else None
+        if start_date and end_date and end_date < start_date:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise ValidationError("Choose a valid YYYY-MM-DD date range.")
     queryset = Timesheet.objects.select_related("employee", "site")
+    if role_of(request.user) == "MANAGER":
+        queryset = queryset.filter(site__manager_profiles__user=request.user)
     if start_date:
         queryset = queryset.filter(work_date__gte=start_date)
     if end_date:
@@ -2379,9 +2386,15 @@ def timesheets_csv(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def rota_csv(request):
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
+        raise PermissionDenied("Rota exports are for office staff.")
     queryset = RotaAssignment.objects.select_related("rota_week", "employee", "site", "shift_type")
+    if role_of(request.user) == "MANAGER":
+        queryset = queryset.filter(site__manager_profiles__user=request.user)
     rota_week = request.query_params.get("rota_week")
     if rota_week:
+        if not rota_week.isdecimal():
+            raise ValidationError("Choose a valid rota week.")
         queryset = queryset.filter(rota_week_id=rota_week)
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = 'attachment; filename="weekly-rota.csv"'
@@ -2395,11 +2408,21 @@ def rota_csv(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def report_print(request):
+    from html import escape
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
+        raise PermissionDenied("Working hours reports are for office staff.")
     today = timezone.localdate()
-    start_date = date.fromisoformat(request.query_params["start_date"]) if request.query_params.get("start_date") else today - timedelta(days=today.weekday())
-    end_date = date.fromisoformat(request.query_params["end_date"]) if request.query_params.get("end_date") else start_date + timedelta(days=6)
+    try:
+        start_date = date.fromisoformat(request.query_params["start_date"]) if request.query_params.get("start_date") else today - timedelta(days=today.weekday())
+        end_date = date.fromisoformat(request.query_params["end_date"]) if request.query_params.get("end_date") else start_date + timedelta(days=6)
+        if end_date < start_date:
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise ValidationError("Choose a valid YYYY-MM-DD date range.")
     timesheets = Timesheet.objects.filter(work_date__range=(start_date, end_date)).select_related("employee", "site")
-    rows = "".join(f"<tr><td>{sheet.work_date}</td><td>{sheet.employee.name}</td><td>{sheet.site.name if sheet.site else 'Unassigned'}</td><td>{sheet.actual_hours}h</td><td>{sheet.overtime_minutes} min</td></tr>" for sheet in timesheets)
+    if role_of(request.user) == "MANAGER":
+        timesheets = timesheets.filter(site__manager_profiles__user=request.user)
+    rows = "".join(f"<tr><td>{sheet.work_date}</td><td>{escape(sheet.employee.name)}</td><td>{escape(sheet.site.name) if sheet.site else 'Unassigned'}</td><td>{sheet.actual_hours}h</td><td>{sheet.overtime_minutes} min</td></tr>" for sheet in timesheets)
     html = f"""<!doctype html><html><head><meta charset='utf-8'><title>Rota Report</title><style>body{{font-family:Arial,sans-serif;color:#182137;margin:36px}}h1{{margin-bottom:4px}}p{{color:#6e7d93}}table{{border-collapse:collapse;width:100%;margin-top:24px}}th,td{{border:1px solid #dbe2ec;padding:9px;text-align:left;font-size:12px}}th{{background:#eef2f8}}@media print{{button{{display:none}}}}</style></head><body><button onclick='window.print()'>Print / Save as PDF</button><h1>Working Hours Report</h1><p>{start_date} to {end_date}</p><table><thead><tr><th>Date</th><th>Employee</th><th>Site</th><th>Actual Hours</th><th>Overtime</th></tr></thead><tbody>{rows or '<tr><td colspan="5">No timesheets in this period.</td></tr>'}</tbody></table></body></html>"""
     return HttpResponse(html)
 

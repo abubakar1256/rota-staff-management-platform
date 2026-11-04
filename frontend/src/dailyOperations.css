@@ -1,0 +1,17 @@
+.operations-log { margin-bottom: 18px; }.operations-log table { min-width: 980px; }.operations-row-actions { display: grid; justify-items: start; gap: 8px; }
+.operations-text { white-space: pre-wrap; max-width: 260px; overflow-wrap: anywhere; }.operations-gaps { margin-top: 18px; }
+.operations-unassigned-notes article { padding: 12px 0; border-top: 1px solid #e5ebf5; font-size: 12px; color: #667d9d; white-space: pre-wrap; overflow-wrap: anywhere; }.operations-unassigned-notes > p { font-size: 12px; }
+
+.operations-form-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+@media (max-width: 680px) {
+  .operations-log table { min-width: 0; width: 100%; }
+  .operations-log table, .operations-log tbody, .operations-log tr { display: block; }
+  .operations-log thead { display: none; }
+  .operations-log tr { padding: 12px; border: 1px solid #dbe4f4; border-radius: 12px; margin-bottom: 12px; }
+  .operations-log td { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: start; column-gap: 10px; padding: 7px 0; border: 0; overflow-wrap: anywhere; }
+  .operations-log td::before { content: attr(data-label); color: #7083a0; font-size: 11px; }
+  .operations-log td > small { grid-column: 2; }
+  .operations-log td .status-pill { justify-self: start; }
+  .operations-log .operations-row-actions { grid-column: 2; }
+  .operations-log .operations-row-actions button { white-space: normal; text-align: left; }
+}

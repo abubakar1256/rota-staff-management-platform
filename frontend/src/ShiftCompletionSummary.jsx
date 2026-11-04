@@ -1,7 +1,8 @@
 import { CheckCircle2 } from "lucide-react";
+import { formatUkDateTime } from "./ukTime.js";
 import { completionStatus, formatShiftDuration, reviewFlagLabels } from "./shiftCompletion";
 
-const displayTime = (value) => value ? new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Not recorded";
+const displayTime = (value) => value ? formatUkDateTime(value) : "Not recorded";
 
 export function ShiftCompletionSummary({ summary }) {
   if (!summary) return null;
