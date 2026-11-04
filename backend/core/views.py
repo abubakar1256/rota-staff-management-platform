@@ -1475,6 +1475,10 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
         if role_of(self.request.user) == "MANAGER" and not self.request.user.profile.managed_sites.filter(pk=serializer.validated_data.get("site", serializer.instance.site).pk).exists():
             raise PermissionDenied("This site is outside your assigned management scope.")
         previous = self.get_object()
+        identity = {"work_date", "employee", "site", "shift_type", "scheduled_start", "scheduled_end"}
+        if identity.intersection(serializer.validated_data):
+            from .location_tracking import protect_tracked_assignment
+            protect_tracked_assignment(previous)
         previous_date = previous.work_date
         previous_site = previous.site_id
         previous_shift = previous.shift_type_id
@@ -1486,6 +1490,8 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
         generate_daily_arrival_reports(assignment.work_date, self.request.user)
 
     def perform_destroy(self, instance):
+        from .location_tracking import protect_tracked_assignment
+        protect_tracked_assignment(instance)
         report_date = instance.work_date
         site_id = instance.site_id
         shift_id = instance.shift_type_id
@@ -1499,6 +1505,8 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def move_to_site(self, request, pk=None):
         assignment = self.get_object()
+        from .location_tracking import protect_tracked_assignment
+        protect_tracked_assignment(assignment)
         if assignment.rota_week.status == RotaWeek.Status.PUBLISHED:
             return Response({"detail": "Published rotas cannot be changed. Reopen the rota before moving an assignment."}, status=status.HTTP_400_BAD_REQUEST)
         target_site_id = request.data.get("site")
@@ -1537,6 +1545,7 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
             previous_employee_id = assignment.employee_id
             if conflicts:
                 for conflict in conflicts:
+                    protect_tracked_assignment(conflict)
                     DailyOperation.objects.filter(
                         operation_date=conflict.work_date,
                         site_id=conflict.site_id,
@@ -1856,7 +1865,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminManagerOrEmployeeOperation]
 
     def perform_destroy(self, instance):
-        if Timesheet.objects.filter(operation=instance).exists():
+        if Timesheet.objects.filter(operation=instance).exists() or instance.location_updates.exists():
             raise ValidationError("Completed shifts are retained with their timesheet and attendance evidence.")
         instance.delete()
 
@@ -1959,8 +1968,19 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             if timezone.now() > operation.scheduled_start_at and not late_reason:
                 return Response({"detail": "Please enter a reason for late Book On before submitting."}, status=status.HTTP_400_BAD_REQUEST)
         event = ShiftAttendanceEvent.objects.create(operation=operation, event_type=event_type, sequence=sequence, photo=photo, latitude=latitude, longitude=longitude, accuracy_m=accuracy_m, distance_m=distance_m, location_status=location_status, notes=(request.data.get("notes") or "")[:250], late_reason=late_reason, created_by=request.user)
+        if event_type == ShiftAttendanceEvent.EventType.BOOK_ON and operation.site.location_tracking_enabled:
+            from .location_tracking import ensure_state, tracking_info
+            operation._prefetched_objects_cache.pop("attendance_events", None)
+            info = tracking_info(operation)
+            if info["active"]:
+                ensure_state(operation, info)
         if event_type == ShiftAttendanceEvent.EventType.BOOK_OFF:
             from .attendance_completion import complete_shift
+            from .location_tracking import close_incident
+            from .models import DutyLocationState
+            tracking_state = DutyLocationState.objects.filter(operation=operation).first()
+            if tracking_state:
+                close_incident(tracking_state, "Book Off completed")
             operation._prefetched_objects_cache.pop("attendance_events", None)
             try:
                 complete_shift(operation, request.user)

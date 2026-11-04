@@ -377,8 +377,18 @@ class SiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Site
-        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "is_active", "created_at", "updated_at"]
-        read_only_fields = ["created_at", "updated_at"]
+        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "location_tracking_enabled", "location_tracking_enabled_at", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "location_tracking_enabled_at"]
+
+    def create(self, validated_data):
+        if validated_data.get("location_tracking_enabled"):
+            validated_data["location_tracking_enabled_at"] = timezone.now()
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if validated_data.get("location_tracking_enabled") and not instance.location_tracking_enabled:
+            validated_data["location_tracking_enabled_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
 
 class ClientSerializer(serializers.ModelSerializer):
@@ -735,6 +745,12 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def validate(self, attrs):
+        if self.instance:
+            from .models import DutyLocationState
+            identity = {"employee", "site", "shift_type", "operation_date"}
+            changed = any((getattr(attrs[field], "pk", attrs[field]) != getattr(self.instance, field + "_id" if field != "operation_date" else field)) for field in identity.intersection(attrs))
+            if changed and DutyLocationState.objects.filter(operation=self.instance).exists():
+                raise serializers.ValidationError("Duty location evidence retains its original guard, site, shift and date.")
         if self.instance and self.instance.attendance_events.filter(event_type="BOOK_OFF").exists():
             if {"employee", "site", "shift_type", "operation_date"}.intersection(attrs):
                 raise serializers.ValidationError("Completed attendance retains its original guard, site, shift and date.")

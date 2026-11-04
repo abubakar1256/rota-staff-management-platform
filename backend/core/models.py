@@ -210,6 +210,8 @@ class Site(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     geofence_radius_m = models.PositiveIntegerField(default=150)
     attendance_mode = models.CharField(max_length=20, choices=AttendanceMode.choices, default=AttendanceMode.WITH_HOURLY)
+    location_tracking_enabled = models.BooleanField(default=False)
+    location_tracking_enabled_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -558,6 +560,42 @@ class ShiftAttendanceEvent(models.Model):
 
     def __str__(self):
         return f"{self.operation} - {self.get_event_type_display()}"
+
+
+class DutyLocationState(models.Model):
+    operation = models.OneToOneField(DailyOperation, on_delete=models.CASCADE, related_name="location_state")
+    tracking_started_at = models.DateTimeField()
+    last_contact_at = models.DateTimeField(null=True, blank=True)
+    last_location_at = models.DateTimeField(null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    last_status = models.CharField(max_length=24, default="WAITING")
+    incident_open = models.BooleanField(default=False)
+    incident_sequence = models.PositiveIntegerField(default=0)
+    incident_status = models.CharField(max_length=24, blank=True)
+
+
+class DutyLocationUpdate(models.Model):
+    class Status(models.TextChoices):
+        UPDATED = "UPDATED", "Location updated"
+        PERMISSION_DENIED = "PERMISSION_DENIED", "Permission denied"
+        UNAVAILABLE = "UNAVAILABLE", "Location unavailable"
+        TIMEOUT = "TIMEOUT", "Location timed out"
+
+    operation = models.ForeignKey(DailyOperation, on_delete=models.CASCADE, related_name="location_updates")
+    status = models.CharField(max_length=24, choices=Status.choices)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    accuracy_m = models.FloatField(null=True, blank=True)
+    captured_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(default=timezone.now)
+    source = models.CharField(max_length=16, default="AUTOMATIC")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+
+    class Meta:
+        ordering = ["-received_at", "-pk"]
+        indexes = [models.Index(fields=["operation", "received_at"])]
 
 
 class HourlyCheckinNote(models.Model):

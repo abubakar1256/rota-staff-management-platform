@@ -66,4 +66,7 @@ def refresh_operational_alerts(now=None, employee_user=None):
         for event in events:
             if event.location_status != "VERIFIED":
                 created += alert(f"location:{event.pk}", "Attendance location exception", f"Review GPS evidence for {event.get_event_type_display()}.")
+    if not employee_user:
+        from .location_tracking import refresh_location_alerts
+        created += refresh_location_alerts(now)
     return created
