@@ -2307,16 +2307,21 @@ def reports_summary(request):
     today = timezone.localdate()
     start_date = request.query_params.get("start_date")
     end_date = request.query_params.get("end_date")
-    if not start_date:
-        start_date = today - timedelta(days=today.weekday())
-    else:
-        start_date = date.fromisoformat(start_date)
-    if not end_date:
-        end_date = start_date + timedelta(days=6)
-    else:
-        end_date = date.fromisoformat(end_date)
-
+    if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN", "MANAGER", "OPERATOR", "RECEPTIONIST"}:
+        raise PermissionDenied("Office reports are restricted to authorised staff.")
+    try:
+        start_date = date.fromisoformat(start_date) if start_date else today - timedelta(days=today.weekday())
+        end_date = date.fromisoformat(end_date) if end_date else start_date + timedelta(days=6)
+    except (TypeError, ValueError):
+        raise ValidationError({"date": "Use YYYY-MM-DD."})
+    if end_date < start_date:
+        raise ValidationError({"end_date": "End date must be on or after start date."})
+    site_scope = Site.objects.all()
+    if role_of(request.user) == "MANAGER":
+        site_scope = site_scope.filter(manager_profiles__user=request.user)
     timesheets = Timesheet.objects.filter(work_date__range=(start_date, end_date)).select_related("employee", "site")
+    if role_of(request.user) == "MANAGER":
+        timesheets = timesheets.filter(site__in=site_scope)
     employee_totals = {}
     site_totals = {}
     total_hours = 0
@@ -2332,41 +2337,11 @@ def reports_summary(request):
     leave_count = LeaveRecord.objects.filter(status=LeaveRecord.Status.APPROVED, start_date__lte=end_date, end_date__gte=start_date).count()
     expiring_documents = EmployeeDocument.objects.filter(expiry_date__gte=today, expiry_date__lte=today + timedelta(days=30)).count()
     operations = DailyOperation.objects.filter(operation_date__range=(start_date, end_date)).select_related("employee", "site", "shift_type", "reached_by").order_by("operation_date", "site__name", "shift_type__start_time", "employee__name")
-    arrival_rows = []
-    arrival_counts = {"scheduled": 0, "reached": 0, "late": 0, "not_reached": 0, "not_assigned": 0}
-    current_timezone = timezone.get_current_timezone()
-    from datetime import datetime
-    for operation in operations:
-        arrival_counts["scheduled"] += 1
-        if not operation.employee_id:
-            arrival_status = "NOT_ASSIGNED"
-            arrival_counts["not_assigned"] += 1
-            delay_minutes = None
-        elif not operation.reached_at:
-            arrival_status = "NOT_REACHED"
-            arrival_counts["not_reached"] += 1
-            delay_minutes = None
-        else:
-            scheduled_at = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
-            delay_minutes = max(0, round((operation.reached_at - scheduled_at).total_seconds() / 60))
-            arrival_status = "LATE" if delay_minutes > 0 else "REACHED"
-            arrival_counts["late" if arrival_status == "LATE" else "reached"] += 1
-        arrival_rows.append({
-            "id": operation.id,
-            "date": operation.operation_date,
-            "employee": operation.employee_id,
-            "employee_id": operation.employee.employee_id if operation.employee else None,
-            "employee_name": operation.employee.name if operation.employee else "Unassigned",
-            "site": operation.site_id,
-            "site_name": operation.site.name,
-            "shift_name": operation.shift_type.name,
-            "scheduled_start": operation.shift_type.start_time,
-            "reached_at": operation.reached_at,
-            "reached_by_name": operation.reached_by.get_full_name() or operation.reached_by.get_username() if operation.reached_by else None,
-            "delay_minutes": delay_minutes,
-            "status": operation.status,
-            "arrival_status": arrival_status,
-        })
+    if role_of(request.user) == "MANAGER":
+        operations = operations.filter(site__in=site_scope)
+    from .arrival_reporting import arrival_report
+    arrivals = arrival_report(operations, list(site_scope.filter(is_active=True)),
+        list(ShiftType.objects.filter(is_active=True)), start_date, end_date)
     return Response({
         "start_date": start_date,
         "end_date": end_date,
@@ -2377,8 +2352,8 @@ def reports_summary(request):
         "documents_expiring_soon": expiring_documents,
         "employee_hours": [{"name": name, "hours": hours} for name, hours in sorted(employee_totals.items())],
         "site_hours": [{"name": name, "hours": hours} for name, hours in sorted(site_totals.items())],
-        "arrival_summary": arrival_counts,
-        "arrival_rows": arrival_rows,
+        **arrivals,
+        "time_zone": settings.TIME_ZONE,
     })
 
 

@@ -215,6 +215,16 @@ button { cursor: pointer; }
 .login-card .activation-identity input { width: 100%; min-width: 0; box-sizing: border-box; background: #eef2f8; color: #40526e; }
 .activation-identity small { color: #74839a; font-size: 11px; line-height: 1.5; }
 .arrival-report { margin-bottom: 18px; }
+.arrival-period-note { margin: 0 0 18px; padding: 12px 15px; border-radius: 9px; background: #edf3ff; color: #59739b; font-size: 12px; line-height: 1.6; }
+.arrival-unfilled-panel { margin-bottom: 18px; border-color: #efdfbc; background: #fffdf8; }
+.arrival-unfilled-panel summary { cursor: pointer; font-size: 13px; font-weight: 700; color: #9b702f; line-height: 1.7; }
+.arrival-unfilled-panel summary span { margin-left: 8px; color: #8b98ab; font-size: 11px; font-weight: 400; }
+.arrival-unfilled-panel > p { font-size: 12px; line-height: 1.6; }
+.arrival-unfilled-list { display: grid; gap: 8px; margin-top: 12px; }
+.arrival-unfilled-list > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid #f0e7d6; }
+.arrival-unfilled-list > div > div { display: grid; gap: 5px; font-size: 12px; color: #546784; }
+.arrival-unfilled-list > div > div span { color: #8a98ac; font-size: 11px; }
+
 .arrival-table-wrap { max-height: 560px; overflow: auto; }
 .arrival-table-wrap table { min-width: 980px; }
 .table-subtext { display: block; margin-top: 3px; color: #9ba6b7; font-size: 10px; }

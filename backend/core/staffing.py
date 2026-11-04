@@ -1,5 +1,6 @@
 """Staffing capacity is calculated per site/shift, never from stored empty rows."""
 from collections import Counter
+from datetime import timedelta
 
 from .models import SiteShiftRequirement
 
@@ -46,4 +47,24 @@ def attendance_summary_rows(operations, sites, shifts, selected_date, serialize)
                         "employee": None, "employee_name": "", "status": "REPLACEMENT_NEEDED",
                         "attendance_mode": site.attendance_mode, "attendance_events": [], "hourly_checkins": [],
                         "expected_hourly_checkins": 0, "attendance_status": "NOT_STARTED"})
+    return rows
+
+
+def range_unfilled_positions(operations, sites, shifts, start_date, end_date):
+    """Group vacancies by date/site/shift without treating them as guard arrivals."""
+    overrides = {(item.site_id, item.shift_type_id, item.weekday): item.required_guards
+        for item in SiteShiftRequirement.objects.filter(site__in=sites)}
+    assigned = Counter((item.operation_date, item.site_id, item.shift_type_id) for item in operations if item.employee_id)
+    rows = []
+    current = start_date
+    while current <= end_date:
+        for site in sites:
+            for shift in shifts:
+                required = overrides.get((site.pk, shift.pk, current.weekday()), site.required_guards)
+                missing = max(required - assigned[(current, site.pk, shift.pk)], 0)
+                if missing:
+                    rows.append({"id": f"unfilled-{current}-{site.pk}-{shift.pk}", "date": current,
+                        "site": site.pk, "site_name": site.name, "shift_name": shift.name,
+                        "scheduled_start": shift.start_time, "unfilled": missing})
+        current += timedelta(days=1)
     return rows

@@ -12,6 +12,10 @@ export function formatUkAttendanceTime(value) {
   return value ? new Intl.DateTimeFormat("en-GB", { timeZone: UK_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" }).format(new Date(value)) : "—";
 }
 
+export function formatUkDateTime(value) {
+  return value ? new Intl.DateTimeFormat("en-GB", { timeZone: UK_TIME_ZONE, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" }).format(new Date(value)) : "—";
+}
+
 export function formatDashboardClock(value, timeZone = UK_TIME_ZONE) {
   if (!formatters.has(timeZone)) {
     formatters.set(timeZone, {

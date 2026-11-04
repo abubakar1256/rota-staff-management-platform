@@ -1,0 +1,34 @@
+"""A scheduled arrival belongs to an assigned guard, not an empty staffing row."""
+from django.utils import timezone
+
+from .staffing import range_unfilled_positions
+
+
+def arrival_report(operations, sites, shifts, start_date, end_date):
+    operations = list(operations)
+    counts = {"scheduled": 0, "reached": 0, "late": 0, "not_reached": 0, "upcoming": 0, "not_assigned": 0}
+    rows = []
+    now = timezone.now()
+    for operation in operations:
+        if not operation.employee_id:
+            continue
+        counts["scheduled"] += 1
+        scheduled = operation.scheduled_start_at
+        if operation.reached_at:
+            delay = max(0, round((operation.reached_at.timestamp() - scheduled.timestamp()) / 60))
+            status = "LATE" if delay else "REACHED"
+            counts["late" if delay else "reached"] += 1
+        else:
+            delay = None
+            status = "UPCOMING" if now < scheduled else "NOT_REACHED"
+            counts["upcoming" if status == "UPCOMING" else "not_reached"] += 1
+        rows.append({"id": operation.pk, "date": operation.operation_date,
+            "employee": operation.employee_id, "employee_id": operation.employee.employee_id,
+            "employee_name": operation.employee.name, "site": operation.site_id, "site_name": operation.site.name,
+            "shift_name": operation.shift_type.name, "scheduled_start": operation.shift_type.start_time,
+            "reached_at": operation.reached_at,
+            "reached_by_name": operation.reached_by.get_full_name() or operation.reached_by.get_username() if operation.reached_by else None,
+            "delay_minutes": delay, "status": operation.status, "arrival_status": status})
+    unfilled = range_unfilled_positions(operations, sites, shifts, start_date, end_date)
+    counts["not_assigned"] = sum(row["unfilled"] for row in unfilled)
+    return {"arrival_summary": counts, "arrival_rows": rows, "arrival_unfilled": unfilled}
