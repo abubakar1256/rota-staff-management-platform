@@ -726,6 +726,7 @@ class HourlyCheckinNoteSerializer(serializers.ModelSerializer):
 
 
 class DailyOperationSerializer(serializers.ModelSerializer):
+    site_address = serializers.CharField(source="site.address", read_only=True)
     completion_summary = serializers.SerializerMethodField()
     attendance_mode = serializers.CharField(source="site.attendance_mode", read_only=True)
     attendance_mode_label = serializers.CharField(source="site.get_attendance_mode_display", read_only=True)
@@ -755,7 +756,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DailyOperation
-        fields = ["id", "operation_date", "site", "site_name", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_on_due_at", "book_on_is_late", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "completion_summary", "created_by", "created_at", "updated_at"]
+        fields = ["id", "operation_date", "site", "site_name", "site_address", "site_latitude", "site_longitude", "site_geofence_radius_m", "attendance_mode", "attendance_mode_label", "hourly_pictures_required", "shift_type", "shift_name", "scheduled_start", "scheduled_end", "employee", "employee_name", "status", "arrival_status", "reached_at", "reached_by", "reached_by_name", "delay_minutes", "notes", "follow_up", "attendance_events", "hourly_checkin_notes", "book_on_due_at", "book_on_is_late", "book_off_note", "book_off_due_at", "book_off_deadline_at", "book_off_status", "expected_hourly_checkins", "hourly_checkins", "attendance_status", "completion_summary", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "reached_by", "reached_by_name", "reached_at", "scheduled_start", "delay_minutes", "arrival_status", "created_at", "updated_at"]
 
     def validate(self, attrs):

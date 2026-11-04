@@ -22,16 +22,17 @@ def operation_end(operation):
     return timezone.make_aware(datetime.combine(day, operation.shift_type.end_time))
 
 
-def live_operations(now=None):
+def live_operations(now=None, *, tracking_only=True):
     now = now or timezone.now()
     today = timezone.localtime(now).date()
     events = ShiftAttendanceEvent.objects.filter(operation_id=OuterRef("pk"))
-    return (DailyOperation.objects.filter(operation_date__range=(today - timedelta(days=1), today),
-            site__is_active=True, site__location_tracking_enabled=True, employee__status="ACTIVE",
+    query = (DailyOperation.objects.filter(operation_date__range=(today - timedelta(days=1), today),
+            site__is_active=True, employee__status="ACTIVE",
             employee__user__is_active=True, employee__user__profile__role="EMPLOYEE")
             .annotate(has_on=Exists(events.filter(event_type="BOOK_ON")), has_off=Exists(events.filter(event_type="BOOK_OFF")))
             .filter(has_on=True, has_off=False).select_related("site", "shift_type", "employee__user")
             .prefetch_related("attendance_events"))
+    return query.filter(site__location_tracking_enabled=True) if tracking_only else query
 
 
 def tracking_info(operation, now=None):

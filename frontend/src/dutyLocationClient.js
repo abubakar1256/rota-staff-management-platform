@@ -17,14 +17,14 @@ export function requestDutyPosition() {
 export class DutyLocationClient {
   constructor({ api, onChange, getPosition = requestDutyPosition, clock = () => performance.now(), visible = () => document.visibilityState === "visible" }) {
     Object.assign(this, { api, onChange, getPosition, clock, visible });
-    this.items = []; this.lastAttempt = new Map(); this.lastHeartbeat = new Map(); this.permission = "unknown";
+    this.items = []; this.geofences = []; this.lastAttempt = new Map(); this.lastHeartbeat = new Map(); this.permission = "unknown";
     this.controller = new AbortController(); this.stopped = false; this.busy = false; this.message = "";
   }
   serverNow() { return this.anchor ? this.anchor.server + this.clock() - this.anchor.client : Date.now(); }
   anchorTime(value) { const parsed = Date.parse(value); if (Number.isFinite(parsed)) this.anchor = { server: parsed, client: this.clock() }; }
   live(id) { return !this.stopped && this.items.find((item) => item.operation_id === id && item.tracking_active && this.serverNow() < Date.parse(item.stop_at)); }
-  publish() { if (!this.stopped) this.onChange({ items: this.items, busy: this.busy, message: this.message }); }
-  stop() { this.stopped = true; this.items = []; this.controller.abort(); }
+  publish() { if (!this.stopped) this.onChange({ items: this.items, geofences: this.geofences, server_time: new Date(this.serverNow()).toISOString(), busy: this.busy, message: this.message }); }
+  stop() { this.stopped = true; this.items = []; this.geofences = []; this.controller.abort(); }
   async report(item, payload) {
     if (!this.live(item.operation_id)) return;
     try {
@@ -47,6 +47,7 @@ export class DutyLocationClient {
       const data = await this.api("/location-tracking/active/", { signal: this.controller.signal, silentLoading: true, silentError: true });
       if (this.stopped) return;
       this.anchorTime(data.server_time);
+      this.geofences = data.geofences || [];
       this.items = (data.results || []).filter((item) => item.tracking_active && this.serverNow() < Date.parse(item.stop_at));
       this.message = ""; this.publish();
       for (const item of [...this.items]) {

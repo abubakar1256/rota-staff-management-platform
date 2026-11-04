@@ -30,6 +30,7 @@ urlpatterns = [
     path("location-tracking/active/", location_views.active_tracking, name="location-tracking-active"),
     path("location-tracking/tracker/", location_views.tracking_tracker, name="location-tracking-tracker"),
     path("location-tracking/<int:pk>/report/", location_views.submit_location, name="location-tracking-report"),
+    path("location-tracking/<int:pk>/geofence/", location_views.geofence_status, name="location-tracking-geofence"),
     path("location-tracking/<int:pk>/history/", location_views.tracking_history, name="location-tracking-history"),
     path("auth/admin-verify/", admin_security_views.verify_admin_login, name="admin-verify"),
     path("auth/admin-activity/", admin_security_views.activity, name="admin-activity"),
