@@ -46,7 +46,7 @@ from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArr
 from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
-from .document_archive import DocumentArchiveSerializer, build_document_archive
+from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
 from .rota_document_expiry import assignment_document_expiry_conflicts
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
@@ -1656,10 +1656,14 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
         documents = self.get_queryset().in_bulk(ids)
         if len(documents) != len(ids):
             raise ValidationError({"detail": "One or more selected documents no longer exist. Clear the selection and choose the available files again."})
+        employee = documents[ids[0]].employee
+        if any(document.employee_id != employee.pk for document in documents.values()):
+            raise ValidationError({"detail": "Select documents for one guard per ZIP."})
+        filename = safe_name(employee.name, "Guard", 160) + ".zip"
         archive = build_document_archive(documents[pk] for pk in ids)
         response = FileResponse(
             archive, as_attachment=True, content_type="application/zip",
-            filename=f"RotaOps - Guard documents - {timezone.localdate()}.zip",
+            filename=filename,
         )
         response["Cache-Control"] = "private, no-store"
         return response

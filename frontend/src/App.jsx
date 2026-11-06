@@ -1095,9 +1095,24 @@ function EmployeeDocumentRow({ employee, expanded, onToggle, onAddDocument, onEd
   const statusLabel = { NO_DOCUMENTS: "No documents", REVIEW_REQUIRED: "Review required", REJECTED: "Rejected", EXPIRING_SOON: "Expiring soon", EXPIRED: "Expired", VALID: "Valid" }[employee.compliance_status] || employee.compliance_status.replaceAll("_", " ");
   const verificationLabel = { PENDING: "Needs review", VERIFIED: "Verified", REJECTED: "Rejected" };
   const uploadedIds = archiveSelection && expanded ? employee.documents.filter((item) => item.secure_file_url).map((item) => item.id) : [];
-  const selectedCount = uploadedIds.filter((id) => archiveSelection.selected.has(id)).length;
+  const selectedIds = uploadedIds.filter((id) => archiveSelection.selected.has(id));
+  const selectedCount = selectedIds.length;
   const allSelected = uploadedIds.length > 0 && selectedCount === uploadedIds.length;
-  return <><tr><td><button className="employee-expand-button" aria-expanded={expanded} onClick={onToggle}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span><strong>{employee.employee_name}</strong><small>{employee.employee_id} · {employee.documents_count} document{employee.documents_count === 1 ? "" : "s"}</small></span></button></td><td>{employee.employee_status.replace("_", " ")}</td><td><strong>{employee.documents_count}</strong><small className="document-count">{employee.valid_documents} valid</small></td><td>{employee.documents_count ? `${employee.valid_documents}/${employee.documents_count}` : "—"}</td><td>{employee.nearest_expiry || "—"}</td><td><span className={`status-pill ${statusClass}`}>{statusLabel}</span></td><td><button className="mini-button" onClick={() => onAddDocument(employee.employee)}><Upload size={13} /> Add</button></td></tr>{expanded && <tr className="expanded-document-row"><td colSpan="7"><div className="expanded-document-panel"><div className="expanded-document-header"><div><strong>{employee.employee_name} documents</strong><span>{employee.expired_documents} expired · {employee.expiring_documents} expiring soon · review each upload before assigning shifts</span></div><button className="primary-button" onClick={() => onAddDocument(employee.employee)}><Upload size={14} /> Add document</button></div>{employee.documents.length ? <div className="table-wrap"><table className="nested-document-table"><thead><tr>{archiveSelection && <th className="document-zip-check">
+  return <><tr><td><button className="employee-expand-button" aria-expanded={expanded} onClick={onToggle}>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<span><strong>{employee.employee_name}</strong><small>{employee.employee_id} · {employee.documents_count} document{employee.documents_count === 1 ? "" : "s"}</small></span></button></td><td>{employee.employee_status.replace("_", " ")}</td><td><strong>{employee.documents_count}</strong><small className="document-count">{employee.valid_documents} valid</small></td><td>{employee.documents_count ? `${employee.valid_documents}/${employee.documents_count}` : "—"}</td><td>{employee.nearest_expiry || "—"}</td><td><span className={`status-pill ${statusClass}`}>{statusLabel}</span></td><td><button className="mini-button" onClick={() => onAddDocument(employee.employee)}><Upload size={13} /> Add</button></td></tr>{expanded && <tr className="expanded-document-row"><td colSpan="7"><div className="expanded-document-panel"><div className="expanded-document-header"><div><strong>{employee.employee_name} documents</strong><span>{employee.expired_documents} expired · {employee.expiring_documents} expiring soon · review each upload before assigning shifts</span></div><button className="primary-button" onClick={() => onAddDocument(employee.employee)}><Upload size={14} /> Add document</button></div>{archiveSelection && uploadedIds.length > 0 && <div className="document-zip-bar">
+        <div>
+          <strong aria-live="polite">{selectedCount} selected for ZIP</strong>
+          <p className="muted">Choose the uploaded files to download for {employee.employee_name}.</p>
+        </div>
+        <div className="document-zip-actions">
+          {selectedCount > 0 && <button type="button" className="secondary-button" disabled={archiveSelection.busy}
+            onClick={archiveSelection.clear}>Clear selection</button>}
+          <button type="button" className="primary-button" disabled={!selectedCount || archiveSelection.busy}
+            onClick={() => archiveSelection.download(employee.employee_name, selectedIds)}>
+            <Download size={15} /> {archiveSelection.busy ? "Preparing ZIP…" : "Download ZIP"}
+          </button>
+        </div>
+        {archiveSelection.error && <p className="error" role="alert">{archiveSelection.error}</p>}
+      </div>}{employee.documents.length ? <div className="table-wrap"><table className="nested-document-table"><thead><tr>{archiveSelection && <th className="document-zip-check">
           <input type="checkbox" aria-label={`Select all uploaded documents for ${employee.employee_name}`}
             ref={(element) => { if (element) element.indeterminate = selectedCount > 0 && !allSelected; }}
             checked={allSelected} disabled={archiveSelection.busy || !uploadedIds.length}
@@ -1144,33 +1159,32 @@ function DocumentsPage({ onNavigate, target = {}, canDownloadZip = false }) {
     setZipError("");
     setSelectedDocuments(next);
   };
-  const downloadZip = async () => {
+  const clearSelection = () => { setSelectedDocuments(new Set()); setZipError(""); };
+  const toggleEmployee = (id) => {
+    if (zipBusy) return;
+    clearSelection();
+    setExpandedId(expandedId === id ? null : id);
+  };
+  const downloadZip = async (guardName, ids) => {
+    const safeName = guardName.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, "_").replace(/^[. ]+|[. ]+$/g, "") || "Guard";
+    const reserved = /^(?:CON|PRN|AUX|NUL|(?:COM|LPT)[0-9¹²³])(?:\.|$)/i.test(safeName);
+    const filename = `${reserved ? "_" : ""}${safeName}.zip`;
     setZipBusy(true);
     setZipError("");
     try {
-      await downloadFile("/documents/download-zip/", `RotaOps - Guard documents - ${ukDate()}.zip`, {
+      await downloadFile("/documents/download-zip/", filename, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_ids: [...selectedDocuments] }),
+        body: JSON.stringify({ document_ids: ids }),
       });
     } catch (err) { setZipError(err.message); }
     finally { setZipBusy(false); }
   };
-  const archiveSelection = canDownloadZip ? { selected: selectedDocuments, busy: zipBusy, update: updateSelection } : null;
-  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions">{driveStatus?.connected ? <span className="status-pill active">Google Drive connected</span> : <button className="secondary-button" disabled={!driveStatus?.configured || driveConnecting} onClick={connectDrive}>{driveConnecting ? "Connecting..." : "Connect Google Drive"}</button>}<button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{canDownloadZip && <div className="document-zip-bar">
-      <div>
-        <strong aria-live="polite">{selectedDocuments.size} selected for ZIP</strong>
-        <p className="muted">Expand a guard and tick the uploaded files to include. Selections stay when you search or change pages.</p>
-      </div>
-      <div className="document-zip-actions">
-        {selectedDocuments.size > 0 && <button type="button" className="secondary-button" disabled={zipBusy}
-          onClick={() => { setSelectedDocuments(new Set()); setZipError(""); }}>Clear selection</button>}
-        <button type="button" className="primary-button" disabled={!selectedDocuments.size || zipBusy} onClick={downloadZip}>
-          <Download size={15} /> {zipBusy ? "Preparing ZIP…" : "Download ZIP"}
-        </button>
-      </div>
-      {zipError && <p className="error" role="alert">{zipError}</p>}
-    </div>}{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => setExpandedId(expandedId === employee.employee ? null : employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
+  const archiveSelection = canDownloadZip ? {
+    selected: selectedDocuments, busy: zipBusy, error: zipError,
+    update: updateSelection, clear: clearSelection, download: downloadZip,
+  } : null;
+  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions">{driveStatus?.connected ? <span className="status-pill active">Google Drive connected</span> : <button className="secondary-button" disabled={!driveStatus?.configured || driveConnecting} onClick={connectDrive}>{driveConnecting ? "Connecting..." : "Connect Google Drive"}</button>}<button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => toggleEmployee(employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
       <select required value={selectedType} onChange={(event) => setForm({ ...form, document_type: event.target.value })}>
         <option value="">Select document type</option>
         <optgroup label="Required documents">

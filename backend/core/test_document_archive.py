@@ -31,29 +31,42 @@ class DocumentArchiveTests(APITestCase):
     def download(self, ids):
         return self.client.post(self.path, {"document_ids": ids}, format="json")
 
-    def test_download_includes_only_selected_files_and_keeps_guard_folders(self):
-        second_guard = Employee.objects.create(employee_id="GUARD/2", name="../Second Guard")
+    def test_download_uses_full_guard_name_and_includes_only_selected_files(self):
         first = self.upload(self.employee, contents=b"first PDF")
-        second = self.upload(second_guard, "../Passport", contents=b"second PDF")
-        duplicate_type = self.upload(second_guard, "../Passport", contents=b"third PDF")
+        second = self.upload(self.employee, "../Passport", contents=b"second PDF")
         self.upload(self.employee, "Unselected document")
 
-        response = self.download([first.pk, second.pk, duplicate_type.pk, first.pk])
+        response = self.download([first.pk, second.pk, first.pk])
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/zip")
         self.assertEqual(response["Cache-Control"], "private, no-store")
-        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertEqual(response["Content-Disposition"], 'attachment; filename="First Guard.zip"')
         with ZipFile(BytesIO(b"".join(response.streaming_content))) as archive:
             names = archive.namelist()
-            self.assertEqual(len(set(names)), 3)
-            self.assertEqual([archive.read(name) for name in names], [b"first PDF", b"second PDF", b"third PDF"])
+            self.assertEqual(len(set(names)), 2)
+            self.assertEqual([archive.read(name) for name in names], [b"first PDF", b"second PDF"])
             paths = [PurePosixPath(name) for name in names]
-            self.assertNotEqual(paths[0].parent, paths[1].parent)
-            self.assertEqual(paths[1].parent, paths[2].parent)
+            self.assertEqual(paths[0].parent, paths[1].parent)
             for path in paths:
                 self.assertFalse(path.is_absolute())
                 self.assertNotIn("..", path.parts)
                 self.assertEqual(len(path.parts), 2)
+
+    def test_download_rejects_documents_from_multiple_guards(self):
+        other = Employee.objects.create(employee_id="GUARD-2", name="Second Guard")
+        first = self.upload(self.employee)
+        second = self.upload(other)
+        response = self.download([first.pk, second.pk])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("one guard per ZIP", response.data["detail"])
+        self.assertFalse(response.streaming)
+
+    def test_download_preserves_unicode_names_and_sanitizes_path_separators(self):
+        guard = Employee.objects.create(employee_id="GUARD-3", name="../Amélie André")
+        response = self.download([self.upload(guard).pk])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Disposition"], "attachment; filename*=utf-8''_Am%C3%A9lie%20Andr%C3%A9.zip")
+        response.close()
 
     def test_only_admin_roles_can_export(self):
         document = self.upload(self.employee)
