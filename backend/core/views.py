@@ -46,6 +46,7 @@ from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArr
 from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
+from .rota_document_expiry import assignment_document_expiry_conflicts
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
@@ -1233,11 +1234,15 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
         rota_week = self.get_object()
-        if not rota_week.assignments.exists():
+        assignments = list(rota_week.assignments.select_related("employee", "shift_type"))
+        if not assignments:
             return Response({"detail": "Add at least one assignment before publishing this rota."}, status=status.HTTP_400_BAD_REQUEST)
-        conflicts = assignment_availability_conflicts(rota_week.assignments.select_related("employee", "shift_type"))
+        conflicts = assignment_availability_conflicts(assignments)
         if conflicts:
             raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before publishing."})
+        expiry_conflicts = assignment_document_expiry_conflicts(assignments)
+        if expiry_conflicts:
+            raise ValidationError({"detail": " ".join(expiry_conflicts[:6]) + " Update the documents or reassign the affected shifts before publishing."})
         confirmation_count = reset_rota_confirmations(rota_week)
         rota_week.status = RotaWeek.Status.PUBLISHED
         rota_week.published_at = timezone.now()
@@ -1391,6 +1396,9 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         conflicts = assignment_availability_conflicts(eligible, offset)
         if conflicts:
             raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before copying."})
+        expiry_conflicts = assignment_document_expiry_conflicts(eligible, offset)
+        if expiry_conflicts:
+            raise ValidationError({"detail": " ".join(expiry_conflicts[:6]) + " Update the documents or reassign the affected shifts before copying."})
 
         target, _ = RotaWeek.objects.get_or_create(week_start=target_date, defaults={"created_by": request.user})
         if target.status == RotaWeek.Status.PUBLISHED:
@@ -1452,11 +1460,11 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             if not assignment_serializer.is_valid():
                 errors.append({"employee": employee.name, "errors": assignment_serializer.errors})
         if errors:
-            unavailable = [
+            blockers = [
                 str(error) for row in errors for error in row["errors"].get("employee", [])
-                if error.code == "guard_unavailable"
+                if error.code in {"guard_unavailable", "critical_document_expired"}
             ]
-            detail = " ".join(unavailable[:6]) or "Some employees could not be assigned."
+            detail = " ".join(blockers[:6]) or "Some employees could not be assigned."
             return Response({"detail": detail, "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
@@ -1545,6 +1553,9 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
             unavailable_day = unavailable_for_shift(assignment.employee_id, assignment.work_date, scheduled_start, scheduled_end)
             if unavailable_day:
                 raise ValidationError({"detail": unavailable_message(assignment.employee.name, unavailable_day)})
+            expiry_conflicts = assignment_document_expiry_conflicts([assignment])
+            if expiry_conflicts:
+                raise ValidationError({"detail": expiry_conflicts[0]})
             for other in RotaAssignment.objects.filter(employee=assignment.employee, work_date=assignment.work_date).exclude(pk=assignment.pk).select_related("site", "shift_type"):
                 other_start = other.scheduled_start or other.shift_type.start_time
                 other_end = other.scheduled_end or other.shift_type.end_time

@@ -7,7 +7,8 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 from .document_requirements import documents_completion, is_british
-from .availability import unavailable_for_shift, unavailable_message
+from .availability import shift_dates, unavailable_for_shift, unavailable_message
+from .rota_document_expiry import document_expiry_conflict
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
@@ -40,9 +41,10 @@ def _document_for_type(documents, *document_types):
     return next((document for document in documents if document.document_type.casefold() in wanted), None)
 
 
-def employee_compliance_issues(employee):
+def employee_compliance_issues(employee, documents=None):
     """Return the critical compliance blockers for assigning a guard to a rota."""
-    documents = list(employee.documents.all())
+    if documents is None:
+        documents = list(employee.documents.all())
     issues = []
     critical_documents = [
         ("Passport", ("Passport (First 2 pages)",)),
@@ -464,7 +466,12 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         if employee and site and not SiteInduction.objects.filter(site=site, employee=employee, status=SiteInduction.Status.COMPLETED).exists():
             raise serializers.ValidationError({"employee": f"{employee.name} must have a completed site induction for {site.name} before assignment."})
         if employee:
-            compliance_issues = employee_compliance_issues(employee)
+            documents = list(employee.documents.all())
+            through_date = shift_dates(work_date, scheduled_start, scheduled_end)[-1]
+            expired = document_expiry_conflict(employee, through_date, documents=documents)
+            if expired:
+                raise serializers.ValidationError({"employee": expired}, code="critical_document_expired")
+            compliance_issues = employee_compliance_issues(employee, documents)
             if compliance_issues:
                 raise serializers.ValidationError({"employee": f"{employee.name} cannot be assigned until critical documents are verified: {'; '.join(compliance_issues[:4])}."})
         if rota_week and rota_week.status == RotaWeek.Status.PUBLISHED:
@@ -521,6 +528,11 @@ class RotaWeekSerializer(serializers.ModelSerializer):
         model = RotaWeek
         fields = ["id", "week_start", "status", "created_by", "created_by_name", "published_at", "assignment_count", "created_at", "updated_at"]
         read_only_fields = ["created_by", "created_by_name", "published_at", "assignment_count", "created_at", "updated_at"]
+
+    def validate_status(self, value):
+        if value == RotaWeek.Status.PUBLISHED and getattr(self.instance, "status", None) != value:
+            raise serializers.ValidationError("Use Publish rota to run the checks and send assignments to guards.")
+        return value
 
     def get_created_by_name(self, obj):
         return obj.created_by.get_full_name() or obj.created_by.get_username()
