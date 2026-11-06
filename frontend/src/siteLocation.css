@@ -1,0 +1,106 @@
+.site-location-links,
+.site-pin-input {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.attendance-shift-card .site-location-links,
+.site-pin-input {
+  padding: 12px;
+  border: 1px solid #dbe5f6;
+  border-radius: 10px;
+  background: #f7faff;
+}
+
+.attendance-shift-card .site-location-links {
+  margin-bottom: 14px;
+}
+
+.site-location-links p,
+.site-pin-input p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.site-location-address,
+.site-pin-heading strong {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #3e4d64;
+}
+
+.site-location-links svg,
+.site-pin-input svg {
+  flex: none;
+}
+
+.site-location-hint,
+.site-pin-input > p:not(.error) {
+  color: #61718b;
+}
+
+.site-location-actions,
+.site-pin-heading,
+.site-pin-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.site-location-actions a,
+.site-pin-heading a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid #c9d9f2;
+  border-radius: 6px;
+  background: #fff;
+  color: #305ab5;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.site-location-actions a:hover,
+.site-pin-heading a:hover {
+  text-decoration: underline;
+}
+
+.guard-rota-assignment .site-location-links {
+  padding-top: 8px;
+  border-top: 1px solid #dbe5f6;
+}
+
+.site-pin-heading {
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.site-pin-controls input {
+  flex: 1 1 245px;
+  width: auto;
+  min-width: 0;
+}
+
+.site-pin-controls button:disabled {
+  opacity: .6;
+}
+
+.guard-induction-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
+.guard-induction-card .panel-header {
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}

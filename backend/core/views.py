@@ -47,7 +47,7 @@ from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
-from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
+from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
 User = get_user_model()
@@ -1110,6 +1110,13 @@ class SiteShiftRequirementViewSet(viewsets.ModelViewSet):
 class SiteInductionViewSet(viewsets.ModelViewSet):
     serializer_class = SiteInductionSerializer
     permission_classes = [IsAdminOrManager]
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="my")
+    def my_inductions(self, request):
+        if role_of(request.user) != UserProfile.Role.EMPLOYEE:
+            raise PermissionDenied("This endpoint is for guard accounts only.")
+        inductions = SiteInduction.objects.filter(employee__user=request.user).select_related("site").order_by("-induction_date", "induction_time", "pk")
+        return Response(GuardSiteInductionSerializer(inductions, many=True).data)
 
     def get_queryset(self):
         queryset = SiteInduction.objects.select_related("site", "employee", "created_by")

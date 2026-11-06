@@ -426,13 +426,17 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
+    site_address = serializers.CharField(source="site.address", read_only=True)
+    site_latitude = serializers.FloatField(source="site.latitude", read_only=True, allow_null=True)
+    site_longitude = serializers.FloatField(source="site.longitude", read_only=True, allow_null=True)
     shift_name = serializers.CharField(source="shift_type.name", read_only=True)
 
     class Meta:
         model = RotaAssignment
         fields = [
             "id", "rota_week", "work_date", "shift_type", "shift_name", "employee", "employee_name", "employee_code",
-            "site", "site_name", "scheduled_start", "scheduled_end", "notes", "replaced_assignment", "created_at", "updated_at",
+            "site", "site_name", "site_address", "site_latitude", "site_longitude", "scheduled_start", "scheduled_end",
+            "notes", "replaced_assignment", "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
 
@@ -556,6 +560,19 @@ class SiteInductionSerializer(serializers.ModelSerializer):
         if not value.user_id or not value.user.has_usable_password():
             raise serializers.ValidationError("Complete the guard portal access before adding an induction.")
         return value
+
+
+class GuardSiteInductionSerializer(serializers.ModelSerializer):
+    site_name = serializers.CharField(source="site.name", read_only=True)
+    site_address = serializers.CharField(source="site.address", read_only=True)
+    site_latitude = serializers.FloatField(source="site.latitude", read_only=True, allow_null=True)
+    site_longitude = serializers.FloatField(source="site.longitude", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SiteInduction
+        fields = ["id", "site_name", "site_address", "site_latitude", "site_longitude",
+                  "induction_date", "induction_time", "status"]
+        read_only_fields = fields
 
 
 class LeaveRecordSerializer(serializers.ModelSerializer):
