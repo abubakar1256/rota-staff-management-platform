@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from .screening import SecurityScreeningViewSet
 from . import admin_security_views
+from . import control_team
 from . import location_views
 from .availability_views import guard_availability
 
@@ -28,6 +29,7 @@ router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
+    path("control/", include((control_team.urlpatterns, "control"))),
     path("guard-availability/", guard_availability, name="guard-availability"),
     path("location-tracking/active/", location_views.active_tracking, name="location-tracking-active"),
     path("location-tracking/tracker/", location_views.tracking_tracker, name="location-tracking-tracker"),

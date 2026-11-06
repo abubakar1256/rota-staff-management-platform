@@ -1,17 +1,28 @@
 const tokenKey = "rota_token";
 const sessionKey = "rota_admin_session";
+const controlTokenKey = "rota_control_token";
+
+export function isControlPortal() {
+  return /^\/control(?:\/|$)/.test(globalThis.window?.location?.pathname || "");
+}
 
 export function getToken() {
+  if (isControlPortal()) return sessionStorage.getItem(controlTokenKey);
   return sessionStorage.getItem(tokenKey) || localStorage.getItem(tokenKey);
 }
 
 export function clearAuth() {
+  if (isControlPortal()) {
+    sessionStorage.removeItem(controlTokenKey);
+    return;
+  }
   localStorage.removeItem(tokenKey);
   sessionStorage.removeItem(tokenKey);
   sessionStorage.removeItem(sessionKey);
 }
 
 export function readAdminSession() {
+  if (isControlPortal()) return null;
   try { return JSON.parse(sessionStorage.getItem(sessionKey) || "null"); } catch { return null; }
 }
 
@@ -21,6 +32,10 @@ export function syncAdminSession(session) {
 
 export function storeLogin(data) {
   clearAuth();
+  if (isControlPortal()) {
+    sessionStorage.setItem(controlTokenKey, data.token);
+    return;
+  }
   if (data.admin_session) {
     sessionStorage.setItem(tokenKey, data.token);
     syncAdminSession(data.admin_session);

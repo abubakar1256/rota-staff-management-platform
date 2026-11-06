@@ -457,6 +457,8 @@ def login(request):
             record_event(request, "PASSWORD_FAILED", candidate, str(request.data.get("username", "")))
         return Response(serializer.errors, status=400)
     user = serializer.validated_data["user"]
+    if role_of(user) == UserProfile.Role.CONTROL_TEAM:
+        return Response({"detail": "Use the Control Team portal at /control."}, status=403)
     if request.data.get("guard_portal") and role_of(user) != UserProfile.Role.EMPLOYEE:
         return Response({"detail": "Only guard accounts can sign in to the guard portal."}, status=403)
     if is_admin_account(user):
@@ -2358,7 +2360,7 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOnly]
 
     def get_queryset(self):
-        return User.objects.select_related("profile").order_by("username")
+        return User.objects.exclude(profile__role=UserProfile.Role.CONTROL_TEAM).select_related("profile").order_by("username")
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):

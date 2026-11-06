@@ -16,6 +16,7 @@ class UserProfile(models.Model):
         RECEPTIONIST = "RECEPTIONIST", "Receptionist"
         EMPLOYEE = "EMPLOYEE", "Guard"
         CLIENT_ADMIN = "CLIENT_ADMIN", "Client Admin"
+        CONTROL_TEAM = "CONTROL_TEAM", "Control Team"
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.RECEPTIONIST)
@@ -24,6 +25,55 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.get_username()} ({self.get_role_display()})"
+
+
+class ControlTeamMember(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="control_member")
+    name = models.CharField(max_length=160)
+    phone = models.CharField(max_length=40, blank=True)
+    photo = models.ImageField(upload_to="control-team/photos/", blank=True)
+
+    @property
+    def profile_complete(self):
+        return bool(self.name and self.phone and self.photo)
+
+
+class ControlAttendance(models.Model):
+    member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="attendance")
+    checked_in_at = models.DateTimeField()
+    checked_out_at = models.DateTimeField(null=True, blank=True)
+    closed_by_admin = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-checked_in_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["member"], condition=models.Q(checked_out_at__isnull=True), name="control_one_open_attendance"),
+        ]
+
+
+class ControlLeaveRequest(models.Model):
+    class Kind(models.TextChoices):
+        LEAVE = "LEAVE", "Leave"
+        REPLACEMENT = "REPLACEMENT", "Replacement"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="requests")
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    reason = models.CharField(max_length=1000)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    review_note = models.CharField(max_length=1000, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
 
 
 class Client(models.Model):

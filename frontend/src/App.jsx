@@ -13,9 +13,10 @@ import LocationTracker from "./LocationTracker";
 import CompleteShiftReview from "./CompleteShiftReview";
 import ReachedReport from "./ReachedReport";
 import DailyOperationsPage from "./DailyOperationsPage";
+import { ControlPortal, ControlTeamAdmin } from "./ControlTeam";
 import { siteWeekStaffing } from "./rotaStaffing.js";
 import { ukDate, formatUkAttendanceTime, formatUkDateTime } from "./ukTime.js";
-import { clearAuth, endAdminSession, getToken, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
+import { clearAuth, endAdminSession, getToken, isControlPortal, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { siteAttendanceModes, siteAttendanceLabel, hourlyCheckinsFor, bookOnIsLate } from "./siteAttendance";
@@ -60,7 +61,13 @@ async function api(path, options = {}) {
       headers,
     });
     if (!response.ok) {
-      if (response.status === 401 && readAdminSession() && token === getToken()) endAdminSession("Your admin session has ended. Please sign in again.");
+      if (response.status === 401 && token && token === getToken()) {
+        if (readAdminSession()) endAdminSession("Your admin session has ended. Please sign in again.");
+        if (isControlPortal()) {
+          clearAuth();
+          window.dispatchEvent(new CustomEvent("rota:session-ended", { detail: { message: "Your Control Team session has ended. Please sign in again." } }));
+        }
+      }
       const payload = await response.json().catch(() => ({}));
       const fieldErrors = Object.entries(payload).filter(([key]) => key !== "detail" && key !== "errors").map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`);
       const bulkErrors = Array.isArray(payload.errors) ? payload.errors.map((item) => `${item.employee}: ${Object.values(item.errors || {}).flat().join(", ")}`).join(" | ") : "";
@@ -271,6 +278,7 @@ const navItems = [
   { id: "security-screening", label: "Security Screening", icon: ShieldCheck, adminOnly: true, operatorHidden: true },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "employees", label: "Employees", icon: Users, operatorHidden: true },
+  { id: "control-team", label: "Control Team", icon: Clock3, adminOnly: true },
   { id: "clients", label: "Clients", icon: BriefcaseBusiness, adminOnly: true, operatorHidden: true },
   { id: "sites", label: "Sites", icon: Building2, operatorHidden: true },
   { id: "rota", label: "Weekly Rota", icon: CalendarDays, operatorHidden: true },
@@ -342,8 +350,8 @@ function RoleMultiSelect({ value = [], onChange, customRoles = [], onAddCustomRo
   return <div className="full-width role-picker"><div className="role-picker-heading"><div><span className="form-label">Positions / roles</span><small>Select all roles this employee can perform.</small></div><span className="role-count">{value.length} selected</span></div><div className="role-options">{availableRoles.map((role, index) => { const custom = customRoles.includes(role); return <label className={`role-option${value.includes(role) ? " selected" : ""}`} key={role}><input type="checkbox" checked={value.includes(role)} onChange={() => onChange(value.includes(role) ? value.filter((item) => item !== role) : [...value, role])} /><span className="role-option-index">{index + 1}</span><span className="role-option-copy"><strong>{role}</strong>{value[0] === role && <small>Primary role</small>}</span>{custom && <span className="role-option-actions"><button type="button" aria-label={`Edit ${role}`} title="Edit role" onClick={(event) => startEditRole(event, role)}><Pencil size={12} /></button><button type="button" aria-label={`Delete ${role}`} title="Delete role" onClick={(event) => deleteRole(event, role)}><Trash2 size={12} /></button></span>}</label>; })}</div><div className="role-custom-row">{adding ? <div className="role-custom-form" onKeyDown={(event) => event.key === "Enter" && submitRole(event)}><input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="e.g. First Aid Officer" aria-label="Custom role name" /><button type="button" onClick={submitRole}>{editingRole ? "Save role" : "Add role"}</button><button type="button" className="secondary-button" onClick={() => { setAdding(false); setEditingRole(""); setDraft(""); }}>Cancel</button></div> : <button type="button" className="role-add-custom" onClick={startAddRole}>+ Add custom role</button>}</div>{value.length > 0 ? <div className="selected-role-summary"><span>Selected:</span>{value.map((role) => <b key={role}>{role}</b>)}</div> : <p className="role-empty-hint">Choose at least one role to continue.</p>}<small className="form-help">The first selected role becomes the primary position used in rota and reports.</small></div>;
 }
 
-function Login({ onLogin, guardMode = false, clientMode = false }) {
-  const showDemo = import.meta.env.DEV && !guardMode && !clientMode;
+function Login({ onLogin, guardMode = false, clientMode = false, controlMode = false }) {
+  const showDemo = import.meta.env.DEV && !guardMode && !clientMode && !controlMode;
   const [username, setUsername] = useState(showDemo ? "admin@rota.local" : "");
   const [password, setPassword] = useState(showDemo ? "Admin123!" : "");
   const [error, setError] = useState("");
@@ -355,20 +363,21 @@ function Login({ onLogin, guardMode = false, clientMode = false }) {
     event.preventDefault();
     setError(""); setBusy(true);
     try {
-      const data = await api(clientMode ? "/auth/client-login/" : guardMode ? "/auth/guard-login/" : "/auth/login/", { method: "POST", body: JSON.stringify({ username, password }) });
+      const data = await api(controlMode ? "/control/login/" : clientMode ? "/auth/client-login/" : guardMode ? "/auth/guard-login/" : "/auth/login/", { method: "POST", body: JSON.stringify({ username, password }) });
       if (data.challenge) { setPassword(""); setChallenge(data); return; }
       const role = data.user?.role || data.user?.role_display;
+      if (controlMode && role !== "CONTROL_TEAM") throw new Error("Only Control Team accounts can sign in here.");
       if (guardMode && role !== "EMPLOYEE") throw new Error("Only guard accounts can sign in to the guard portal.");
       if (clientMode && role !== "CLIENT_ADMIN") throw new Error("Only Client Admin accounts can sign in here.");
       completeLogin(data);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   if (challenge) return <AdminMFA challenge={challenge} api={api} onComplete={completeLogin} onBack={() => { setChallenge(null); setError(""); }} />;
-  if (forgot) return <ForgotPasswordPage guardMode={guardMode} clientMode={clientMode} onBack={() => setForgot(false)} />;
-  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button><button type="button" className="text-button" onClick={() => setForgot(true)}>Forgot password?</button></form>{clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
+  if (forgot) return <ForgotPasswordPage guardMode={guardMode} clientMode={clientMode} controlMode={controlMode} onBack={() => setForgot(false)} />;
+  return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">{controlMode ? "ROTAOPS CONTROL TEAM" : clientMode ? "ROTA CLIENT PORTAL" : guardMode ? "ROTA GUARD PORTAL" : "ROTA OPERATIONS"}</p><h1>{controlMode ? "Control Team sign in" : clientMode ? "Client Admin sign in" : guardMode ? "Guard sign in" : "Welcome back"}</h1><p className="muted">{controlMode ? "Check in or out, track your hours and manage leave requests." : clientMode ? "View your sites, published rota, attendance and reports." : guardMode ? "Access your rota, attendance and profile securely." : "Sign in to manage staffing, sites and weekly rotas."}</p><form onSubmit={submit}><label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>{error && <p className="error">{error}</p>}<button className="primary-button" type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button><button type="button" className="text-button" onClick={() => setForgot(true)}>Forgot password?</button></form>{controlMode ? <p className="login-hint">Use the email address provided by your office.</p> : clientMode ? <p className="login-hint">Use the Client Admin account supplied by ROTA.</p> : guardMode ? <p className="login-hint">Use the email address provided by your office.</p> : showDemo ? <p className="login-hint">Demo: admin@rota.local / Admin123!</p> : <p className="login-hint">Use the admin account supplied by your organisation.</p>}</section></main>;
 }
 
-function ForgotPasswordPage({ guardMode, clientMode, onBack }) {
+function ForgotPasswordPage({ guardMode, clientMode, controlMode, onBack }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [resetToken, setResetToken] = useState("");
@@ -389,7 +398,7 @@ function ForgotPasswordPage({ guardMode, clientMode, onBack }) {
   const resetPassword = async (event) => {
     event.preventDefault(); setSaving(true); setError(""); setNotice("");
     const form = new FormData(event.currentTarget);
-    try { const result = await api("/auth/password-reset-confirm/", { method: "POST", body: JSON.stringify({ reset_token: resetToken, password: form.get("password"), password_confirmation: form.get("password_confirmation") }) }); setNotice(result.message); window.setTimeout(() => { window.location.href = guardMode ? "/guard" : clientMode ? "/client" : "/"; }, 1200); } catch (err) { setError(err.message); } finally { setSaving(false); }
+    try { const result = await api("/auth/password-reset-confirm/", { method: "POST", body: JSON.stringify({ reset_token: resetToken, password: form.get("password"), password_confirmation: form.get("password_confirmation") }) }); setNotice(result.message); window.setTimeout(() => { window.location.href = controlMode ? "/control" : guardMode ? "/guard" : clientMode ? "/client" : "/"; }, 1200); } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
   return <main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA SECURITY</p><h1>{phase === "request" ? "Reset password" : phase === "verify" ? "Enter verification code" : "Choose new password"}</h1><p className="muted">{phase === "request" ? "Enter the email address linked to your portal account. We will send a 6-digit verification code." : phase === "verify" ? `Enter the 6-digit code sent to ${email}. It expires in 10 minutes.` : "Create a new password with at least 8 characters."}</p>{phase === "request" && <form onSubmit={requestCode}><label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Sending..." : "Send verification code"}</button><button type="button" className="text-button" onClick={onBack}>Back to sign in</button></form>}{phase === "verify" && <form onSubmit={verifyCode}><label>6-digit verification code<input required inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" autoFocus /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving || code.length !== 6}>{saving ? "Verifying..." : "Verify code"}</button><button type="button" className="text-button" disabled={saving || resendIn > 0} onClick={requestCode}>{resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}</button><button type="button" className="text-button" onClick={() => { setPhase("request"); setCode(""); setError(""); setNotice(""); setResendIn(0); }}>Use a different email</button></form>}{phase === "password" && <form onSubmit={resetPassword}><label>New password<input required minLength="8" name="password" type="password" placeholder="At least 8 characters" autoFocus /></label><label>Confirm new password<input required minLength="8" name="password_confirmation" type="password" placeholder="Repeat your password" /></label>{error && <p className="error">{error}</p>}{notice && <p className="success">{notice}</p>}<button className="primary-button" type="submit" disabled={saving}>{saving ? "Updating..." : "Reset password"}</button></form>}<p className="login-hint">The verification code can be used once and expires after 10 minutes.</p></section></main>;
 }
@@ -1884,24 +1893,25 @@ function App() {
   const guardPath = window.location.pathname === "/guard" || window.location.pathname.startsWith("/guard/");
   const attendanceOnlyPath = window.location.pathname === "/guard-attendance" || window.location.pathname.startsWith("/guard-attendance/");
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
+  const controlPath = isControlPortal();
   const resetPath = window.location.pathname === "/reset-password";
   useEffect(() => {
     const token = getToken();
     if (!token) { setAuthLoading(false); return undefined; }
-    api(clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then((data) => { syncAdminSession(data.admin_session); setUser(data); }).catch(() => clearAuth()).finally(() => setAuthLoading(false));
+    api(controlPath ? "/control/profile/" : clientPath ? "/auth/client-me/" : guardPath || attendanceOnlyPath ? "/auth/guard-me/" : "/auth/me/").then((data) => { syncAdminSession(data.admin_session); setUser(controlPath ? { role: "CONTROL_TEAM" } : data); }).catch(() => clearAuth()).finally(() => setAuthLoading(false));
     return undefined;
   }, []);
   useEffect(() => {
-    if (!user || clientPath || user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") return undefined;
+    if (!user || clientPath || controlPath || user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") return undefined;
     const loadDashboard = () => api("/dashboard/").then(setStats).catch(() => {});
     loadDashboard();
     window.addEventListener("rota:live-refresh", loadDashboard);
     return () => window.removeEventListener("rota:live-refresh", loadDashboard);
-  }, [user, clientPath]);
+  }, [user, clientPath, controlPath]);
   useEffect(() => { if (user) setPage((user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") ? "profile" : "dashboard"); }, [user]);
   useEffect(() => {
     setUnreadNotifications(0);
-    if (!user || clientPath) return undefined;
+    if (!user || clientPath || controlPath) return undefined;
     let active = true;
     notificationIdsRef.current = new Set();
     notificationPrimedRef.current = false;
@@ -1922,7 +1932,7 @@ function App() {
     const timer = window.setInterval(loadNotifications, 30000);
     window.addEventListener("rota:notifications-changed", loadNotifications);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener("rota:notifications-changed", loadNotifications); };
-  }, [user, clientPath]);
+  }, [user, clientPath, controlPath]);
   useEffect(() => {
     const ended = (event) => { queryClient.clear(); setUser(null); setGuardInitialPage("home"); setUnreadNotifications(0); if (event.detail?.message) notifyToast(event.detail.message, "info"); };
     window.addEventListener("rota:session-ended", ended);
@@ -1933,9 +1943,9 @@ function App() {
   const resetPortal = resetParams.get("portal") || "admin";
   if (resetPath) return <><ToastHost /><ForgotPasswordPage guardMode={resetPortal === "guard"} clientMode={resetPortal === "client"} onBack={() => { window.location.href = resetPortal === "guard" ? "/guard" : resetPortal === "client" ? "/client" : "/"; }} /></>;
   if (authLoading) return <><ToastHost /><RotaLoader overlay label="Securing your portal…" /></>;
-  if (!user) return <><ToastHost />{activationToken ? <ActivationPage token={activationToken} onActivated={(activatedUser) => { setGuardInitialPage("profile"); setUser(activatedUser); }} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} />}</>;
+  if (!user) return <><ToastHost />{activationToken && !controlPath ? <ActivationPage token={activationToken} onActivated={(activatedUser) => { setGuardInitialPage("profile"); setUser(activatedUser); }} /> : <Login onLogin={setUser} guardMode={guardPath || attendanceOnlyPath} clientMode={clientPath} controlMode={controlPath} />}</>;
   const signOut = async () => {
-    try { await api("/auth/logout/", { method: "POST", silentLoading: true, silentError: true }); }
+    try { await api(controlPath ? "/control/logout/" : "/auth/logout/", { method: "POST", silentLoading: true, silentError: true }); }
     catch (error) { if (getToken()) { notifyToast("Could not sign out on the server. Check your connection and try again.", "error"); return; } }
     clearAuth(); queryClient.clear(); setGuardInitialPage("home"); setUser(null); setUnreadNotifications(0);
   };
@@ -1944,12 +1954,13 @@ function App() {
   const isSuperAdmin = role === "SUPER_ADMIN" || Boolean(user.is_superuser);
   const isOperator = role === "OPERATOR" || role === "RECEPTIONIST";
   const isClientAdmin = role === "CLIENT_ADMIN";
+  if (controlPath) return <><ToastHost /><ControlPortal api={api} Photo={ProtectedImage} onSignOut={signOut} /></>;
   if (clientPath && !isClientAdmin) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA CLIENT PORTAL</p><h1>Client access only</h1><p className="muted">This portal is reserved for linked Client Admin accounts.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (isClientAdmin) return <><ToastHost /><ClientPortal user={user} onSignOut={signOut} /></>;
   if ((guardPath || attendanceOnlyPath) && !isEmployee) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA GUARD PORTAL</p><h1>Guard access only</h1><p className="muted">This link is reserved for guard accounts. Admin users should use the main operations portal.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (attendanceOnlyPath) return <GuardAttendanceOnly user={user} onSignOut={signOut} />;
   if (isEmployee) return <GuardPortal user={user} onSignOut={signOut} unreadNotifications={unreadNotifications} initialPage={guardInitialPage} />;
-  const content = page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "rota" ? <Rota target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
+  const content = page === "control-team" ? <ControlTeamAdmin api={api} Photo={ProtectedImage} /> : page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "rota" ? <Rota target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
   return <><ToastHost />{(isSuperAdmin || role === "ADMIN") && <AdminSessionMonitor api={api} />}<div className="app-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{navItems.filter((item) => isEmployee ? item.employeeOnly : !item.employeeOnly && (!item.superAdminOnly || isSuperAdmin) && (!item.adminOnly || isSuperAdmin || role === "ADMIN") && (!item.operatorHidden || !isOperator)).map(({ id, label, icon: Icon, disabled }) => <button key={id} className={page === id ? "nav-item active" : "nav-item"} disabled={disabled} onClick={() => { setNotificationTarget({}); setPage(id); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}{disabled && <small>soon</small>}</button>)}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{isEmployee ? (user.first_name || "G").slice(0, 1).toUpperCase() : (user.first_name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{isEmployee ? (user.first_name || "Guard") : (user.first_name || "System")}</strong><span>{user.role_label || user.role_display || role || "ADMIN"}</span></div></div><button className="logout-button" onClick={signOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{navItems.find((item) => item.id === page)?.label || "Dashboard"}</strong></div><div className="topbar-right"><span className="online-dot" /> System online</div></header><div className="page-content" key={dataVersion}>{content}</div></main></div></>;
 }
 

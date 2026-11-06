@@ -2,7 +2,14 @@ from rest_framework.authentication import SessionAuthentication, TokenAuthentica
 from rest_framework.exceptions import AuthenticationFailed
 
 from .admin_auth import digest, is_admin_account, validate_session
-from .models import AdminSession
+from .models import AdminSession, UserProfile
+from .permissions import role_of
+
+
+def restrict_control_access(user, request):
+    match = request.resolver_match
+    if role_of(user) == UserProfile.Role.CONTROL_TEAM and (not match or match.namespace != "control"):
+        raise AuthenticationFailed("Sign in to the Control Team portal to use this account.")
 
 
 class AuthNoCacheMiddleware:
@@ -11,7 +18,7 @@ class AuthNoCacheMiddleware:
 
     def __call__(self, request):
         response = self.get_response(request)
-        if request.path.startswith("/api/auth/"):
+        if request.path.startswith(("/api/auth/", "/api/control/")):
             response["Cache-Control"] = "no-store"
             response["Pragma"] = "no-cache"
         return response
@@ -32,6 +39,7 @@ class SecureTokenAuthentication(TokenAuthentication):
         user, token = super().authenticate_credentials(key)
         if is_admin_account(user):
             raise AuthenticationFailed("Admin sign in requires two-step verification. Please sign in again.")
+        restrict_control_access(user, self.request)
         return user, token
 
 
@@ -44,4 +52,6 @@ class SecureSessionAuthentication(SessionAuthentication):
             if not session:
                 raise AuthenticationFailed("Admin sign in requires two-step verification.")
             validate_session(session, request)
+        if result:
+            restrict_control_access(result[0], request)
         return result

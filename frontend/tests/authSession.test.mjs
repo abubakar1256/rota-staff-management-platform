@@ -34,6 +34,25 @@ test("idle expiry cannot exceed the maximum session deadline and invalid metadat
   assert.equal(sessionRemaining(null, now), 0);
 });
 
+test("Control Team and office credentials stay separate", () => {
+  const adminSession = { id: "admin" };
+  storeLogin({ token: "office-token", admin_session: adminSession });
+  globalThis.window = { location: { pathname: "/control" } };
+  try {
+    assert.equal(getToken(), null);
+    assert.equal(readAdminSession(), null);
+    storeLogin({ token: "control-token" });
+    assert.equal(getToken(), "control-token");
+    clearAuth();
+    assert.equal(getToken(), null);
+  } finally {
+    delete globalThis.window;
+  }
+  assert.equal(getToken(), "office-token");
+  assert.deepEqual(readAdminSession(), adminSession);
+  clearAuth();
+});
+
 test("reloading restores server-provided session deadlines without extending them", () => {
   const session = { id: "example", idle_expires_at: "2026-11-03T12:30:00Z", expires_at: "2026-11-03T20:00:00Z" };
   syncAdminSession(session);

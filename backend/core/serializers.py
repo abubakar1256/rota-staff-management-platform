@@ -127,6 +127,8 @@ class UserSerializer(serializers.ModelSerializer):
         return profile.get_role_display() if profile else None
 
     def validate_role(self, value):
+        if value == UserProfile.Role.CONTROL_TEAM:
+            raise serializers.ValidationError("Add these accounts from the Control Team page.")
         valid_roles = {choice.value for choice in UserProfile.Role}
         if value not in valid_roles:
             raise serializers.ValidationError("Choose a valid role: Super Admin, Admin, Manager, Operator or Guard.")
@@ -146,6 +148,9 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"client_id": "Only Client Admin accounts can be linked to a client."})
         if client_id and not Client.objects.filter(pk=client_id, status=Client.Status.ACTIVE).exists():
             raise serializers.ValidationError({"client_id": "Select an active client."})
+        email = attrs.get("email")
+        if email and User.objects.filter(email__iexact=email, profile__role=UserProfile.Role.CONTROL_TEAM).exists():
+            raise serializers.ValidationError({"email": "This email is already used by a Control Team account."})
         if attrs.get("password") and (role in {"ADMIN", "SUPER_ADMIN"} or (self.instance and self.instance.is_superuser)):
             from .admin_auth import validate_admin_password
             from django.core.exceptions import ValidationError
@@ -248,6 +253,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 duplicate = duplicate.exclude(pk=self.instance.pk)
             if duplicate.exists():
                 raise serializers.ValidationError({"email": "This email is already linked to another employee."})
+            if User.objects.filter(email__iexact=email, profile__role=UserProfile.Role.CONTROL_TEAM).exists():
+                raise serializers.ValidationError({"email": "This email is already used by a Control Team account."})
         return attrs
 
     def create(self, validated_data):
