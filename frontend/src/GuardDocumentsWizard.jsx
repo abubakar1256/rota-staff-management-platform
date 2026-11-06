@@ -17,7 +17,12 @@ function DocumentEditor({ item, existing, draft, onChange, disabled, FilePreview
     {!item.photo && <div className="form-grid">
       {(item.number || item.code) && <label>{item.code ? "Code / number" : "Card number"}<input required={Boolean(item.number)} maxLength={100} value={draft.document_number ?? existing?.document_number ?? ""} onChange={(event) => onChange({ document_number: event.target.value })} /></label>}
       {item.issue && <label>Document date<input required type="date" max={localDate()} value={draft.issue_date ?? existing?.issue_date ?? ""} onChange={(event) => onChange({ issue_date: event.target.value })} /></label>}
-      {item.expiry && <label>Expiry date<input required type="date" min={localDate()} value={draft.expiry_date ?? existing?.expiry_date ?? ""} onChange={(event) => onChange({ expiry_date: event.target.value })} /></label>}
+      {(item.expiry || item.optionalExpiry) && <label>
+        {item.optionalExpiry ? "Expiry date (optional)" : "Expiry date"}
+        <input required={Boolean(item.expiry)} type="date" min={localDate()}
+          value={draft.expiry_date ?? existing?.expiry_date ?? ""}
+          onChange={(event) => onChange({ expiry_date: event.target.value })} />
+      </label>}
     </div>}
     {item.photo ? (!existing && <p className="muted">Upload your passport-size picture in <strong>My profile</strong>, then return here.</p>) : <label className="guard-document-upload"><Upload size={21} /><strong>{file ? file.name : existing ? "Choose a replacement file" : "Choose a file"}</strong><span>PDF, JPG, PNG or WEBP · up to 10 MB</span><input key={`${item.key}-${existing?.updated_at || "new"}-${file?.name || "empty"}`} disabled={disabled} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(event) => onChange({ file: event.target.files?.[0] || null })} /></label>}
     {item.code && existing?.notes && <p className="guard-document-note">Saved code / notes: {existing.notes}</p>}

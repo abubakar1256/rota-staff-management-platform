@@ -22,6 +22,7 @@ export function requiredDocumentItems(profile) {
 }
 
 export const optionalDocumentItems = [
+  { key: "right_to_work", label: "Right to Work", optionalExpiry: true },
   { key: "cscs_front", label: "CSCS Card (Front)", number: true, expiry: true },
   { key: "cscs_back", label: "CSCS Card (Back)" },
   { key: "driving_front", label: "Driving License (Front)" },
@@ -74,6 +75,7 @@ export async function saveDocument(api, employee, item, existing, draft = {}) {
   if (draft.file) {
     body = new FormData();
     Object.entries(values).forEach(([key, value]) => { if (value !== null) body.append(key, String(value)); });
+    if (item.optionalExpiry && existing && draft.expiry_date === "") body.set("expiry_date", "");
     body.append("file", draft.file);
   } else body = JSON.stringify(values);
   const saved = await api(existing ? `/documents/${existing.id}/` : "/documents/", { method: existing ? "PATCH" : "POST", body, silentLoading: true });
