@@ -46,6 +46,7 @@ from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArr
 from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
+from .document_archive import DocumentArchiveSerializer, build_document_archive
 from .rota_document_expiry import assignment_document_expiry_conflicts
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
@@ -1646,6 +1647,22 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
 class EmployeeDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeDocumentSerializer
     permission_classes = [IsAdminManagerOrEmployeeDocument]
+
+    @action(detail=False, methods=["post"], url_path="download-zip", permission_classes=[IsAdminOrSuperAdmin])
+    def download_zip(self, request):
+        serializer = DocumentArchiveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = list(dict.fromkeys(serializer.validated_data["document_ids"]))
+        documents = self.get_queryset().in_bulk(ids)
+        if len(documents) != len(ids):
+            raise ValidationError({"detail": "One or more selected documents no longer exist. Clear the selection and choose the available files again."})
+        archive = build_document_archive(documents[pk] for pk in ids)
+        response = FileResponse(
+            archive, as_attachment=True, content_type="application/zip",
+            filename=f"RotaOps - Guard documents - {timezone.localdate()}.zip",
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
 
     def get_queryset(self):
         queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by")
