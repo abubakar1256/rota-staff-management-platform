@@ -121,6 +121,7 @@ class Employee(models.Model):
     joining_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     compliance_registration_enabled = models.BooleanField(default=False)
+    cortex_itime_enabled = models.BooleanField(default=False)
     profile_declaration_accepted_at = models.DateTimeField(null=True, blank=True)
     profile_declaration_version = models.CharField(max_length=20, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -261,6 +262,7 @@ class Site(models.Model):
     geofence_radius_m = models.PositiveIntegerField(default=150)
     attendance_mode = models.CharField(max_length=20, choices=AttendanceMode.choices, default=AttendanceMode.WITH_HOURLY)
     location_tracking_enabled = models.BooleanField(default=False)
+    cortex_itime_enabled = models.BooleanField(default=False)
     location_tracking_enabled_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -384,6 +386,12 @@ class GuardUnavailability(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["work_date", "employee"], name="unique_guard_unavailable_day"),
         ]
+
+
+class CortexITimeCredential(models.Model):
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="cortex_itime_credential")
+    encrypted_pin = models.TextField(editable=False)
+    sites = models.ManyToManyField(Site, related_name="cortex_itime_credentials", blank=True)
 
 
 class SiteInduction(models.Model):

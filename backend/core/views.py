@@ -14,6 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from django.conf import settings
+from cryptography.fernet import InvalidToken
 from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
@@ -47,9 +48,10 @@ from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
 from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
+from .cortex_itime import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
-from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
+from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
 
@@ -906,6 +908,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         pending_invites = EmployeePortalInvite.objects.filter(used_at__isnull=True, expires_at__gt=timezone.now()).order_by("-created_at")
         queryset = Employee.objects.all().prefetch_related(Prefetch("portal_invites", queryset=pending_invites, to_attr="_pending_portal_invites"))
         role = role_of(self.request.user)
+        if is_admin(self.request.user):
+            queryset = queryset.select_related("cortex_itime_credential").defer(
+                "cortex_itime_credential__encrypted_pin",
+            ).prefetch_related("cortex_itime_credential__sites")
         if role == "EMPLOYEE":
             queryset = queryset.filter(user=self.request.user)
         elif role == "MANAGER":
@@ -917,6 +923,22 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         return queryset
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="cortex-itime")
+    def cortex_itime(self, request):
+        if role_of(request.user) != UserProfile.Role.EMPLOYEE:
+            raise PermissionDenied("Only guards can view their own Cortex iTime PINs.")
+        employee = get_object_or_404(
+            Employee.objects.select_related("cortex_itime_credential"),
+            user=request.user, status=Employee.Status.ACTIVE, cortex_itime_enabled=True,
+        )
+        credential = getattr(employee, "cortex_itime_credential", None)
+        sites = list(credential.sites.filter(cortex_itime_enabled=True, is_active=True).values("name", "site_id")) if credential else []
+        try:
+            pin = pin_cipher().decrypt(credential.encrypted_pin.encode()).decode() if sites else None
+        except InvalidToken:
+            return Response({"detail": "The PIN could not be opened. Contact the office for assistance."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"pin": pin, "sites": sites}, headers={"Cache-Control": "private, no-store"})
 
     @action(detail=False, methods=["get", "patch"], url_path="me")
     def me(self, request):
@@ -1124,7 +1146,9 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
         return Response(GuardSiteInductionSerializer(inductions, many=True).data)
 
     def get_queryset(self):
-        queryset = SiteInduction.objects.select_related("site", "employee", "created_by")
+        queryset = SiteInduction.objects.select_related("site", "employee__cortex_itime_credential", "created_by").defer(
+            "employee__cortex_itime_credential__encrypted_pin",
+        ).prefetch_related("employee__cortex_itime_credential__sites")
         site_id = self.request.query_params.get("site")
         if site_id:
             queryset = queryset.filter(site_id=site_id)

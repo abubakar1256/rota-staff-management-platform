@@ -4,8 +4,12 @@ import os
 from secrets import token_urlsafe
 
 from django.contrib.auth import authenticate, get_user_model
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
+from .cortex_itime import save_cortex_access
+from .permissions import is_admin
 from .document_requirements import documents_completion, is_british
 from .availability import shift_dates, unavailable_for_shift, unavailable_message
 from .rota_document_expiry import document_expiry_conflict
@@ -218,6 +222,26 @@ class EmployeeSerializer(serializers.ModelSerializer):
     documents_completion = serializers.SerializerMethodField(read_only=True)
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
     employee_id = serializers.CharField(required=False, allow_blank=True)
+    cortex_itime_pin = serializers.RegexField(r"\A[0-9]{1,32}\Z", write_only=True, required=False,
+        error_messages={"invalid": "Enter a PIN containing 1 to 32 digits."})
+    cortex_itime_site = serializers.PrimaryKeyRelatedField(
+        queryset=Site.objects.filter(is_active=True, cortex_itime_enabled=True), write_only=True, required=False,
+        error_messages={"does_not_exist": "Select an active Cortex iTime site."},
+    )
+    cortex_itime_sites = serializers.SerializerMethodField()
+    cortex_itime_pin_saved = serializers.SerializerMethodField()
+
+    def get_cortex_itime_pin_saved(self, employee):
+        request = self.context.get("request")
+        return bool(request and is_admin(request.user) and hasattr(employee, "cortex_itime_credential"))
+
+    def get_cortex_itime_sites(self, employee):
+        if not self.get_cortex_itime_pin_saved(employee):
+            return []
+        return [
+            {"id": site.pk, "name": site.name, "active": site.is_active and site.cortex_itime_enabled}
+            for site in employee.cortex_itime_credential.sites.all()
+        ]
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -255,9 +279,23 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"email": "This email is already linked to another employee."})
             if User.objects.filter(email__iexact=email, profile__role=UserProfile.Role.CONTROL_TEAM).exists():
                 raise serializers.ValidationError({"email": "This email is already used by a Control Team account."})
+        cortex_fields = {"cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site"}
+        if cortex_fields.intersection(attrs):
+            request = self.context.get("request")
+            if not request or not is_admin(request.user):
+                raise PermissionDenied("Only Admin or Super Admin can manage Cortex iTime access.")
+            enabled = attrs.get("cortex_itime_enabled", getattr(self.instance, "cortex_itime_enabled", False))
+            pin, site = attrs.get("cortex_itime_pin"), attrs.get("cortex_itime_site")
+            if (pin or site) and not enabled:
+                raise serializers.ValidationError({"cortex_itime_enabled": "Enable Cortex iTime before editing its PIN or sites."})
+            if enabled and not (self.instance and hasattr(self.instance, "cortex_itime_credential")) and not (pin and site):
+                raise serializers.ValidationError({"cortex_itime_pin": "Enter the guard's PIN and select its first activation site."})
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
+        pin = validated_data.pop("cortex_itime_pin", None)
+        site = validated_data.pop("cortex_itime_site", None)
         employee_id = (validated_data.get("employee_id") or "").strip()
         if not employee_id:
             existing_ids = set(Employee.objects.values_list("employee_id", flat=True))
@@ -265,10 +303,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
             while f"EMP-{number:03d}" in existing_ids:
                 number += 1
             validated_data["employee_id"] = f"EMP-{number:03d}"
-        return super().create(validated_data)
+        employee = super().create(validated_data)
+        if site:
+            save_cortex_access(employee, site, pin)
+        return employee
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         from .profile_completion import PROFILE_FIELDS
+        pin = validated_data.pop("cortex_itime_pin", None)
+        site = validated_data.pop("cortex_itime_site", None)
         if any(field in validated_data and validated_data[field] != getattr(instance, field) for field in PROFILE_FIELDS):
             validated_data["profile_declaration_accepted_at"] = None
             validated_data["profile_declaration_version"] = ""
@@ -288,11 +332,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 user_updates.append("username")
             if user_updates:
                 user.save(update_fields=user_updates)
+        if site or pin:
+            save_cortex_access(instance, site, pin)
         return instance
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site", "cortex_itime_sites", "cortex_itime_pin_saved", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
@@ -401,7 +447,7 @@ class SiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Site
-        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "location_tracking_enabled", "location_tracking_enabled_at", "is_active", "created_at", "updated_at"]
+        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "location_tracking_enabled", "location_tracking_enabled_at", "cortex_itime_enabled", "is_active", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at", "location_tracking_enabled_at"]
 
     def create(self, validated_data):
@@ -572,10 +618,11 @@ class SiteInductionSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True)
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
+    cortex_activation_required = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteInduction
-        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "induction_time", "status", "notes", "created_by", "created_at", "updated_at"]
+        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "induction_time", "status", "notes", "created_by", "created_at", "updated_at", "cortex_activation_required"]
         read_only_fields = ["created_by", "created_at", "updated_at"]
 
     def validate_employee(self, value):
@@ -584,6 +631,13 @@ class SiteInductionSerializer(serializers.ModelSerializer):
         if not value.user_id or not value.user.has_usable_password():
             raise serializers.ValidationError("Complete the guard portal access before adding an induction.")
         return value
+
+    def get_cortex_activation_required(self, induction):
+        if induction.status == SiteInduction.Status.CANCELLED or not induction.site.is_active or not induction.site.cortex_itime_enabled:
+            return False
+        employee = induction.employee
+        credential = getattr(employee, "cortex_itime_credential", None)
+        return not employee.cortex_itime_enabled or not credential or induction.site not in credential.sites.all()
 
 
 class GuardSiteInductionSerializer(serializers.ModelSerializer):
