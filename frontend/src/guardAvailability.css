@@ -1,0 +1,87 @@
+.guard-availability-week {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.guard-availability-week label {
+  display: grid;
+  gap: 5px;
+  color: #647189;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.guard-availability-week input {
+  padding: 8px;
+  border: 1px solid #dbe2ec;
+  border-radius: 7px;
+  color: #26344d;
+  background: #fff;
+}
+
+.guard-availability-week button {
+  min-height: 36px;
+}
+
+.guard-availability-table th:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 145px;
+  background: #fff;
+}
+
+.guard-availability-table tbody th {
+  color: #26344d;
+  font-size: 13px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.guard-availability-table td,
+.guard-availability-table thead th:not(:first-child) {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.availability-day {
+  min-width: 98px;
+  padding: 8px;
+  border: 1px solid #dbe2ec;
+  border-radius: 7px;
+  background: #f7faff;
+  color: #526683;
+  font-size: 12px;
+}
+
+.availability-day:hover:not(:disabled) {
+  border-color: #7995c2;
+}
+
+.availability-day.unavailable,
+.rota-availability-warning {
+  border-color: #efbdc6;
+  background: #fff1f3;
+  color: #a12d43;
+}
+
+.rota-availability-warning {
+  grid-column: 1 / -1;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-style: solid;
+  border-width: 1px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rota-availability-warning ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.assignment-card .assignment-unavailable {
+  color: #a12d43;
+  font-weight: 700;
+}

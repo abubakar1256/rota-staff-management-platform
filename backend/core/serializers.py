@@ -7,6 +7,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils import timezone
 from rest_framework import serializers
 from .document_requirements import documents_completion, is_british
+from .availability import unavailable_for_shift, unavailable_message
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 
@@ -456,6 +457,10 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"work_date": "Assignment date must fall inside the selected rota week."})
         if employee and employee.status != Employee.Status.ACTIVE:
             raise serializers.ValidationError({"employee": "Only active employees can be assigned to a new rota."})
+        if employee and work_date and shift_type:
+            unavailable_day = unavailable_for_shift(employee.pk, work_date, scheduled_start, scheduled_end)
+            if unavailable_day:
+                raise serializers.ValidationError({"employee": unavailable_message(employee.name, unavailable_day)}, code="guard_unavailable")
         if employee and site and not SiteInduction.objects.filter(site=site, employee=employee, status=SiteInduction.Status.COMPLETED).exists():
             raise serializers.ValidationError({"employee": f"{employee.name} must have a completed site induction for {site.name} before assignment."})
         if employee:

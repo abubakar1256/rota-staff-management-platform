@@ -45,6 +45,7 @@ from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
 from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
+from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
@@ -1234,6 +1235,9 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         rota_week = self.get_object()
         if not rota_week.assignments.exists():
             return Response({"detail": "Add at least one assignment before publishing this rota."}, status=status.HTTP_400_BAD_REQUEST)
+        conflicts = assignment_availability_conflicts(rota_week.assignments.select_related("employee", "shift_type"))
+        if conflicts:
+            raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before publishing."})
         confirmation_count = reset_rota_confirmations(rota_week)
         rota_week.status = RotaWeek.Status.PUBLISHED
         rota_week.published_at = timezone.now()
@@ -1361,6 +1365,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         return Response({"date": selected_date, "created": created, "updated": updated, "total": created + updated, "reports": [{"id": report.id, "shift": report.shift_type.name, "pdf": report.pdf_file.url} for report in reports]})
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def copy_to(self, request, pk=None):
         source = self.get_object()
         target_start = request.data.get("week_start")
@@ -1370,21 +1375,31 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             target_date = date.fromisoformat(target_start)
         except ValueError:
             return Response({"detail": "week_start must be YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        target, _ = RotaWeek.objects.get_or_create(week_start=target_date, defaults={"created_by": request.user})
-        if target.status == RotaWeek.Status.PUBLISHED:
-            return Response({"detail": "The target rota is already published."}, status=status.HTTP_400_BAD_REQUEST)
-        target.assignments.all().delete()
-        offset = (target_date - source.week_start).days
-        for assignment in source.assignments.all():
+        if target_date == source.week_start:
+            raise ValidationError({"detail": "Choose a different week for the copy."})
+
+        offset = target_date - source.week_start
+        eligible = []
+        for assignment in source.assignments.select_related("employee", "site", "shift_type"):
             if assignment.employee_id and not SiteInduction.objects.filter(
                 site=assignment.site,
                 employee=assignment.employee,
                 status=SiteInduction.Status.COMPLETED,
             ).exists():
                 continue
+            eligible.append(assignment)
+        conflicts = assignment_availability_conflicts(eligible, offset)
+        if conflicts:
+            raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before copying."})
+
+        target, _ = RotaWeek.objects.get_or_create(week_start=target_date, defaults={"created_by": request.user})
+        if target.status == RotaWeek.Status.PUBLISHED:
+            return Response({"detail": "The target rota is already published."}, status=status.HTTP_400_BAD_REQUEST)
+        target.assignments.all().delete()
+        for assignment in eligible:
             RotaAssignment.objects.create(
                 rota_week=target,
-                work_date=assignment.work_date + timedelta(days=offset),
+                work_date=assignment.work_date + offset,
                 shift_type=assignment.shift_type,
                 scheduled_start=assignment.scheduled_start,
                 scheduled_end=assignment.scheduled_end,
@@ -1437,7 +1452,12 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             if not assignment_serializer.is_valid():
                 errors.append({"employee": employee.name, "errors": assignment_serializer.errors})
         if errors:
-            return Response({"detail": "Some employees could not be assigned.", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+            unavailable = [
+                str(error) for row in errors for error in row["errors"].get("employee", [])
+                if error.code == "guard_unavailable"
+            ]
+            detail = " ".join(unavailable[:6]) or "Some employees could not be assigned."
+            return Response({"detail": detail, "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             created = [assignment_serializer.save(created_by=request.user) for assignment_serializer in serializers]
@@ -1522,6 +1542,9 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
         scheduled_end = assignment.scheduled_end or assignment.shift_type.end_time
         conflicts = []
         if assignment.employee_id:
+            unavailable_day = unavailable_for_shift(assignment.employee_id, assignment.work_date, scheduled_start, scheduled_end)
+            if unavailable_day:
+                raise ValidationError({"detail": unavailable_message(assignment.employee.name, unavailable_day)})
             for other in RotaAssignment.objects.filter(employee=assignment.employee, work_date=assignment.work_date).exclude(pk=assignment.pk).select_related("site", "shift_type"):
                 other_start = other.scheduled_start or other.shift_type.start_time
                 other_end = other.scheduled_end or other.shift_type.end_time

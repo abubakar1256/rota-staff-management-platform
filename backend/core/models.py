@@ -326,6 +326,16 @@ class RotaAssignment(models.Model):
         return f"{self.work_date} - {self.shift_type.name} - {self.site.name} - {employee}"
 
 
+class GuardUnavailability(models.Model):
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="unavailable_days")
+    work_date = models.DateField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["work_date", "employee"], name="unique_guard_unavailable_day"),
+        ]
+
+
 class SiteInduction(models.Model):
     class Status(models.TextChoices):
         PLANNED = "PLANNED", "Planned"

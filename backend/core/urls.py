@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .screening import SecurityScreeningViewSet
 from . import admin_security_views
 from . import location_views
+from .availability_views import guard_availability
 
 from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, activation_details, approve_compliance, client_login, client_me, client_portal_summary, compliance_approvals, dashboard, employee_compliance, employee_compliance_pdf, google_drive_callback, google_drive_connect, google_drive_status, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, password_reset_verify, reject_compliance, report_print, reports_summary, request_compliance_resubmission, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
 
@@ -27,6 +28,7 @@ router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
+    path("guard-availability/", guard_availability, name="guard-availability"),
     path("location-tracking/active/", location_views.active_tracking, name="location-tracking-active"),
     path("location-tracking/tracker/", location_views.tracking_tracker, name="location-tracking-tracker"),
     path("location-tracking/<int:pk>/report/", location_views.submit_location, name="location-tracking-report"),
