@@ -13,7 +13,7 @@ export function EmployeeCortexITimeFields({ form, setForm, api }) {
   const availableSites = sites.filter((site) => site.cortex_itime_enabled && site.is_active
     && !savedSites.some((activated) => activated.id === site.id));
 
-  return <fieldset className="full-width cortex-itime-setting">
+  return <fieldset className="full-width guard-pin-setting">
     <legend>Cortex iTime</legend>
     <label className="cortex-itime-toggle">
       <input type="checkbox" checked={form.cortex_itime_enabled}
@@ -24,7 +24,7 @@ export function EmployeeCortexITimeFields({ form, setForm, api }) {
       <span><strong>Enable Cortex iTime for this guard</strong><small>Show the guard's PIN and its active sites in the portal.</small></span>
     </label>
     {form.cortex_itime_enabled && <>
-      {pinSaved && <div className="cortex-itime-pin-actions">
+      {pinSaved && <div className="guard-pin-actions">
         <p className="muted"><strong>Guard PIN saved.</strong> {savedSites.length > 0 &&
           `Sites recorded: ${savedSites.map((site) => site.name + (site.active ? "" : " (inactive)")).join(", ")}.`}</p>
         <button type="button" className="mini-button" aria-expanded={editingPin} onClick={() => {
@@ -88,7 +88,7 @@ export function GuardCortexITime({ api }) {
       : !access.pin ? <section className="panel">The office has yet to activate your PIN for a site.</section>
       : <section className="panel">
         <h3>Your Cortex iTime PIN</h3>
-        <strong className="cortex-itime-pin">{access.pin}</strong>
+        <strong className="guard-pin-value">{access.pin}</strong>
         <h3>Active sites</h3>
         <ul>{access.sites.map(({ name, site_id }) => <li key={site_id}>{name} · {site_id}</li>)}</ul>
       </section>}

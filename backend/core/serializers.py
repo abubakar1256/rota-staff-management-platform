@@ -9,12 +9,13 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 from .cortex_itime import save_cortex_access
-from .permissions import is_admin
+from .permissions import is_admin, is_guard
+from .pin_encryption import pin_cipher
 from .document_requirements import documents_completion, is_british
 from .availability import shift_dates, unavailable_for_shift, unavailable_message
 from .rota_document_expiry import document_expiry_conflict
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -230,6 +231,24 @@ class EmployeeSerializer(serializers.ModelSerializer):
     )
     cortex_itime_sites = serializers.SerializerMethodField()
     cortex_itime_pin_saved = serializers.SerializerMethodField()
+    timegate_pin = serializers.RegexField(
+        r"\A[0-9]{1,32}\Z", write_only=True, required=False,
+        error_messages={"invalid": "Enter a TimeGate PIN containing 1 to 32 digits."},
+    )
+    timegate_pin_saved = serializers.SerializerMethodField()
+
+    def get_timegate_pin_saved(self, employee):
+        request = self.context.get("request")
+        can_view = request and (is_admin(request.user) or (is_guard(request.user) and employee.user_id == request.user.pk))
+        return bool(can_view and hasattr(employee, "timegate_credential"))
+
+    def _save_timegate_pin(self, employee, pin):
+        if pin:
+            credential, _ = TimeGateCredential.objects.update_or_create(
+                employee=employee,
+                defaults={"encrypted_pin": pin_cipher("timegate").encrypt(pin.encode()).decode()},
+            )
+            employee.timegate_credential = credential
 
     def get_cortex_itime_pin_saved(self, employee):
         request = self.context.get("request")
@@ -279,6 +298,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"email": "This email is already linked to another employee."})
             if User.objects.filter(email__iexact=email, profile__role=UserProfile.Role.CONTROL_TEAM).exists():
                 raise serializers.ValidationError({"email": "This email is already used by a Control Team account."})
+        if "timegate_pin" in attrs:
+            request = self.context.get("request")
+            if not request or not is_admin(request.user):
+                raise PermissionDenied("Only Admin or Super Admin can manage TimeGate PINs.")
         cortex_fields = {"cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site"}
         if cortex_fields.intersection(attrs):
             request = self.context.get("request")
@@ -296,6 +319,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         pin = validated_data.pop("cortex_itime_pin", None)
         site = validated_data.pop("cortex_itime_site", None)
+        timegate_pin = validated_data.pop("timegate_pin", None)
         employee_id = (validated_data.get("employee_id") or "").strip()
         if not employee_id:
             existing_ids = set(Employee.objects.values_list("employee_id", flat=True))
@@ -306,6 +330,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         employee = super().create(validated_data)
         if site:
             save_cortex_access(employee, site, pin)
+        self._save_timegate_pin(employee, timegate_pin)
         return employee
 
     @transaction.atomic
@@ -313,6 +338,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         from .profile_completion import PROFILE_FIELDS
         pin = validated_data.pop("cortex_itime_pin", None)
         site = validated_data.pop("cortex_itime_site", None)
+        timegate_pin = validated_data.pop("timegate_pin", None)
         if any(field in validated_data and validated_data[field] != getattr(instance, field) for field in PROFILE_FIELDS):
             validated_data["profile_declaration_accepted_at"] = None
             validated_data["profile_declaration_version"] = ""
@@ -334,11 +360,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 user.save(update_fields=user_updates)
         if site or pin:
             save_cortex_access(instance, site, pin)
+        self._save_timegate_pin(instance, timegate_pin)
         return instance
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site", "cortex_itime_sites", "cortex_itime_pin_saved", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site", "cortex_itime_sites", "cortex_itime_pin_saved", "timegate_pin", "timegate_pin_saved", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
@@ -447,7 +474,7 @@ class SiteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Site
-        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "location_tracking_enabled", "location_tracking_enabled_at", "cortex_itime_enabled", "is_active", "created_at", "updated_at"]
+        fields = ["id", "client", "client_name", "site_id", "name", "address", "contact_name", "contact_phone", "required_guards", "latitude", "longitude", "geofence_radius_m", "attendance_mode", "location_tracking_enabled", "location_tracking_enabled_at", "cortex_itime_enabled", "timegate_enabled", "is_active", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at", "location_tracking_enabled_at"]
 
     def create(self, validated_data):

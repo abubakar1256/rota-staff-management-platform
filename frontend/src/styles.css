@@ -9,20 +9,20 @@
 .document-zip-actions .primary-button { display: inline-flex; align-items: center; gap: 6px; }
 .nested-document-table .document-zip-check { width: 42px; text-align: center; }
 .document-zip-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: #4d76de; }
-.cortex-itime-setting {
+.guard-pin-setting {
   display: grid; gap: 8px; margin: 0; min-width: 0; padding: 9px 12px;
   border: 1px solid #dce6fa; border-radius: 9px; background: #f6f9ff;
 }
-.cortex-itime-setting legend { color: #34435d; font-size: 12px; font-weight: 700; padding: 0 5px; }
+.guard-pin-setting legend { color: #34435d; font-size: 12px; font-weight: 700; padding: 0 5px; }
 .form-grid .cortex-itime-toggle { display: flex; align-items: flex-start; gap: 9px; }
 .form-grid .cortex-itime-toggle input { width: auto; margin: 2px 0 0; accent-color: #4d76de; }
 .cortex-itime-toggle span { display: grid; gap: 3px; }
 .cortex-itime-toggle small { color: #65738b; font-weight: 400; }
-.modal-card.employee-cortex-modal:has(.cortex-itime-setting) { overflow-y: auto; }
+.modal-card.employee-access-modal:has(.guard-pin-setting) { overflow-y: auto; }
 .cortex-itime-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
-.cortex-itime-pin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.guard-pin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cortex-itime-warning { padding: 9px 12px; border: 1px solid #efdbab; border-radius: 8px; background: #fffaee; color: #82520b; font-size: 13px; }
-.cortex-itime-pin { display: block; font: 700 24px ui-monospace, monospace; color: #284fae; overflow-wrap: anywhere; }
+.guard-pin-value { display: block; font: 700 24px ui-monospace, monospace; color: #284fae; overflow-wrap: anywhere; }
 @media (max-width: 520px) { .cortex-itime-fields { grid-template-columns: 1fr; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }

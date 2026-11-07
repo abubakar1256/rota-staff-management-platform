@@ -43,12 +43,12 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, EmployeePortalInvite, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, PasswordResetOTP, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
 from .notification_rules import CATEGORIES, GUARD_CATEGORIES
 from .notifications import publish_notification
 from .availability import assignment_availability_conflicts, unavailable_for_shift, unavailable_message
 from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
-from .cortex_itime import pin_cipher
+from .pin_encryption import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
 from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
@@ -909,8 +909,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         queryset = Employee.objects.all().prefetch_related(Prefetch("portal_invites", queryset=pending_invites, to_attr="_pending_portal_invites"))
         role = role_of(self.request.user)
         if is_admin(self.request.user):
-            queryset = queryset.select_related("cortex_itime_credential").defer(
-                "cortex_itime_credential__encrypted_pin",
+            queryset = queryset.select_related("cortex_itime_credential", "timegate_credential").defer(
+                "cortex_itime_credential__encrypted_pin", "timegate_credential__encrypted_pin",
             ).prefetch_related("cortex_itime_credential__sites")
         if role == "EMPLOYEE":
             queryset = queryset.filter(user=self.request.user)
@@ -935,10 +935,23 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         credential = getattr(employee, "cortex_itime_credential", None)
         sites = list(credential.sites.filter(cortex_itime_enabled=True, is_active=True).values("name", "site_id")) if credential else []
         try:
-            pin = pin_cipher().decrypt(credential.encrypted_pin.encode()).decode() if sites else None
+            pin = pin_cipher("cortex-itime").decrypt(credential.encrypted_pin.encode()).decode() if sites else None
         except InvalidToken:
             return Response({"detail": "The PIN could not be opened. Contact the office for assistance."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         return Response({"pin": pin, "sites": sites}, headers={"Cache-Control": "private, no-store"})
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated], url_path="timegate")
+    def timegate(self, request):
+        if role_of(request.user) != UserProfile.Role.EMPLOYEE:
+            raise PermissionDenied("Only guards can view their own TimeGate PIN.")
+        credential = get_object_or_404(
+            TimeGateCredential, employee__user=request.user, employee__status=Employee.Status.ACTIVE,
+        )
+        try:
+            pin = pin_cipher("timegate").decrypt(credential.encrypted_pin.encode()).decode()
+        except InvalidToken:
+            return Response({"detail": "The PIN could not be opened. Contact the office for assistance."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"pin": pin}, headers={"Cache-Control": "private, no-store"})
 
     @action(detail=False, methods=["get", "patch"], url_path="me")
     def me(self, request):

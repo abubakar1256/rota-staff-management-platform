@@ -264,6 +264,7 @@ class Site(models.Model):
     location_tracking_enabled = models.BooleanField(default=False)
     cortex_itime_enabled = models.BooleanField(default=False)
     location_tracking_enabled_at = models.DateTimeField(null=True, blank=True)
+    timegate_enabled = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -392,6 +393,11 @@ class CortexITimeCredential(models.Model):
     employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="cortex_itime_credential")
     encrypted_pin = models.TextField(editable=False)
     sites = models.ManyToManyField(Site, related_name="cortex_itime_credentials", blank=True)
+
+
+class TimeGateCredential(models.Model):
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="timegate_credential")
+    encrypted_pin = models.TextField(editable=False)
 
 
 class SiteInduction(models.Model):
