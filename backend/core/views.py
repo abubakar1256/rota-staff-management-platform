@@ -1275,7 +1275,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
     def publish(self, request, pk=None):
         rota_week = self.get_object()
         assignments = list(rota_week.assignments.select_related("employee", "shift_type"))
-        if not assignments:
+        if not assignments and not rota_week.whatsapp_shares.exists():
             return Response({"detail": "Add at least one assignment before publishing this rota."}, status=status.HTTP_400_BAD_REQUEST)
         conflicts = assignment_availability_conflicts(assignments)
         if conflicts:

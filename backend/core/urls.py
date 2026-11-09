@@ -4,6 +4,7 @@ from .screening import SecurityScreeningViewSet
 from . import admin_security_views
 from . import control_team
 from . import location_views
+from . import whatsapp_views
 from .availability_views import guard_availability
 
 from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, activation_details, approve_compliance, client_login, client_me, client_portal_summary, compliance_approvals, dashboard, employee_compliance, employee_compliance_pdf, google_drive_callback, google_drive_connect, google_drive_status, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, password_reset_verify, reject_compliance, report_print, reports_summary, request_compliance_resubmission, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
@@ -29,6 +30,12 @@ router.register("audit-logs", AuditLogViewSet, basename="audit-log")
 router.register("users", UserViewSet, basename="user")
 
 urlpatterns = [
+    path("whatsapp/guards/", whatsapp_views.whatsapp_guards, name="whatsapp-guards"),
+    path("whatsapp/announcements/", whatsapp_views.announcements, name="whatsapp-announcements"),
+    path("whatsapp/announcements/<int:pk>/", whatsapp_views.announcement_detail, name="whatsapp-announcement"),
+    path("whatsapp/announcements/<int:pk>/guards/<int:employee_id>/mark-sent/", whatsapp_views.mark_announcement_sent, name="whatsapp-announcement-mark-sent"),
+    path("whatsapp/rota-weeks/<int:pk>/", whatsapp_views.rota_recipients, name="whatsapp-rota-recipients"),
+    path("whatsapp/rota-weeks/<int:pk>/guards/<int:employee_id>/mark-sent/", whatsapp_views.mark_rota_sent, name="whatsapp-rota-mark-sent"),
     path("control/", include((control_team.urlpatterns, "control"))),
     path("guard-availability/", guard_availability, name="guard-availability"),
     path("location-tracking/active/", location_views.active_tracking, name="location-tracking-active"),

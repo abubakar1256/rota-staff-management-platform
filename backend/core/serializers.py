@@ -14,6 +14,7 @@ from .pin_encryption import pin_cipher
 from .document_requirements import documents_completion, is_british
 from .availability import shift_dates, unavailable_for_shift, unavailable_message
 from .rota_document_expiry import document_expiry_conflict
+from .whatsapp import normalise_whatsapp_number
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
 
@@ -223,6 +224,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     documents_completion = serializers.SerializerMethodField(read_only=True)
     profile_photo_url = serializers.SerializerMethodField(read_only=True)
     employee_id = serializers.CharField(required=False, allow_blank=True)
+    whatsapp_number = serializers.CharField(required=False, allow_blank=True, max_length=40)
     cortex_itime_pin = serializers.RegexField(r"\A[0-9]{1,32}\Z", write_only=True, required=False,
         error_messages={"invalid": "Enter a PIN containing 1 to 32 digits."})
     cortex_itime_site = serializers.PrimaryKeyRelatedField(
@@ -236,6 +238,24 @@ class EmployeeSerializer(serializers.ModelSerializer):
         error_messages={"invalid": "Enter a TimeGate PIN containing 1 to 32 digits."},
     )
     timegate_pin_saved = serializers.SerializerMethodField()
+
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        request = self.context.get("request")
+        if not request or not is_admin(request.user):
+            result.pop("whatsapp_number", None)
+        return result
+
+    def validate_whatsapp_number(self, value):
+        request = self.context.get("request")
+        if not request or not is_admin(request.user):
+            raise PermissionDenied("Only Admin or Super Admin can manage WhatsApp numbers.")
+        if not value:
+            return ""
+        try:
+            return normalise_whatsapp_number(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
 
     def get_timegate_pin_saved(self, employee):
         request = self.context.get("request")
@@ -365,7 +385,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site", "cortex_itime_sites", "cortex_itime_pin_saved", "timegate_pin", "timegate_pin_saved", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
+        fields = ["id", "employee_id", "user", "name", "date_of_birth", "nationality", "position", "roles", "phone", "whatsapp_number", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "joining_date", "status", "compliance_registration_enabled", "cortex_itime_enabled", "cortex_itime_pin", "cortex_itime_site", "cortex_itime_sites", "cortex_itime_pin_saved", "timegate_pin", "timegate_pin_saved", "profile_completion", "documents_completion", "profile_photo_url", "profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "has_portal_account", "portal_status", "portal_invite_url", "portal_invite_token", "portal_invite_expires_at", "created_at", "updated_at"]
         read_only_fields = ["profile_declaration_accepted_at", "profile_declaration_version", "profile_declaration_text", "id", "user", "profile_completion", "documents_completion", "has_portal_account", "created_at", "updated_at"]
 
     def get_profile_completion(self, obj):
@@ -603,10 +623,11 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
 class RotaWeekSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     assignment_count = serializers.SerializerMethodField()
+    whatsapp_previously_shared = serializers.SerializerMethodField()
 
     class Meta:
         model = RotaWeek
-        fields = ["id", "week_start", "status", "created_by", "created_by_name", "published_at", "assignment_count", "created_at", "updated_at"]
+        fields = ["id", "week_start", "status", "created_by", "created_by_name", "published_at", "assignment_count", "whatsapp_previously_shared", "created_at", "updated_at"]
         read_only_fields = ["created_by", "created_by_name", "published_at", "assignment_count", "created_at", "updated_at"]
 
     def validate_status(self, value):
@@ -619,6 +640,10 @@ class RotaWeekSerializer(serializers.ModelSerializer):
 
     def get_assignment_count(self, obj):
         return obj.assignments.count()
+
+    def get_whatsapp_previously_shared(self, obj):
+        request = self.context.get("request")
+        return bool(request and is_admin(request.user) and obj.whatsapp_shares.exists())
 
 
 class RotaConfirmationSerializer(serializers.ModelSerializer):
