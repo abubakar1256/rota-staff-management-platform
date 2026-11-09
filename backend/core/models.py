@@ -112,6 +112,7 @@ class Employee(models.Model):
     position = models.CharField(max_length=100, blank=True)
     roles = models.JSONField(default=list, blank=True)
     phone = models.CharField(max_length=40, blank=True)
+    whatsapp_number = models.CharField(max_length=16, blank=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     emergency_contact = models.CharField(max_length=160, blank=True)
@@ -377,6 +378,42 @@ class RotaAssignment(models.Model):
     def __str__(self):
         employee = self.employee.name if self.employee else "Unfilled"
         return f"{self.work_date} - {self.shift_type.name} - {self.site.name} - {employee}"
+
+
+class WhatsAppAnnouncement(models.Model):
+    title = models.CharField(max_length=120)
+    message = models.TextField(max_length=1500)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+
+class WhatsAppAnnouncementRecipient(models.Model):
+    announcement = models.ForeignKey(WhatsAppAnnouncement, on_delete=models.CASCADE, related_name="recipients")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT)
+    sent_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    sent_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["announcement", "employee"], name="unique_whatsapp_announcement_recipient"),
+        ]
+
+
+class RotaWhatsAppShare(models.Model):
+    rota_week = models.ForeignKey(RotaWeek, on_delete=models.CASCADE, related_name="whatsapp_shares")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT)
+    shifts = models.JSONField(default=list)
+    version = models.CharField(max_length=64)
+    sent_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    sent_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["rota_week", "employee"], name="unique_whatsapp_rota_share"),
+        ]
 
 
 class GuardUnavailability(models.Model):
