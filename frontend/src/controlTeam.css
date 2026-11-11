@@ -60,11 +60,18 @@
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(125px, .45fr) auto;
   align-items: center; gap: 12px; padding: 12px; border: 1px solid #e3e9f4; border-radius: 10px; background: #fbfcff;
 }
+.control-admin-member { grid-template-columns: minmax(0, 1fr) minmax(115px, .45fr) auto auto; }
+.control-member-hours { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.control-member-hours span { display: grid; gap: 3px; }
+.control-member-hours small { color: #65738b; font-size: 11px; }
+.control-member-hours strong { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .control-request { padding: 14px; border: 1px solid #e3e9f4; border-radius: 10px; background: #fbfcff; }
 .control-request .muted { margin-top: 3px; }
 .control-reason { margin: 8px 0 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 850px) {
   .control-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-admin-member { grid-template-columns: minmax(0, 1fr) auto; }
+  .control-admin-member > button { justify-self: end; }
   .control-timing-row { grid-template-columns: minmax(105px, 1fr) repeat(2, minmax(0, 1fr)); }
   .control-assignment-cell { grid-column: 1 / -1; }
 }

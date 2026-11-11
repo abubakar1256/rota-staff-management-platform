@@ -683,14 +683,18 @@ export function ControlTeamAdmin({ api, Photo, FilePreview }) {
           <Metric icon={Clock3} label="Checked in now" value={checkedIn} />
         </div>
         <section className="panel">
-          <div className="panel-header"><div><h3>Members</h3><p className="muted">Checked-in members appear first.</p></div></div>
-          {members.length ? <div className="control-member-list">{members.map((member) => <Fragment key={member.id}><article className="control-member">
+          <div className="panel-header"><div><h3>Members</h3><p className="muted">Checked-in members appear first. Totals include time worked since check-in.</p></div></div>
+          {members.length ? <div className="control-member-list">{members.map((member) => <Fragment key={member.id}><article className="control-member control-admin-member">
             <div className="control-identity"><Avatar member={member} Photo={Photo} /><div>
               <strong>{member.name}</strong>
               <p className="muted">{member.profile_complete ? member.email : "Profile setup pending"}</p>
             </div></div>
             <div><div className="control-actions"><MemberStatus member={member} /><LateBadge minutes={member.late_minutes} /></div>
               {member.checked_in_at && <small className="table-subtext">{formatUkDateTime(member.checked_in_at)}</small>}</div>
+            <div className="control-member-hours">
+              <span><small>This week</small><strong>{duration(member.weekly_seconds)}</strong></span>
+              <span><small>This month</small><strong>{duration(member.monthly_seconds)}</strong></span>
+            </div>
             <button type="button" className="secondary-button" aria-pressed={selected === member.id} onClick={() => setSelected(selected === member.id ? null : member.id)}>View details</button>
           </article>
           {selected === member.id && (detail.data ? <MemberDetail member={detail.data} api={api} FilePreview={FilePreview} onClose={() => setSelected(null)} /> : <QueryStatus query={detail} label="member details" />)}
