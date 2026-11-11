@@ -222,7 +222,8 @@ class ControlTeamTests(TestCase):
         self.complete_profile()
         path = "/api/control/attendance/"
         incomplete = self.portal.post(
-            path, {"action": "check_in", "assignment_id": self.assignment_id, "photo": picture()}, format="multipart",
+            path, {"action": "check_in", "assignment_id": self.assignment_id, "photo": picture(), "shift": "N"},
+            format="multipart",
         )
         self.assertEqual(incomplete.status_code, 400)
         self.assertIn("latitude", incomplete.data)
@@ -235,6 +236,11 @@ class ControlTeamTests(TestCase):
         entry = checked_in.data["attendance"][0]
         self.assertEqual(entry["late_minutes"], 120)
         self.assertEqual(entry["check_in_location"]["latitude"], 51.5075)
+        incomplete = self.portal.post(path, {
+            "action": "check_out", "attendance_id": entry["id"], "photo": picture(), "shift": "N",
+        }, format="multipart")
+        self.assertEqual(incomplete.status_code, 400)
+        self.assertIn("latitude", incomplete.data)
         self.assertEqual(self.mark("check_out", attendance_id=entry["id"], latitude=51.52).status_code, 400)
         self.assertIsNone(self.member.attendance.get().checked_out_at)
         with patch("core.control_team.haversine_distance_m", return_value=150.004):
@@ -246,6 +252,35 @@ class ControlTeamTests(TestCase):
             **OFFICE_GPS, "distance_m": 150, "radius_m": 150,
         })
 
+    def test_night_attendance_needs_photos_but_does_not_store_location(self):
+        self.complete_profile()
+        self.settings_record.latitude = self.settings_record.longitude = None
+        self.settings_record.save(update_fields=["latitude", "longitude"])
+        rule = self.office.post(WEEKLY_URL, {
+            "member": self.member.pk, "shift": "N", "weekdays": [4],
+        }, format="json")
+        self.assertEqual(rule.status_code, 201, rule.data)
+        path = "/api/control/attendance/"
+        check_in = {"action": "check_in", "weekly_assignment_id": rule.data["id"], "shift_date": "2026-11-13"}
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 13, 22, tzinfo=timezone.utc)):
+            self.assertEqual(self.portal.post(path, check_in, format="multipart").status_code, 400)
+            checked_in = self.portal.post(path, {**check_in, "photo": picture()}, format="multipart")
+        self.assertEqual(checked_in.status_code, 200, checked_in.data)
+        entry = checked_in.data["attendance"][0]
+        self.assertEqual(entry["shift"], "N")
+        self.assertIsNone(entry["check_in_location"])
+        self.assertTrue(entry["check_in_photo_url"])
+
+        check_out = {"action": "check_out", "attendance_id": entry["id"]}
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 14, 8, tzinfo=timezone.utc)):
+            self.assertEqual(self.portal.post(path, check_out, format="multipart").status_code, 400)
+            checked_out = self.portal.post(path, {**check_out, "photo": picture()}, format="multipart")
+        self.assertEqual(checked_out.status_code, 200, checked_out.data)
+        entry = checked_out.data["attendance"][0]
+        self.assertTrue(entry["checked_out_at"])
+        self.assertTrue(entry["check_out_photo_url"])
+        self.assertIsNone(entry["check_out_location"])
+
     def test_overnight_checkout_deadline_survives_shift_edit_and_runs_from_cron(self):
         self.complete_profile()
         # Check in after UK midnight on the night the clocks move forward.
@@ -254,6 +289,7 @@ class ControlTeamTests(TestCase):
             checked_in = self.mark("check_in", assignment_id=assignment["id"])
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
         entry = self.member.attendance.get()
+        self.assertIsNone(entry.check_in_location)
         self.assertEqual(entry.scheduled_start_at, datetime(2026, 3, 28, 22, tzinfo=timezone.utc))
         self.assertEqual(entry.scheduled_end_at, datetime(2026, 3, 29, 7, tzinfo=timezone.utc))
         deadline = datetime(2026, 3, 29, 9, tzinfo=timezone.utc)

@@ -16,6 +16,7 @@ const requestsPath = root + "/requests/";
 const officeRequestsPath = teamPath + "requests/";
 const queryKey = (path) => ["rota", "control", path];
 const requestOptions = (method, data) => ({ method, body: JSON.stringify(data) });
+const NIGHT_SHIFT = "N";
 const shiftNames = { M: "Morning", D: "Mid-day", E: "Evening", N: "Night" };
 const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -101,12 +102,12 @@ function AttendanceHistory({ member, FilePreview }) {
         <td>{formatUkDateTime(entry.checked_in_at)}
           <ShiftDetails entry={entry} />
           <LateBadge minutes={entry.late_minutes} />
-          <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
+          <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
         </td>
         <td>{entry.checked_out_at ? formatUkDateTime(entry.checked_out_at) : "In progress"}
           {entry.closed_by_admin && <small className="table-subtext">Closed by admin</small>}
           {entry.auto_checked_out && <small className="table-subtext">Automatic checkout</small>}
-          <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
+          <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
         </td>
         <td>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.checked_in_at)) / 1000) : "—"}</td>
       </tr>)}</tbody>
@@ -236,6 +237,13 @@ function ControlTabs({ tabs, page, onChange, label }) {
   </nav>;
 }
 
+const attendanceCameraErrors = {
+  NotAllowedError: "Camera access is blocked. Allow camera access for this site and for Chrome in your phone settings, then retry.",
+  NotFoundError: "No camera was found. Check that camera access is on in your device settings, then retry.",
+  NotReadableError: "The camera could not start. Close any apps or tabs using it and check that camera access is on, then retry.",
+  AbortError: "The camera was interrupted. Close any apps or tabs using it, then retry.",
+};
+
 function AttendanceCamera({ onCapture }) {
   const videoRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -247,13 +255,24 @@ function AttendanceCamera({ onCapture }) {
     let stream;
     const video = videoRef.current;
     async function start() {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "user" } }, audio: false });
-        if (active) video.srcObject = stream;
-        else stream.getTracks().forEach((track) => track.stop());
-      } catch {
-        if (active) setError("Camera unavailable. Allow camera access and try again.");
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices?.getUserMedia) {
+        setError("Open the secure portal in a browser on a device with a camera, then try again.");
+        return;
       }
+      try {
+        try {
+          stream = await mediaDevices.getUserMedia({ video: { facingMode: { ideal: "user" } }, audio: false });
+        } catch (err) {
+          if (!active || !["NotFoundError", "OverconstrainedError", "NotReadableError", "AbortError"].includes(err.name)) throw err;
+          stream = await mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+      } catch (err) {
+        if (active) setError(attendanceCameraErrors[err.name] || "Could not open the camera. Try again in Chrome or another browser with camera access.");
+        return;
+      }
+      if (active) video.srcObject = stream;
+      else stream.getTracks().forEach((track) => track.stop());
     }
     start();
     return () => {
@@ -293,7 +312,7 @@ function AttendanceCamera({ onCapture }) {
   </>;
 }
 
-function AttendanceCapture({ action, onClose, onSubmit }) {
+function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
   const dialogRef = useRef(null);
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState("");
@@ -316,10 +335,10 @@ function AttendanceCapture({ action, onClose, onSubmit }) {
   }, [photo]);
 
   async function submit() {
-    setBusy("Getting GPS…");
+    setBusy(requiresLocation ? "Getting GPS…" : "Saving…");
     setError("");
     try {
-      const location = await readCurrentLocation();
+      const location = requiresLocation ? await readCurrentLocation() : null;
       setBusy("Saving…");
       await onSubmit(photo, location);
     }
@@ -334,7 +353,7 @@ function AttendanceCapture({ action, onClose, onSubmit }) {
     <h3 id="control-capture-title">{label} photo</h3>
     {photo ? <>
       {preview && <img src={preview} alt={label + " photo preview"} className="camera-preview" />}
-      <p className="muted">Allow precise location when you confirm.</p>
+      {requiresLocation && <p className="muted">Allow precise location when you confirm.</p>}
       {error && <p className="error" role="alert">{error}</p>}
       <div className="control-actions">
         <button type="button" className="primary-button" disabled={Boolean(busy) || stale} onClick={submit}>{busy || `Confirm ${label}`}</button>
@@ -348,7 +367,7 @@ function AttendanceCapture({ action, onClose, onSubmit }) {
   </dialog>;
 }
 
-function AssignedShifts({ shifts, canCheckIn, onCheckIn }) {
+function AssignedShifts({ shifts, canCheckIn, hasOfficePin, onCheckIn }) {
   return <section className="panel">
     <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time</p></div></div>
     {shifts.length ? <div className="control-member-list">{shifts.map((shift) => <article className="control-member" key={shift.id}>
@@ -356,7 +375,8 @@ function AssignedShifts({ shifts, canCheckIn, onCheckIn }) {
         <small className="table-subtext">{formatUkDateTime(shift.scheduled_start_at)} – {formatUkDateTime(shift.scheduled_end_at)}</small>
       </div>
       <div><span className={`status-pill ${shift.started ? "active" : "neutral"}`}>{shift.status}</span></div>
-      {shift.status === "Available" && <button type="button" className="primary-button" disabled={!canCheckIn} onClick={() => onCheckIn(shift)}>
+      {shift.status === "Available" && <button type="button" className="primary-button"
+        disabled={!canCheckIn || (shift.shift !== NIGHT_SHIFT && !hasOfficePin)} onClick={() => onCheckIn(shift)}>
         <Camera size={15} aria-hidden="true" /> Check In
       </button>}
     </article>)}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
@@ -371,10 +391,16 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
   const member = profile.data;
   const requests = useControlQuery(api, requestsPath, Boolean(member?.profile_complete && page === "requests"));
   const activePage = member?.profile_complete ? page : "profile";
-  const settings = useControlQuery(api, settingsPath, Boolean(member?.profile_complete && activePage === "attendance"));
+  const current = member?.attendance.find((entry) => !entry.checked_out_at);
+  const assignedShifts = member?.assigned_shifts || [];
+  const availableShifts = assignedShifts.filter((shift) => shift.status === "Available");
+  const locationShifts = availableShifts.length ? availableShifts : assignedShifts;
+  const showOfficeLocation = current ? current.shift !== NIGHT_SHIFT :
+    !locationShifts.length || locationShifts.some((shift) => shift.shift !== NIGHT_SHIFT);
+  const captureRequiresLocation = capture?.shift.shift !== NIGHT_SHIFT;
+  const settings = useControlQuery(api, settingsPath, Boolean(member?.profile_complete && activePage === "attendance" && showOfficeLocation));
   const office = settings.data;
   const officePin = sitePoint(office?.latitude, office?.longitude);
-  const current = member?.attendance.find((entry) => !entry.checked_out_at);
   const saveProfile = (data) => {
     client.setQueryData(queryKey(profilePath), data);
     setPage("attendance");
@@ -383,14 +409,16 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
     const body = new FormData();
     body.set("action", capture.action);
     body.set("photo", photo, "attendance.jpg");
-    if (capture.action === "check_out") body.set("attendance_id", capture.id);
+    if (capture.action === "check_out") body.set("attendance_id", capture.shift.id);
     else if (capture.shift.weekly_assignment_id) {
       body.set("weekly_assignment_id", capture.shift.weekly_assignment_id);
       body.set("shift_date", capture.shift.shift_date);
     } else body.set("assignment_id", capture.shift.id);
-    body.set("latitude", location.latitude);
-    body.set("longitude", location.longitude);
-    body.set("accuracy_m", location.accuracy);
+    if (location) {
+      body.set("latitude", location.latitude);
+      body.set("longitude", location.longitude);
+      body.set("accuracy_m", location.accuracy);
+    }
     try {
       const updated = await api(root + "/attendance/", {
         method: "POST", body, silentError: true, silentLoading: true, skipInvalidation: true,
@@ -422,25 +450,26 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
               <ShiftDetails entry={current} />
               {current?.auto_checkout_at && <small className="table-subtext">Auto checkout at {formatUkDateTime(current.auto_checkout_at)}</small>}
             </div></div>
-            {current && <button type="button" className="primary-button" disabled={!officePin}
-              onClick={() => setCapture({ action: "check_out", id: current.id })}>
+            {current && <button type="button" className="primary-button" disabled={current.shift !== NIGHT_SHIFT && !officePin}
+              onClick={() => setCapture({ action: "check_out", shift: current })}>
               <Camera size={16} aria-hidden="true" /> Check Out
             </button>}
-            <div className="control-office-location">
+            {showOfficeLocation && captureRequiresLocation && <div className="control-office-location">
               {!office ? <QueryStatus query={settings} label="attendance location" /> : officePin ?
                 <div className="control-actions"><LocationLink location={officePin} label="Attendance location" />
                   <span className="muted">{office.address && `${office.address} · `}{office.radius_m} m radius</span></div> :
                 <p className="muted">The office needs to set the attendance location.</p>}
-            </div>
+            </div>}
           </section>
-          <AssignedShifts shifts={member.assigned_shifts || []} canCheckIn={Boolean(officePin && !current)}
+          <AssignedShifts shifts={assignedShifts} canCheckIn={!current} hasOfficePin={Boolean(officePin)}
             onCheckIn={(shift) => setCapture({ action: "check_in", shift })} />
           <div className="control-metrics">
             <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
             <Metric icon={CalendarDays} label="This month" value={duration(member.monthly_seconds)} detail="Calendar month · UK time" />
           </div>
           <AttendanceHistory member={member} FilePreview={FilePreview} />
-          {capture && <AttendanceCapture action={capture.action} onClose={() => setCapture(null)} onSubmit={markAttendance} />}
+          {capture && <AttendanceCapture action={capture.action} requiresLocation={captureRequiresLocation}
+            onClose={() => setCapture(null)} onSubmit={markAttendance} />}
         </>}
         {activePage === "requests" && <><RequestForm api={api} /><RequestList query={requests} api={api} /></>}
       </>}

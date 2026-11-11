@@ -136,7 +136,7 @@ class AttendanceSerializer(serializers.ModelSerializer):
         fields = [
             "id", "checked_in_at", "checked_out_at", "closed_by_admin",
             "check_in_photo_url", "check_out_photo_url", "check_in_location", "check_out_location",
-            "shift_name", "scheduled_start_at", "scheduled_end_at", "auto_checkout_at", "auto_checked_out", "late_minutes",
+            "shift", "shift_name", "scheduled_start_at", "scheduled_end_at", "auto_checkout_at", "auto_checked_out", "late_minutes",
         ]
 
     def get_late_minutes(self, entry):
@@ -175,9 +175,6 @@ class AttendanceActionSerializer(serializers.Serializer):
     assignment_id = serializers.IntegerField(min_value=1, required=False)
     weekly_assignment_id = serializers.IntegerField(min_value=1, required=False)
     shift_date = serializers.DateField(required=False)
-    latitude = serializers.FloatField()
-    longitude = serializers.FloatField()
-    accuracy_m = serializers.FloatField()
 
     def validate(self, data):
         if data["action"] == "check_out" and "attendance_id" not in data:
@@ -187,6 +184,15 @@ class AttendanceActionSerializer(serializers.Serializer):
             weekly = "weekly_assignment_id" in data
             if dated == weekly or weekly != ("shift_date" in data):
                 raise serializers.ValidationError({"assignment_id": "Choose one of your assigned shifts before checking in."})
+        return data
+
+
+class AttendanceLocationSerializer(serializers.Serializer):
+    latitude = serializers.FloatField()
+    longitude = serializers.FloatField()
+    accuracy_m = serializers.FloatField()
+
+    def validate(self, data):
         if not valid_coordinates(data["latitude"], data["longitude"], data["accuracy_m"]):
             raise serializers.ValidationError("A valid GPS location and accuracy are required. Allow location access and try again.")
         return data
@@ -366,10 +372,15 @@ def check_in_assignment(member, data, now):
     return assignments.filter(shift_date=day, shift=rule.shift).first() or occurrence
 
 
-def verified_location(data, settings):
+def attendance_location(data, settings, shift):
+    if shift == ControlAttendance.Shift.NIGHT:
+        return None
+    serializer = AttendanceLocationSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    location = serializer.validated_data
     if settings.latitude is None or settings.longitude is None:
         raise serializers.ValidationError({"detail": "The Control Team location is not set. Contact the office."})
-    latitude, longitude, accuracy = data["latitude"], data["longitude"], data["accuracy_m"]
+    latitude, longitude, accuracy = location["latitude"], location["longitude"], location["accuracy_m"]
     radius = settings.radius_m
     distance = haversine_distance_m(latitude, longitude, settings.latitude, settings.longitude)
     if distance > radius:
@@ -615,7 +626,6 @@ def attendance(request):
         close_expired_attendance(now, member_id=member.pk)
         current = None
 
-    location = verified_location(data, settings)
     if checking_in:
         if not member.profile_complete:
             raise PermissionDenied("Complete your profile and upload a photo before checking in.")
@@ -626,6 +636,8 @@ def attendance(request):
             now = timezone.now()
             if not assignment or assignment_status(assignment, now) != "Available":
                 return Response({"detail": "This shift is unavailable for check-in. Check your assigned shifts."}, status=status.HTTP_409_CONFLICT)
+        location = attendance_location(request.data, settings, assignment.shift)
+        if not current:
             if not assignment.pk:
                 assignment.save()
             ControlAttendance.objects.create(
@@ -640,6 +652,7 @@ def attendance(request):
                 {"detail": "Your attendance changed. Open Check Out again to take a new photo."},
                 status=status.HTTP_409_CONFLICT,
             )
+        location = attendance_location(request.data, settings, current.shift)
         current.checked_out_at = now
         current.check_out_photo = data["photo"]
         current.check_out_location = location
