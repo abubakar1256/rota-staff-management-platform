@@ -109,3 +109,88 @@ class GuardDocumentWizardTests(APITestCase):
         response = self.certificate(employee=other.pk)
         self.assertEqual(response.status_code, 403)
         self.assertFalse(other.documents.exists())
+
+    def test_office_edit_accepts_blank_and_legacy_null_dates_for_optional_fields(self):
+        admin = get_user_model().objects.create_superuser(username="date-editor")
+        self.client.force_authenticate(admin)
+        code = self.record("National Insurance Number (NI)", document_number="OLD", verification_status="VERIFIED")
+        path = f"/api/documents/{code.pk}/"
+
+        response = self.client.patch(path, {"document_number": "NEW", "issue_date": "null", "expiry_date": "null"}, format="multipart")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["verification_status"], "PENDING")
+        code.refresh_from_db()
+        self.assertEqual(code.document_number, "NEW")
+        self.assertEqual(code.file.name, "tests/evidence.pdf")
+        self.assertIsNone(code.issue_date)
+        self.assertIsNone(code.expiry_date)
+
+        code.issue_date, code.expiry_date = self.today, self.future
+        code.save(update_fields=["issue_date", "expiry_date"])
+        response = self.client.patch(path, {"issue_date": "", "expiry_date": ""}, format="multipart")
+        self.assertEqual(response.status_code, 200, response.data)
+        code.refresh_from_db()
+        self.assertIsNone(code.issue_date)
+        self.assertIsNone(code.expiry_date)
+
+        response = self.client.patch(path, {"issue_date": "invalid-date"}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("issue_date", response.data)
+
+    def test_required_expiry_cannot_be_cleared(self):
+        passport = self.record("Passport (First 2 pages)", expiry_date=self.future)
+        response = self.client.patch(f"/api/documents/{passport.pk}/", {"expiry_date": ""}, format="multipart")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("requires an expiry date", response.data["expiry_date"][0])
+        passport.refresh_from_db()
+        self.assertEqual(passport.expiry_date, self.future)
+
+    def test_document_types_apply_their_own_date_requirements(self):
+        document_types = {
+            "Passport (First 2 pages)": "expiry_date", "SIA Card (Front)": "expiry_date",
+            "SIA Card (Front & Back)": "expiry_date", "SIA Card (Back)": None,
+            "Share Code": "expiry_date", "National Insurance Number (NI)": None,
+            "CSCS Card (Front)": "expiry_date", "CSCS Card (Back)": None,
+            "Proof of Address (last 3 months)": "issue_date",
+            "Proof of Address 1 (last 3 months)": "issue_date",
+            "Proof of Address 2 (last 3 months)": "issue_date",
+            "Driving License (Front)": None, "Driving License (Back)": None,
+            "Personal Photograph": None, "Right to Work": None, "PPAC Code": None,
+            "ACT certificate": "expiry_date",
+        }
+        for document_type, required_date in document_types.items():
+            with self.subTest(document_type=document_type):
+                file = SimpleUploadedFile("photo.jpg", b"\xff\xd8\xffimage", content_type="image/jpeg") if document_type == "Personal Photograph" else self.file()
+                response = self.client.post("/api/documents/", {
+                    "employee": self.employee.pk, "document_type": document_type, "file": file,
+                    "document_number": "1234", "issue_date": "", "expiry_date": "",
+                }, format="multipart")
+                self.assertEqual(response.status_code, 400 if required_date else 201, response.data)
+                if required_date:
+                    self.assertIn(required_date, response.data)
+
+    @override_settings(FILE_UPLOAD_MAX_MEMORY_SIZE=0)
+    def test_office_can_edit_old_address_notes_but_replacement_needs_a_current_issue_date(self):
+        admin = get_user_model().objects.create_superuser(username="address-editor")
+        self.client.force_authenticate(admin)
+        proof = self.record("Proof of Address 1 (last 3 months)", issue_date=self.today - timedelta(days=93))
+        path = f"/api/documents/{proof.pk}/"
+        saved = self.client.patch(path, {"notes": "Archived evidence"}, format="multipart")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        failed = self.client.patch(path, {"file": self.file(), "expiry_date": ""}, format="multipart")
+        self.assertEqual(failed.status_code, 400)
+        self.assertIn("issue_date", failed.data)
+        replaced = self.client.patch(path, {"file": self.file(), "issue_date": self.today.isoformat(), "expiry_date": ""}, format="multipart")
+        self.assertEqual(replaced.status_code, 200, replaced.data)
+
+    def test_changing_document_type_requires_its_dates_and_resets_review(self):
+        admin = get_user_model().objects.create_superuser(username="type-editor")
+        self.client.force_authenticate(admin)
+        document = self.record("CSCS Card (Back)", verification_status="VERIFIED")
+        path = f"/api/documents/{document.pk}/"
+        failed = self.client.patch(path, {"document_type": "CSCS Card (Front)"}, format="multipart")
+        self.assertEqual(failed.status_code, 400)
+        self.assertIn("expiry_date", failed.data)
+        saved = self.client.patch(path, {"document_type": "CSCS Card (Front)", "expiry_date": self.future.isoformat()}, format="multipart")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data["verification_status"], "PENDING")

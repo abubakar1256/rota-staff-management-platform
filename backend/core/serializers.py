@@ -1,3 +1,4 @@
+from copy import copy
 from datetime import datetime, timedelta
 from math import isfinite
 import os
@@ -739,6 +740,14 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         fields = ["id", "employee", "employee_name", "document_type", "document_number", "certificate_type", "certificate_name", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "created_at", "updated_at"]
 
+    def to_internal_value(self, data):
+        data = copy(data)
+        for field in ("issue_date", "expiry_date"):
+            # Older clients appended nullable dates directly to FormData.
+            if data.get(field) in ("", "null"):
+                data[field] = None
+        return super().to_internal_value(data)
+
     def get_secure_file_url(self, obj):
         if not obj.file:
             return None
@@ -798,23 +807,31 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
             attrs["certificate_name"] = certificate_name if certificate_type == "OTHER" else ""
         if employee and document_type and not certificate and existing.exists():
             raise serializers.ValidationError({"document_type": "This employee already has this document. Update the existing record instead."})
+        saved_issue_date = getattr(self.instance, "issue_date", None)
+        saved_expiry_date = getattr(self.instance, "expiry_date", None)
+        issue_date = attrs.get("issue_date", saved_issue_date)
+        expiry_date = attrs.get("expiry_date", saved_expiry_date)
+        issue_changed = issue_date != saved_issue_date
+        expiry_changed = expiry_date != saved_expiry_date
+        evidence_changed = (
+            self.instance is None or document_type != self.instance.document_type
+            or bool(uploaded_file) or ("file_url" in attrs and attrs["file_url"] != self.instance.file_url)
+        )
         proof_types = {"Proof of Address (last 3 months)", "Proof of Address 1 (last 3 months)", "Proof of Address 2 (last 3 months)"}
-        if document_type in proof_types:
-            issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
+        if document_type in proof_types and (evidence_changed or issue_changed):
             if not issue_date:
                 raise serializers.ValidationError({"issue_date": "Proof of address must include its issue date."})
             today = timezone.localdate()
             if issue_date > today or issue_date < today - timedelta(days=92):
                 raise serializers.ValidationError({"issue_date": "Proof of address must be dated within the last 3 months."})
-        issue_date = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
-        expiry_date = attrs.get("expiry_date", getattr(self.instance, "expiry_date", None))
-        if issue_date and issue_date > timezone.localdate():
+        if (evidence_changed or issue_changed) and issue_date and issue_date > timezone.localdate():
             raise serializers.ValidationError({"issue_date": "Issue date cannot be in the future."})
-        if issue_date and expiry_date and expiry_date < issue_date:
+        if (evidence_changed or issue_changed or expiry_changed) and issue_date and expiry_date and expiry_date < issue_date:
             raise serializers.ValidationError({"expiry_date": "Expiry date cannot be before the issue date."})
         expiry_types = {"Passport (First 2 pages)", "SIA Card (Front)", "SIA Card (Front & Back)", "Share Code", "ACT certificate", "CSCS Card (Front)"}
-        requires_expiry = document_type in expiry_types or (certificate and certificate_type == "ACT")
-        if requires_expiry and (self.instance is None or "file" in attrs or "expiry_date" in attrs or "certificate_type" in attrs) and not expiry_date:
+        act_certificate = certificate and certificate_type == "ACT"
+        became_act = act_certificate and getattr(self.instance, "certificate_type", "") != "ACT"
+        if (document_type in expiry_types or act_certificate) and (evidence_changed or expiry_changed or became_act) and not expiry_date:
             raise serializers.ValidationError({"expiry_date": "This document requires an expiry date."})
         code_types = {"Share Code", "National Insurance Number (NI)", "PPAC Code"}
         notes = attrs.get("notes", getattr(self.instance, "notes", ""))

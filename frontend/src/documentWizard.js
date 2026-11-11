@@ -30,6 +30,14 @@ export const optionalDocumentItems = [
   { key: "ppac_code", label: "PPAC Code", code: true },
 ];
 
+export function documentFieldRules(type, certificateType) {
+  if (type === "ACT certificate" || type === "Certificates") {
+    return { expiry: type === "ACT certificate" || certificateType === "ACT" };
+  }
+  const items = [...requiredDocumentItems(), ...optionalDocumentItems];
+  return items.find((item) => item.label === type || item.aliases?.includes(type)) || {};
+}
+
 export function documentError(item, document, today = localDate()) {
   const file = hasDocumentFile(document);
   if (!file && !(item.code && (clean(document?.document_number) || clean(document?.notes)))) return item.code ? "Enter the code / number or upload supporting evidence." : "Choose a document file before continuing.";
@@ -75,7 +83,9 @@ export async function saveDocument(api, employee, item, existing, draft = {}) {
   if (draft.file) {
     body = new FormData();
     Object.entries(values).forEach(([key, value]) => { if (value !== null) body.append(key, String(value)); });
-    if (item.optionalExpiry && existing && draft.expiry_date === "") body.set("expiry_date", "");
+    for (const field of ["issue_date", "expiry_date"]) {
+      if (existing?.[field] && draft[field] === "") body.set(field, "");
+    }
     body.append("file", draft.file);
   } else body = JSON.stringify(values);
   const saved = await api(existing ? `/documents/${existing.id}/` : "/documents/", { method: existing ? "PATCH" : "POST", body, silentLoading: true });

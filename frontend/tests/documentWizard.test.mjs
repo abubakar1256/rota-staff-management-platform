@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { certificateLabel, certificateTypes, documentComplete, documentsProgress, findStepDocument, optionalDocumentItems, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
+import { certificateLabel, certificateTypes, documentComplete, documentFieldRules, documentsProgress, findStepDocument, optionalDocumentItems, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
 
 const today = "2026-11-03";
 const complete = (nationality = "Pakistani") => requiredDocumentItems({ nationality }).map((item, index) => ({ id: index + 1, document_type: item.label, file: `/file-${index}.pdf`, document_number: "123456", expiry_date: "2099-01-01", issue_date: today, verification_status: "PENDING" }));
@@ -66,4 +66,31 @@ test("an unchanged rejected document cannot advance even when an empty draft tri
   const item = requiredDocumentItems({ nationality: "British" })[0];
   const existing = { id: 1, document_type: item.label, file: "/passport.pdf", expiry_date: "2099-01-01", verification_status: "REJECTED" };
   await assert.rejects(saveDocument(async () => existing, { id: 1 }, item, existing, { file: null }), /still needs attention/);
+});
+
+test("office fields follow the document type including older names and certificate choices", () => {
+  assert.equal(documentFieldRules("SIA Card (Front & Back)").expiry, true);
+  assert.equal(documentFieldRules("Proof of Address 2 (last 3 months)").issue, true);
+  assert.equal(documentFieldRules("National Insurance Number (NI)").code, true);
+  assert.equal(documentFieldRules("National Insurance Number (NI)").expiry, undefined);
+  assert.equal(documentFieldRules("Right to Work").optionalExpiry, true);
+  assert.equal(documentFieldRules("Personal Photograph").photo, true);
+  assert.equal(documentFieldRules("ACT certificate").expiry, true);
+  for (const option of certificateTypes) {
+    assert.equal(documentFieldRules("Certificates", option.value).expiry, option.value === "ACT");
+  }
+});
+
+test("replacing an optional file can clear a previously saved expiry date", async () => {
+  const item = { label: "Certificates", certificate: true };
+  const existing = { id: 9, document_type: item.label, certificate_type: "NASDU", expiry_date: "2099-01-01" };
+  const replacement = new File(["%PDF-test"], "replacement.pdf", { type: "application/pdf" });
+  const api = async (path, options) => {
+    assert.equal(path, "/documents/9/");
+    assert.equal(options.method, "PATCH");
+    assert.equal(options.body.get("expiry_date"), "");
+    assert.equal(options.body.get("issue_date"), null);
+    return { id: 9, expiry_date: null };
+  };
+  await saveDocument(api, { id: 1 }, item, existing, { file: replacement, expiry_date: "" });
 });
