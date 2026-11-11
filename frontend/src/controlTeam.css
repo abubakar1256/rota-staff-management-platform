@@ -32,9 +32,39 @@
 .control-assignment-days button[aria-pressed="true"] { color: #284fae; background: #eef3ff; border-color: #9cb2f4; }
 .control-assignment-note, .control-assignment-list { grid-column: 1 / -1; margin: 0; }
 .control-assignment-list { list-style: none; padding: 0; display: grid; gap: 5px; }
+.control-assignment-list[data-shift="M"] {
+  --assignment-surface: #fffaeb;
+  --assignment-accent: #b67609;
+  --assignment-day-background: #ffedb9;
+  --assignment-day-text: #694400;
+}
+.control-assignment-list[data-shift="D"] {
+  --assignment-surface: #edf9f1;
+  --assignment-accent: #268351;
+  --assignment-day-background: #d5efde;
+  --assignment-day-text: #1b5936;
+}
+.control-assignment-list[data-shift="E"] {
+  --assignment-surface: #fff4ee;
+  --assignment-accent: #c45d25;
+  --assignment-day-background: #ffe1d0;
+  --assignment-day-text: #813709;
+}
+.control-assignment-list[data-shift="N"] {
+  --assignment-surface: #eef2ff;
+  --assignment-accent: #455f9b;
+  --assignment-day-background: #dce5fa;
+  --assignment-day-text: #2c4272;
+}
 .control-assignment-list li {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
-  background: #f4f7fb; border-radius: 7px; padding: 6px 8px; font-size: 13px; overflow-wrap: anywhere;
+  background: var(--assignment-surface); border-inline-start: 3px solid var(--assignment-accent);
+  border-radius: 7px; padding: 6px 8px; font-size: 13px; overflow-wrap: anywhere;
+}
+.control-assigned-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.control-assigned-days span {
+  padding: 2px 6px; border-radius: 4px; background: var(--assignment-day-background);
+  color: var(--assignment-day-text); font-size: 11px; font-weight: 700;
 }
 .control-remove-assignment { color: #a03447; }
 .control-identity { display: flex; gap: 12px; align-items: center; min-width: 0; overflow-wrap: anywhere; }

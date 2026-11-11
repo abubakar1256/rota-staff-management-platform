@@ -561,11 +561,14 @@ function ShiftAssignmentControls({ api, code, date, assignments, members, onChan
     </div>
     {saveTimingFirst && <small className="muted control-assignment-note">Save the new shift timing before assigning.</small>}
     {error && <p className="error control-assignment-note" role="alert">{error}</p>}
-    {assignments.length > 0 && <ul className="control-assignment-list">
+    {assignments.length > 0 && <ul className="control-assignment-list" data-shift={code}>
       {assignments.map((assignment) => <li key={assignment.id}>
         <div><strong>{assignment.member_name}</strong>
+          {weekly && <div className="control-assigned-days" role="group" aria-label="Assigned days">
+            {assignment.weekdays.map((day) => <span key={day}>{weekdays[day]}</span>)}
+          </div>}
           <small className="table-subtext">{weekly ?
-            `${assignment.weekdays.map((day) => weekdays[day]).join(", ")} · ${assignment.start_time}–${assignment.end_time}` :
+            `${assignment.start_time}–${assignment.end_time}` :
             `${formatUkAttendanceTime(assignment.scheduled_start_at)} – ${formatUkAttendanceTime(assignment.scheduled_end_at)}${assignment.started ? ` · ${assignment.status}` : ""}`}
           </small>
         </div>
