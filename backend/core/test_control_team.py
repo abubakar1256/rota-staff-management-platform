@@ -17,6 +17,7 @@ from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMem
 
 SETTINGS_URL = "/api/control/attendance/settings/"
 ASSIGNMENTS_URL = "/api/control/team/assignments/"
+WEEKLY_URL = "/api/control/team/weekly-assignments/"
 OFFICE_GPS = {"latitude": 51.5074, "longitude": -0.1278, "accuracy_m": 12}
 
 
@@ -69,7 +70,7 @@ class ControlTeamTests(TestCase):
         return response.data["photo_url"]
 
     def mark(self, action, **fields):
-        assignment = {"assignment_id": self.assignment_id} if action == "check_in" else {}
+        assignment = {"assignment_id": self.assignment_id} if action == "check_in" and "weekly_assignment_id" not in fields else {}
         return self.portal.post(
             "/api/control/attendance/",
             {"action": action, "photo": picture(), **OFFICE_GPS, **assignment, **fields},
@@ -329,6 +330,70 @@ class ControlTeamTests(TestCase):
         result = self.mark("check_out", attendance_id=entry.pk)
         self.assertEqual(result.status_code, 200, result.data)
         self.assertIsNone(result.data["checked_in_at"])
+
+    def test_weekly_roster_repeats_mixed_shifts_and_uses_assignment_for_check_in(self):
+        def add(shift, days):
+            result = self.office.post(WEEKLY_URL, {"member": self.member.pk, "shift": shift, "weekdays": days}, format="json")
+            self.assertEqual(result.status_code, 201, result.data)
+            return result.data
+
+        morning = add("M", [2, 0, 1])
+        night = add("N", [4, 5])
+        self.assertEqual(morning["weekdays"], [0, 1, 2])
+        self.assertEqual(self.portal.get(WEEKLY_URL).status_code, 403)
+        roster = self.portal.get("/api/control/profile/").data["assigned_shifts"]
+        self.assertEqual([row["id"] for row in roster if row["shift_date"] == "2026-11-11"], [self.assignment_id])
+        self.assertEqual(self.member.shift_assignments.count(), 1)
+        self.complete_profile()
+        with patch("core.control_team.timezone.now", return_value=datetime(2027, 7, 7, 8, tzinfo=timezone.utc)):
+            roster = self.portal.get("/api/control/profile/").data["assigned_shifts"]
+            self.assertEqual([row["shift"] for row in roster], ["M", "N", "N", "M", "M"])
+            available = roster[0]
+            self.assertEqual(available["weekly_assignment_id"], morning["id"])
+            self.assertEqual(roster[1]["weekly_assignment_id"], night["id"])
+            self.assertEqual(self.member.shift_assignments.count(), 1)
+            for _ in range(2):
+                result = self.mark("check_in", weekly_assignment_id=morning["id"], shift_date="2027-07-07")
+                self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data["attendance"][0]["late_minutes"], 120)
+            entry = self.member.attendance.get()
+            self.assertEqual(entry.scheduled_start_at, datetime(2027, 7, 7, 6, tzinfo=timezone.utc))
+            self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 18, tzinfo=timezone.utc))
+        self.assertEqual(self.member.shift_assignments.count(), 2)
+
+    def test_weekly_conflicts_across_sunday_and_dated_assignments(self):
+        member = {"member": self.member.pk}
+        sunday = self.office.post(WEEKLY_URL, {**member, "shift": "N", "weekdays": [6]}, format="json")
+        self.assertEqual(sunday.status_code, 201, sunday.data)
+        conflicts = [
+            (WEEKLY_URL, {**member, "shift": "M", "weekdays": [0]}),
+            (ASSIGNMENTS_URL, {**member, "shift": "M", "shift_date": "2026-12-07"}),
+        ]
+        self.assign("E", "2026-12-24")
+        conflicts.append((WEEKLY_URL, {**member, "shift": "M", "weekdays": [3]}))
+        for path, payload in conflicts:
+            response = self.office.post(path, payload, format="json")
+            self.assertEqual(response.status_code, 400, response.data)
+            self.assertIn("conflicting", response.data["detail"])
+
+    def test_edit_and_end_weekly_schedule_keep_started_overnight_attendance(self):
+        member = {"member": self.member.pk}
+        saved = self.office.post(WEEKLY_URL, {**member, "shift": "N", "weekdays": [2, 4]}, format="json")
+        self.assertEqual(saved.status_code, 201, saved.data)
+        self.complete_profile()
+        old_id = saved.data["id"]
+        path = f"{WEEKLY_URL}{old_id}/"
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 12, 1, tzinfo=timezone.utc)):
+            edited = self.office.patch(path, {**member, "shift": "N", "weekdays": [5]}, format="json")
+            self.assertEqual(edited.status_code, 200, edited.data)
+            checked_in = self.mark("check_in", weekly_assignment_id=old_id, shift_date="2026-11-11")
+            self.assertEqual(checked_in.status_code, 200, checked_in.data)
+            self.assertEqual(self.office.delete(f"{WEEKLY_URL}{edited.data['id']}/").status_code, 204)
+            shifts = self.portal.get("/api/control/profile/").data["assigned_shifts"]
+            self.assertEqual([(row["shift_date"], row["status"]) for row in shifts], [("2026-11-11", "Checked in")])
+            entry = self.member.attendance.get()
+            self.assertEqual(entry.scheduled_end_at, datetime(2026, 11, 12, 8, tzinfo=timezone.utc))
+            self.assertEqual(self.mark("check_out", attendance_id=entry.pk).status_code, 200)
 
     def test_leave_and_replacement_requests_are_reviewed_by_admin(self):
         self.complete_profile()

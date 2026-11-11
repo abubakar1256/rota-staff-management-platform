@@ -26,6 +26,10 @@
 .control-assignment-date input { min-height: 40px; padding: 8px 10px; border: 1px solid #d8e1f0; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
 .control-assignment-cell { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; min-width: 0; }
 .control-assignment-cell .secondary-button { min-height: 40px; }
+.control-weekly-assignment > label { grid-column: 1 / -1; }
+.control-assignment-days { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.control-assignment-days .secondary-button { min-height: 34px; padding: 6px 8px; }
+.control-assignment-days button[aria-pressed="true"] { color: #284fae; background: #eef3ff; border-color: #9cb2f4; }
 .control-assignment-note, .control-assignment-list { grid-column: 1 / -1; margin: 0; }
 .control-assignment-list { list-style: none; padding: 0; display: grid; gap: 5px; }
 .control-assignment-list li {
@@ -80,6 +84,7 @@
   .control-attendance-card .primary-button { width: 100%; }
   .control-timing-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .control-timing-row > strong { grid-column: 1 / -1; padding-top: 0; }
+  .control-weekly-assignment { grid-template-columns: minmax(0, 1fr); }
   .control-office-heading .control-actions { width: 100%; }
   .control-office-heading .control-actions .primary-button { width: auto; }
   .control-member { grid-template-columns: minmax(0, 1fr) auto; }

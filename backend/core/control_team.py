@@ -23,13 +23,14 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
 from .control_attendance import (
-    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late, shift_window,
+    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late,
+    shift_window, weekly_conflict_for_assignment, weekly_occurrence, weekly_occurrences, weekly_rules, weekly_schedule_conflict,
 )
 from .geo import haversine_distance_m
 from .location_tracking import valid_coordinates
 from .models import (
     AuditLog, ControlAttendance, ControlAttendanceSettings, ControlLeaveRequest, ControlShiftAssignment,
-    ControlTeamMember, Employee, UserProfile,
+    ControlTeamMember, ControlWeeklyAssignment, Employee, UserProfile,
 )
 from .permissions import is_admin, role_of
 from .serializers import LoginSerializer
@@ -172,6 +173,8 @@ class AttendanceActionSerializer(serializers.Serializer):
     photo = ControlPhotoField(error_messages={"required": "Take an attendance photo before submitting."})
     attendance_id = serializers.IntegerField(min_value=1, required=False)
     assignment_id = serializers.IntegerField(min_value=1, required=False)
+    weekly_assignment_id = serializers.IntegerField(min_value=1, required=False)
+    shift_date = serializers.DateField(required=False)
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     accuracy_m = serializers.FloatField()
@@ -179,8 +182,11 @@ class AttendanceActionSerializer(serializers.Serializer):
     def validate(self, data):
         if data["action"] == "check_out" and "attendance_id" not in data:
             raise serializers.ValidationError({"attendance_id": "Select the attendance entry to check out."})
-        if data["action"] == "check_in" and "assignment_id" not in data:
-            raise serializers.ValidationError({"assignment_id": "Choose one of your assigned shifts before checking in."})
+        if data["action"] == "check_in":
+            dated = "assignment_id" in data
+            weekly = "weekly_assignment_id" in data
+            if dated == weekly or weekly != ("shift_date" in data):
+                raise serializers.ValidationError({"assignment_id": "Choose one of your assigned shifts before checking in."})
         if not valid_coordinates(data["latitude"], data["longitude"], data["accuracy_m"]):
             raise serializers.ValidationError("A valid GPS location and accuracy are required. Allow location access and try again.")
         return data
@@ -226,6 +232,24 @@ class NewAssignmentSerializer(AssignmentMemberSerializer):
     shift = serializers.ChoiceField(choices=ControlAttendance.Shift.choices)
 
 
+class NewWeeklyAssignmentSerializer(AssignmentMemberSerializer):
+    shift = serializers.ChoiceField(choices=ControlAttendance.Shift.choices)
+    weekdays = serializers.ListField(child=serializers.IntegerField(min_value=0, max_value=6), min_length=1, max_length=7)
+
+    def validate_weekdays(self, value):
+        return sorted(set(value))
+
+
+class WeeklyAssignmentSerializer(serializers.ModelSerializer):
+    member_name = serializers.CharField(source="member.name")
+    start_time = serializers.TimeField(format="%H:%M")
+    end_time = serializers.TimeField(format="%H:%M")
+
+    class Meta:
+        model = ControlWeeklyAssignment
+        fields = ["id", "member", "member_name", "shift", "weekdays", "start_time", "end_time", "starts_on"]
+
+
 class ShiftAssignmentSerializer(serializers.ModelSerializer):
     member_name = serializers.CharField(source="member.name")
     shift_name = serializers.CharField(source="get_shift_display")
@@ -264,6 +288,10 @@ def save_assignment(serializer, settings, assignment=None):
     if assignment:
         conflicts = conflicts.exclude(pk=assignment.pk)
     conflict = conflicts.first()
+    if not conflict:
+        conflict = weekly_conflict_for_assignment(ControlShiftAssignment(
+            member=member, shift_date=shift_date, shift=shift, scheduled_start_at=start, scheduled_end_at=end,
+        ))
     if conflict:
         raise serializers.ValidationError({
             "detail": f"{member.name} already has a conflicting {conflict.get_shift_display()} shift on {conflict.shift_date:%d %b %Y}.",
@@ -275,6 +303,67 @@ def save_assignment(serializer, settings, assignment=None):
     return ControlShiftAssignment.objects.create(
         member=member, shift=shift, shift_date=shift_date, scheduled_start_at=start, scheduled_end_at=end,
     )
+
+
+def save_weekly_assignment(data, settings, today):
+    serializer = NewWeeklyAssignmentSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    timing = settings.shifts[serializer.validated_data["shift"]]
+    rule = ControlWeeklyAssignment(
+        **serializer.validated_data, starts_on=today,
+        start_time=time.fromisoformat(timing["start"]), end_time=time.fromisoformat(timing["end"]),
+    )
+    conflict = weekly_schedule_conflict(rule)
+    if conflict:
+        raise serializers.ValidationError({
+            "detail": f"{rule.member.name} already has a conflicting {conflict.get_shift_display()} shift on {conflict.shift_date:%a %d %b %Y}.",
+        })
+    rule.save()
+    return rule
+
+
+def schedule_rows(dated, rules, first, last, now, *, after=None):
+    shifts = [(entry, None) for entry in dated]
+    occupied = {(entry.member_id, entry.shift_date, entry.shift) for entry, _ in shifts}
+    for rule in rules:
+        shifts.extend(
+            (entry, rule.pk) for entry in weekly_occurrences(rule, first, last)
+            if (after is None or entry.scheduled_end_at > after)
+            and (entry.member_id, entry.shift_date, entry.shift) not in occupied
+        )
+
+    data = []
+    for entry, weekly_id in sorted(shifts, key=lambda slot: slot[0].scheduled_start_at):
+        row = ShiftAssignmentSerializer(entry, context={"now": now}).data
+        if weekly_id is not None:
+            row.update(id=f"{weekly_id}:{entry.shift_date.isoformat()}", weekly_assignment_id=weekly_id)
+        data.append(row)
+    return data
+
+
+def member_assignments(member, now):
+    today = now.astimezone(LONDON).date()
+    first, last = today - timedelta(days=1), today + timedelta(days=6)
+    midnight = datetime.combine(today, time.min, LONDON)
+    dated = member.shift_assignments.filter(
+        shift_date__range=(first, last), scheduled_end_at__gt=midnight,
+    ).select_related("member", "attendance")
+    return schedule_rows(dated, weekly_rules(member.pk, first), first, last, now, after=midnight)
+
+
+def check_in_assignment(member, data, now):
+    assignments = member.shift_assignments.select_for_update()
+    if "assignment_id" in data:
+        return assignments.filter(pk=data["assignment_id"]).first()
+    day = data["shift_date"]
+    today = now.astimezone(LONDON).date()
+    if not today - timedelta(days=1) <= day <= today:
+        return None
+    rule = weekly_rules(member.pk, day).filter(pk=data["weekly_assignment_id"]).first()
+    occurrence = weekly_occurrence(rule, day) if rule else None
+    if occurrence is None:
+        return None
+    return assignments.filter(shift_date=day, shift=rule.shift).first() or occurrence
 
 
 def verified_location(data, settings):
@@ -361,12 +450,7 @@ def member_data(member, now, *, history=False, include_assignments=False):
     if history:
         data["attendance"] = AttendanceSerializer(member.attendance.all()[:50], many=True).data
     if include_assignments:
-        today = now.astimezone(LONDON).date()
-        assignments = member.shift_assignments.filter(
-            shift_date__range=(today - timedelta(days=1), today + timedelta(days=6)),
-            scheduled_end_at__gt=datetime.combine(today, time.min, LONDON),
-        ).select_related("member", "attendance")
-        data["assigned_shifts"] = ShiftAssignmentSerializer(assignments, many=True, context={"now": now}).data
+        data["assigned_shifts"] = member_assignments(member, now)
     return data
 
 
@@ -436,7 +520,10 @@ def team_assignments(request):
         raw_date = request.query_params.get("date")
         selected_date = serializers.DateField().run_validation(raw_date) if raw_date else now.astimezone(LONDON).date()
         assignments = ControlShiftAssignment.objects.filter(shift_date=selected_date).select_related("member", "attendance")
-        return Response(ShiftAssignmentSerializer(assignments, many=True, context={"now": now}).data)
+        rules = ControlWeeklyAssignment.objects.filter(starts_on__lte=selected_date, member__user__is_active=True).filter(
+            Q(ends_before__isnull=True) | Q(ends_before__gt=selected_date),
+        ).select_related("member")
+        return Response(schedule_rows(assignments, rules, selected_date, selected_date, now))
 
     # Serialize roster edits with timing updates and other assignments, including overlapping shifts.
     settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
@@ -471,12 +558,56 @@ def team_assignment(request, pk):
     return Response(ShiftAssignmentSerializer(assignment, context={"now": timezone.now()}).data)
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsControlAdmin])
+@transaction.atomic
+def team_weekly_assignments(request):
+    if request.method == "GET":
+        rules = ControlWeeklyAssignment.objects.filter(ends_before__isnull=True).select_related("member")
+        return Response(WeeklyAssignmentSerializer(rules, many=True).data)
+    settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
+    rule = save_weekly_assignment(request.data, settings, timezone.localdate(timezone=LONDON))
+    AuditLog.objects.create(
+        user=request.user, action="CREATE", model_name="ControlWeeklyAssignment", object_id=str(rule.pk),
+        summary="Assigned repeating Control Team shifts",
+    )
+    return Response(WeeklyAssignmentSerializer(rule).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsControlAdmin])
+@transaction.atomic
+def team_weekly_assignment(request, pk):
+    settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
+    rule = get_object_or_404(ControlWeeklyAssignment, pk=pk, ends_before__isnull=True)
+    today = timezone.localdate(timezone=LONDON)
+    rule.ends_before = today
+    rule.save(update_fields=["ends_before"])
+    if request.method == "PATCH":
+        updated = save_weekly_assignment(request.data, settings, today)
+        response = Response(WeeklyAssignmentSerializer(updated).data)
+    else:
+        response = Response(status=status.HTTP_204_NO_CONTENT)
+    AuditLog.objects.create(
+        user=request.user, action="UPDATE" if request.method == "PATCH" else "DELETE",
+        model_name="ControlWeeklyAssignment", object_id=str(pk),
+        summary="Updated repeating Control Team shifts" if request.method == "PATCH" else "Ended repeating Control Team shifts",
+    )
+    return response
+
+
 @api_view(["POST"])
 @permission_classes([IsControlMember])
 @transaction.atomic
 def attendance(request):
     serializer = AttendanceActionSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    checking_in = data["action"] == "check_in"
+    if checking_in:
+        settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
+    else:
+        settings = attendance_settings()
     member = member_for(request.user, lock=True)
     current = member.attendance.select_for_update().filter(checked_out_at__isnull=True).first()
     now = timezone.now()
@@ -484,19 +615,19 @@ def attendance(request):
         close_expired_attendance(now, member_id=member.pk)
         current = None
 
-    data = serializer.validated_data
-    settings = attendance_settings()
     location = verified_location(data, settings)
-    if data["action"] == "check_in":
+    if checking_in:
         if not member.profile_complete:
             raise PermissionDenied("Complete your profile and upload a photo before checking in.")
-        if current and current.assignment_id != data["assignment_id"]:
+        assignment = check_in_assignment(member, data, now)
+        if current and (not assignment or not assignment.pk or current.assignment_id != assignment.pk):
             return Response({"detail": "You are already checked in. Check out before starting another shift."}, status=status.HTTP_409_CONFLICT)
         if not current:
-            assignment = member.shift_assignments.select_for_update().filter(pk=data["assignment_id"]).first()
             now = timezone.now()
             if not assignment or assignment_status(assignment, now) != "Available":
                 return Response({"detail": "This shift is unavailable for check-in. Check your assigned shifts."}, status=status.HTTP_409_CONFLICT)
+            if not assignment.pk:
+                assignment.save()
             ControlAttendance.objects.create(
                 member=member, checked_in_at=now, check_in_photo=data["photo"], check_in_location=location,
                 assignment=assignment, shift=assignment.shift,
@@ -648,6 +779,8 @@ urlpatterns = [
     path("team/", team, name="team"),
     path("team/assignments/", team_assignments, name="team-assignments"),
     path("team/assignments/<int:pk>/", team_assignment, name="team-assignment"),
+    path("team/weekly-assignments/", team_weekly_assignments, name="team-weekly-assignments"),
+    path("team/weekly-assignments/<int:pk>/", team_weekly_assignment, name="team-weekly-assignment"),
     path("team/<int:pk>/", team_member, name="member"),
     path("team/requests/", team_requests, name="team-requests"),
     path("team/requests/<int:pk>/", review_request, name="review"),

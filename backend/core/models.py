@@ -102,6 +102,25 @@ class ControlShiftAssignment(models.Model):
         ]
 
 
+class ControlWeeklyAssignment(models.Model):
+    member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="weekly_assignments")
+    shift = models.CharField(max_length=1, choices=ControlAttendance.Shift.choices)
+    weekdays = models.JSONField(default=list)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    starts_on = models.DateField()
+    ends_before = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["member__name", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(ends_before__isnull=True) | models.Q(ends_before__gte=models.F("starts_on")),
+                name="control_weekly_assignment_dates",
+            ),
+        ]
+
+
 class ControlLeaveRequest(models.Model):
     class Kind(models.TextChoices):
         LEAVE = "LEAVE", "Leave"

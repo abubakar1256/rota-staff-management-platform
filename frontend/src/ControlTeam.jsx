@@ -11,11 +11,13 @@ const profilePath = root + "/profile/";
 const settingsPath = root + "/attendance/settings/";
 const teamPath = root + "/team/";
 const assignmentsPath = teamPath + "assignments/";
+const weeklyAssignmentsPath = teamPath + "weekly-assignments/";
 const requestsPath = root + "/requests/";
 const officeRequestsPath = teamPath + "requests/";
 const queryKey = (path) => ["rota", "control", path];
 const requestOptions = (method, data) => ({ method, body: JSON.stringify(data) });
 const shiftNames = { M: "Morning", D: "Mid-day", E: "Evening", N: "Night" };
+const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function useControlQuery(api, path, enabled = true) {
   return useQuery({
@@ -354,7 +356,7 @@ function AssignedShifts({ shifts, canCheckIn, onCheckIn }) {
         <small className="table-subtext">{formatUkDateTime(shift.scheduled_start_at)} – {formatUkDateTime(shift.scheduled_end_at)}</small>
       </div>
       <div><span className={`status-pill ${shift.started ? "active" : "neutral"}`}>{shift.status}</span></div>
-      {shift.status === "Available" && <button type="button" className="primary-button" disabled={!canCheckIn} onClick={() => onCheckIn(shift.id)}>
+      {shift.status === "Available" && <button type="button" className="primary-button" disabled={!canCheckIn} onClick={() => onCheckIn(shift)}>
         <Camera size={15} aria-hidden="true" /> Check In
       </button>}
     </article>)}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
@@ -382,7 +384,10 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
     body.set("action", capture.action);
     body.set("photo", photo, "attendance.jpg");
     if (capture.action === "check_out") body.set("attendance_id", capture.id);
-    else body.set("assignment_id", capture.id);
+    else if (capture.shift.weekly_assignment_id) {
+      body.set("weekly_assignment_id", capture.shift.weekly_assignment_id);
+      body.set("shift_date", capture.shift.shift_date);
+    } else body.set("assignment_id", capture.shift.id);
     body.set("latitude", location.latitude);
     body.set("longitude", location.longitude);
     body.set("accuracy_m", location.accuracy);
@@ -429,7 +434,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
             </div>
           </section>
           <AssignedShifts shifts={member.assigned_shifts || []} canCheckIn={Boolean(officePin && !current)}
-            onCheckIn={(id) => setCapture({ action: "check_in", id })} />
+            onCheckIn={(shift) => setCapture({ action: "check_in", shift })} />
           <div className="control-metrics">
             <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
             <Metric icon={CalendarDays} label="This month" value={duration(member.monthly_seconds)} detail="Calendar month · UK time" />
@@ -502,51 +507,77 @@ function MemberDetail({ member, api, FilePreview, onClose }) {
 }
 
 function ShiftAssignmentControls({ api, code, date, assignments, members, onChanged, timingDirty }) {
+  const weekly = !date;
+  const path = weekly ? weeklyAssignmentsPath : assignmentsPath;
   const [memberId, setMemberId] = useState("");
+  const [days, setDays] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  function reset() {
+    setMemberId("");
+    setDays([]);
+    setEditingId(null);
+    setError("");
+  }
 
   async function saveAssignment(removeId) {
     setBusy(true);
     setError("");
     try {
       if (removeId) {
-        await api(`${assignmentsPath}${removeId}/`, { method: "DELETE", silentError: true, silentLoading: true });
+        await api(`${path}${removeId}/`, { method: "DELETE", silentError: true, silentLoading: true });
       } else {
-        const path = editingId ? `${assignmentsPath}${editingId}/` : assignmentsPath;
-        const fields = editingId ? { member: memberId } : { member: memberId, shift: code, shift_date: date };
-        await api(path, { ...requestOptions(editingId ? "PATCH" : "POST", fields), silentError: true, silentLoading: true });
+        const fields = weekly ? { member: memberId, shift: code, weekdays: days } :
+          editingId ? { member: memberId } : { member: memberId, shift: code, shift_date: date };
+        const url = editingId ? `${path}${editingId}/` : path;
+        await api(url, { ...requestOptions(editingId ? "PATCH" : "POST", fields), silentError: true, silentLoading: true });
       }
       await onChanged();
-      setMemberId("");
-      setEditingId(null);
+      reset();
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
 
-  return <div className="control-assignment-cell">
+  const saveTimingFirst = timingDirty && (weekly || !editingId);
+  return <div className={`control-assignment-cell ${weekly ? "control-weekly-assignment" : ""}`}>
     <label>{editingId ? "Reassign to" : "Assign member"}
       <select aria-label={`${shiftNames[code]} member`} value={memberId} disabled={busy} onChange={(event) => setMemberId(event.target.value)}>
         <option value="">Select member</option>
         {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
       </select>
     </label>
+    {weekly && <div className="control-assignment-days" role="group" aria-label={`${shiftNames[code]} weekdays`}>
+      {weekdays.map((day, index) => <button type="button" key={day} className="secondary-button"
+        aria-pressed={days.includes(index)} disabled={busy} onClick={() => {
+          setDays((selected) => selected.includes(index) ? selected.filter((value) => value !== index) : [...selected, index]);
+        }}>{day}</button>)}
+    </div>}
     <div className="control-actions">
-      <button type="button" className="secondary-button" disabled={busy || !memberId || (timingDirty && !editingId)}
-        onClick={() => saveAssignment()}>{editingId ? "Save assignment" : "Assign"}</button>
-      {editingId && <button type="button" className="text-button" disabled={busy} onClick={() => { setEditingId(null); setMemberId(""); setError(""); }}>Cancel</button>}
+      <button type="button" className="secondary-button" disabled={busy || !memberId || saveTimingFirst || (weekly && !days.length)}
+        onClick={() => saveAssignment()}>{editingId ? "Save assignment" : weekly ? "Assign weekly" : "Assign"}</button>
+      {editingId && <button type="button" className="text-button" disabled={busy} onClick={reset}>Cancel</button>}
     </div>
-    {timingDirty && !editingId && <small className="muted control-assignment-note">Save the new shift timing before assigning.</small>}
+    {saveTimingFirst && <small className="muted control-assignment-note">Save the new shift timing before assigning.</small>}
     {error && <p className="error control-assignment-note" role="alert">{error}</p>}
     {assignments.length > 0 && <ul className="control-assignment-list">
       {assignments.map((assignment) => <li key={assignment.id}>
         <div><strong>{assignment.member_name}</strong>
-          <small className="table-subtext">{formatUkAttendanceTime(assignment.scheduled_start_at)} – {formatUkAttendanceTime(assignment.scheduled_end_at)}{assignment.started && ` · ${assignment.status}`}</small>
+          <small className="table-subtext">{weekly ?
+            `${assignment.weekdays.map((day) => weekdays[day]).join(", ")} · ${assignment.start_time}–${assignment.end_time}` :
+            `${formatUkAttendanceTime(assignment.scheduled_start_at)} – ${formatUkAttendanceTime(assignment.scheduled_end_at)}${assignment.started ? ` · ${assignment.status}` : ""}`}
+          </small>
         </div>
-        {!assignment.started && <div className="control-actions">
+        {assignment.weekly_assignment_id && <small className="muted">Repeats weekly</small>}
+        {!assignment.started && !assignment.weekly_assignment_id && <div className="control-actions">
           <button type="button" className="text-button" disabled={busy} aria-label={`Edit ${assignment.member_name} assignment`}
-            onClick={() => { setEditingId(assignment.id); setMemberId(String(assignment.member)); setError(""); }}>Edit</button>
+            onClick={() => {
+              setEditingId(assignment.id);
+              setMemberId(String(assignment.member));
+              setDays(assignment.weekdays || []);
+              setError("");
+            }}>Edit</button>
           <button type="button" className="text-button control-remove-assignment" disabled={busy}
             aria-label={`Remove ${assignment.member_name} assignment`} onClick={() => saveAssignment(assignment.id)}>Remove</button>
         </div>}
@@ -557,11 +588,13 @@ function ShiftAssignmentControls({ api, code, date, assignments, members, onChan
 
 function AttendanceSettingsForm({ settings, api, onSaved, team }) {
   const [draft, setDraft] = useState(settings);
+  const [scheduleMode, setScheduleMode] = useState("weekly");
   const [date, setDate] = useState(() => ukDate());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
-  const assignments = useControlQuery(api, `${assignmentsPath}?date=${encodeURIComponent(date)}`, Boolean(date));
+  const weekly = scheduleMode === "weekly";
+  const assignments = useControlQuery(api, weekly ? weeklyAssignmentsPath : `${assignmentsPath}?date=${encodeURIComponent(date)}`, weekly || Boolean(date));
   const members = (team.data || []).filter((member) => member.is_active);
 
   function change(fields) {
@@ -620,13 +653,17 @@ function AttendanceSettingsForm({ settings, api, onSaved, team }) {
     </fieldset>
     <div className="control-between">
       <div><h3>Shift timings & assignments</h3>
-        <p className="muted">Assignments use the saved UK timings. For overnight shifts, select the start date.</p>
+        <p className="muted">{weekly ?
+          "Choose a member and their working days for each shift. Assignments repeat weekly from today, in UK time." :
+          "View or add assignments for a specific date. For overnight shifts, select the start date."}</p>
       </div>
-      <label className="control-assignment-date">Assignment date
+      {!weekly && <label className="control-assignment-date">Assignment date
         <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
-      </label>
+      </label>}
     </div>
-    {date && !assignments.data && <QueryStatus query={assignments} label="shift assignments" />}
+    <ControlTabs label="Assignment schedule" page={scheduleMode} onChange={setScheduleMode}
+      tabs={[["weekly", "Weekly schedule"], ["dated", "By date"]]} />
+    {(weekly || date) && !assignments.data && <QueryStatus query={assignments} label="shift assignments" />}
     {!team.data && <QueryStatus query={team} label="team members" />}
     <fieldset disabled={Boolean(busy)} className="control-form control-settings-fields">
       {Object.keys(shiftNames).map((code) => <div className="control-timing-row" key={code}>
@@ -637,7 +674,7 @@ function AttendanceSettingsForm({ settings, api, onSaved, team }) {
             change({ shifts: { ...draft.shifts, [code]: { ...draft.shifts[code], [field]: event.target.value } } });
           }} />
         </label>)}
-        {date && assignments.data && team.data && <ShiftAssignmentControls key={date + code} api={api} code={code} date={date}
+        {(weekly || date) && assignments.data && team.data && <ShiftAssignmentControls key={weekly ? "weekly" : date} api={api} code={code} date={weekly ? null : date}
           assignments={assignments.data.filter((assignment) => assignment.shift === code)} members={members}
           timingDirty={draft.shifts[code].start !== settings.shifts[code].start || draft.shifts[code].end !== settings.shifts[code].end}
           onChanged={assignments.refetch} />}
