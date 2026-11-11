@@ -196,6 +196,7 @@ def sync_verified_document(document):
         service, item = drive_service()
         if not service or not item:
             return None
+        from googleapiclient.errors import HttpError
         from googleapiclient.http import MediaIoBaseUpload
 
         root_id = item.root_folder_id
@@ -219,19 +220,26 @@ def sync_verified_document(document):
         document.file.open("rb")
         media = MediaIoBaseUpload(document.file, mimetype=mimetypes.guess_type(original_name)[0] or "application/octet-stream", resumable=False)
         body = {"name": filename, "parents": [guard_folder_id]}
+        uploaded = None
         if document.drive_file_id and document.drive_folder_id == guard_folder_id:
-            uploaded = service.files().update(fileId=document.drive_file_id, body={"name": filename}, media_body=media, fields="id").execute()
-        else:
+            try:
+                uploaded = service.files().update(fileId=document.drive_file_id, body={"name": filename}, media_body=media, fields="id").execute()
+            except HttpError as exc:
+                if exc.resp.status != 404:
+                    raise
+                document.file.seek(0)
+        if uploaded is None:
             uploaded = service.files().create(body=body, media_body=media, fields="id").execute()
-        document.drive_file_id = uploaded["id"]
-        document.drive_folder_id = guard_folder_id
-        document.drive_root_folder_id = root_id
-        document.drive_synced_at = timezone.now()
-        document.drive_sync_error = ""
         with transaction.atomic():
             current = GoogleDriveConnection.objects.select_for_update().get(pk=item.pk)
-            if current.root_folder_id == root_id:
-                document.save(update_fields=["drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "updated_at"])
+            if current.root_folder_id != root_id:
+                return None
+            document.drive_file_id = uploaded["id"]
+            document.drive_folder_id = guard_folder_id
+            document.drive_root_folder_id = root_id
+            document.drive_synced_at = timezone.now()
+            document.drive_sync_error = ""
+            document.save(update_fields=["drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "updated_at"])
         return uploaded["id"]
     except Exception as exc:  # Drive failure must not undo office verification.
         document.drive_sync_error = str(exc)[:2000]

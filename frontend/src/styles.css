@@ -1,12 +1,12 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f4f7fb; font-synthesis: none; }
 .document-zip-bar {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px;
-  margin-bottom: 16px; padding: 12px 14px; border: 1px solid #dce6fa; border-radius: 9px; background: #f6f9ff;
+  margin-bottom: 12px; padding: 8px 12px; border: 1px solid #dce6fa; border-radius: 9px; background: #f6f9ff;
 }
-.document-zip-bar strong { font-size: 13px; }
+.document-zip-bar strong { color: #405372; font-size: 12px; }
 .document-zip-bar .error { flex-basis: 100%; margin: 0; }
 .document-zip-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.document-zip-actions .primary-button { display: inline-flex; align-items: center; gap: 6px; }
+.document-zip-actions .primary-button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 8px 12px; }
 .nested-document-table .document-zip-check { width: 42px; text-align: center; }
 .document-zip-check input { width: 16px; height: 16px; margin: 0; vertical-align: middle; accent-color: #4d76de; }
 .guard-pin-setting {
@@ -513,18 +513,46 @@ textarea, select, input { max-width: 100%; }
 .document-checklist-card.complete .document-card-top > div::before { content: "✓"; display: inline-grid; place-items: center; width: 18px; height: 18px; margin-bottom: 2px; border-radius: 50%; color: #fff; background: #27a681; font-size: 11px; font-weight: 900; }
 .document-save-all .primary-button { font-size: 0; }
 .document-save-all .primary-button::after { content: "Upload documents"; font-size: 12px; }
-.document-status-stack { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-width: 150px; }
-.document-drive-status { display: grid; justify-items: start; gap: 4px; min-width: 118px; }
-.document-drive-status .status-pill { gap: 4px; }
-.document-drive-status time, .document-drive-status small { font-size: 10px; color: #64748b; }
-.document-drive-status a { display: inline-flex; align-items: center; gap: 4px; color: #355db6; font-size: 11px; }
+.document-status-stack { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.expanded-document-panel { padding: 14px 16px 16px; }
+.expanded-document-header { gap: 10px 16px; }
+.expanded-document-header strong { color: #263650; font-size: 14px; }
+.expanded-document-header span { color: #5e6e86; }
+.document-detail-scroll { border: 1px solid #dfe6ef; border-radius: 10px; background: #fff; }
+.document-detail-scroll:focus-visible { outline: 2px solid #4d76de; outline-offset: 2px; }
+.document-detail-scroll .nested-document-table { min-width: 800px; border: 0; }
+.document-detail-scroll th { background: #f5f8fc; color: #51627b; font-size: 10px; letter-spacing: .045em; }
+.document-detail-scroll td { color: #44536b; font-size: 12px; line-height: 1.35; vertical-align: middle; }
+.document-detail-scroll th, .document-detail-scroll td { padding: 9px 10px; }
+.document-detail-scroll tbody tr:last-child td { border-bottom: 0; }
+.document-detail-scroll tbody tr:focus-within td, .document-detail-scroll tbody tr:hover td { background: #f7faff; }
+.document-detail-scroll tbody .document-row-selected td { background: #edf4ff; }
+.document-type-cell { min-width: 130px; }
+.document-type-cell strong { color: #24344d; font-weight: 650; }
+.document-expiry-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.document-detail-scroll .file-link-button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.document-drive-status { display: grid; justify-items: start; gap: 4px; min-width: 120px; }
+.document-drive-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.document-drive-retry { min-height: 26px; color: #355db6; font-weight: 650; white-space: nowrap; }
+.document-drive-retry-error { max-width: 230px; color: #9f3045; font-size: 10px; }
+.document-drive-badge { gap: 5px; min-height: 24px; font-size: 11px; text-transform: none; }
+a.document-drive-badge { text-decoration: none; border: 1px solid currentColor; }
+a.document-drive-badge:hover { text-decoration: underline; }
+a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offset: 2px; }
+.document-drive-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; color: #5d6c83; font-size: 10px; }
+.document-drive-meta time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.document-drive-meta small { font-size: inherit; }
 .status-pill.review_required { color: #9b6a18; background: #fff5df; }
 .status-pill.verified { color: #218c72; background: #e5f8f1; }
 .document-review-reason { display: block; max-width: 220px; margin-top: 5px; color: #a45d68; font-size: 10px; line-height: 1.4; }
-.compliance-review-actions { flex-wrap: wrap; min-width: 210px; }
-.compliance-review-actions .mini-button { white-space: nowrap; }
-@media (max-width: 900px) { .expanded-document-header { align-items: flex-start; flex-direction: column; gap: 12px; }.expanded-document-header .primary-button { width: 100%; }.compliance-review-actions { min-width: 180px; } }
-@media (max-width: 680px) { .document-status-stack { min-width: 120px; }.compliance-review-actions { min-width: 160px; }.nested-document-table { min-width: 760px; } }
+.compliance-review-actions { flex-wrap: wrap; min-width: 110px; }
+.compliance-review-actions .mini-button { min-height: 27px; white-space: nowrap; }
+@media (max-width: 680px) {
+  .employee-documents-scroll { container-type: inline-size; }
+  .employee-documents-scroll .expanded-document-panel { position: sticky; left: 0; width: 100cqw; max-width: 100%; padding: 10px; }
+  .expanded-document-header { align-items: flex-start; flex-wrap: wrap; }
+  .document-status-stack { min-width: 94px; }
+}
 .nav-item { position: relative; }
 .nav-notification-badge { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: auto; padding: 0 5px; border-radius: 20px; color: #fff; background: #e26778; font-size: 9px; line-height: 1; }
 .toast-stack { position: fixed; z-index: 2000; top: calc(env(safe-area-inset-top, 0px) + 16px); right: calc(env(safe-area-inset-right, 0px) + 16px); display: grid; gap: 10px; width: min(410px, calc(100vw - 32px)); max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px)); overflow-y: auto; padding: 2px; pointer-events: none; }

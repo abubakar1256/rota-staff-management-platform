@@ -75,7 +75,7 @@ export function documentDriveStatus(document, activeRootId) {
   if (!document.secure_file_url && !document.file) return { label: "No uploaded file", tone: "neutral" };
   if (document.verification_status === "REJECTED") return { label: "On hold", tone: "neutral" };
   if (document.verification_status !== "VERIFIED") return { label: "Awaiting verification", tone: "neutral" };
-  if (document.drive_sync_error) return { label: "Upload failed", tone: "rejected" };
+  if (document.drive_sync_error) return { label: "Upload failed", tone: "rejected", canRetry: true };
   if (!document.drive_file_id || !document.drive_synced_at) return { label: "Not uploaded", tone: "pending" };
 
   const copy = {

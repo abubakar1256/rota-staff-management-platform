@@ -1804,21 +1804,36 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 message=f"Your {document.document_type} has been verified by the office.",
                 link="documents", employee=document.employee, context={"document_id": document.pk, "file_revision": document.file.name},
             )
-        try:
-            sync_verified_document(document)
-        except Exception:
-            logger.exception("Verified document %s could not be synced to Google Drive", document.pk)
+        with transaction.atomic():
+            current = EmployeeDocument.objects.select_for_update().filter(pk=document.pk).first()
+            if current and current.reviewed_at == document.reviewed_at and current.verification_status == EmployeeDocument.VerificationStatus.VERIFIED:
+                document = current
+                try:
+                    sync_verified_document(document)
+                except Exception:
+                    logger.exception("Verified document %s could not be synced to Google Drive", document.pk)
         return Response(self.get_serializer(document).data)
 
     @action(detail=True, methods=["post"], url_path="sync-drive")
     def sync_drive(self, request, pk=None):
-        document = self.get_object()
-        if document.verification_status != EmployeeDocument.VerificationStatus.VERIFIED:
-            return Response({"detail": "Only verified documents can be uploaded to Google Drive."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            sync_verified_document(document)
-        except Exception as exc:
-            return Response({"detail": f"Google Drive upload failed: {exc}"}, status=status.HTTP_502_BAD_GATEWAY)
+        document_id = self.get_object().pk
+        with transaction.atomic():
+            document = get_object_or_404(EmployeeDocument.objects.select_for_update(), pk=document_id)
+            if document.verification_status != EmployeeDocument.VerificationStatus.VERIFIED:
+                raise ValidationError({"detail": "Only verified documents can be uploaded to Google Drive."})
+            if not document.file:
+                raise ValidationError({"detail": "Upload a file in RotaOps before sending it to Google Drive."})
+            if not google_drive_is_configured():
+                return Response({"detail": "Google Drive is unavailable. Check the connection in Documents."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            try:
+                uploaded_id = sync_verified_document(document)
+            except FileNotFoundError:
+                return Response({"detail": "The original file is missing. Use Edit to upload a replacement, then verify it."}, status=status.HTTP_409_CONFLICT)
+            except Exception:
+                logger.exception("Google Drive retry failed for document %s", document_id)
+                return Response({"detail": "Google Drive upload failed. Check the Drive connection and try again."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not uploaded_id:
+                return Response({"detail": "Connect Google Drive in Documents, then retry the upload."}, status=status.HTTP_409_CONFLICT)
         return Response(self.get_serializer(document).data)
 
     @action(detail=True, methods=["post"])

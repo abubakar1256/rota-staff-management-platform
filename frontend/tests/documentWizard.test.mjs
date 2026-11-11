@@ -106,6 +106,8 @@ test("Drive status distinguishes completed uploads, previous folders, and docume
   assert.equal(documentDriveStatus({ ...uploaded, drive_root_folder_id: "" }, "current").detail, "Drive account unknown");
   assert.equal(documentDriveStatus({ ...uploaded, reviewed_at: "2026-11-11T09:10:00Z" }, "current").label, "Earlier copy");
   assert.equal(documentDriveStatus({ ...uploaded, drive_sync_error: "test failure" }, "current").label, "Upload failed");
+  assert.equal(documentDriveStatus({ ...verified, drive_sync_error: "test failure" }, "current").canRetry, true);
+  assert.equal(documentDriveStatus({ ...verified, drive_sync_error: "test failure", verification_status: "PENDING" }, "current").canRetry, undefined);
   assert.equal(documentDriveStatus({ ...uploaded, verification_status: "PENDING" }, "current").label, "Awaiting verification");
   assert.equal(documentDriveStatus({ ...uploaded, verification_status: "REJECTED" }, "current").label, "On hold");
   assert.equal(documentDriveStatus({ ...verified, file: null }, "current").label, "No uploaded file");

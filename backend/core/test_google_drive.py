@@ -145,3 +145,63 @@ class GoogleDriveSwitchTests(APITestCase):
         row = summary.data["results"][0]["documents"][0]
         self.assertEqual(row["drive_file_id"], "new-file")
         self.assertEqual(row["drive_root_folder_id"], "new-folder")
+
+    def test_retry_recreates_a_missing_drive_copy_then_reuses_the_new_copy(self):
+        from googleapiclient.errors import HttpError
+
+        self.enterContext(override_settings(MEDIA_ROOT=self.enterContext(TemporaryDirectory())))
+        employee = Employee.objects.create(employee_id="RETRY-1", name="Retry Guard")
+        document = EmployeeDocument.objects.create(
+            employee=employee, created_by=self.admin, document_type="Passport",
+            verification_status=EmployeeDocument.VerificationStatus.VERIFIED,
+            file=ContentFile(b"%PDF-test", name="passport.pdf"), drive_sync_error="Previous upload failed",
+            drive_file_id="removed-file", drive_folder_id="guard-folder", drive_root_folder_id="old-folder",
+        )
+        service = MagicMock()
+        service.files().list().execute.return_value = {"files": [{"id": "guard-folder"}]}
+        service.files().update().execute.side_effect = [
+            HttpError(SimpleNamespace(status=404, reason="Not Found"), b"{}"), {"id": "replacement-file"},
+        ]
+        service.files().create().execute.return_value = {"id": "replacement-file"}
+        service.files().reset_mock()
+
+        path = f"/api/documents/{document.pk}/sync-drive/"
+        with patch("core.google_drive.build_drive_service", return_value=service):
+            result = self.client.post(path)
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data["verification_status"], "VERIFIED")
+            self.assertEqual(result.data["drive_sync_error"], "")
+            self.assertEqual(result.data["drive_file_id"], "replacement-file")
+            self.assertIsNotNone(result.data["drive_synced_at"])
+            self.assertEqual(self.client.post(path).status_code, 200)
+
+        self.assertEqual(service.files().create.call_count, 1)
+        self.assertEqual(service.files().update.call_args.kwargs["fileId"], "replacement-file")
+
+    def test_retry_explains_missing_original_and_missing_connection(self):
+        employee = Employee.objects.create(employee_id="RETRY-2", name="Second Retry Guard")
+        document = EmployeeDocument.objects.create(
+            employee=employee, created_by=self.admin, document_type="Passport",
+            verification_status=EmployeeDocument.VerificationStatus.VERIFIED,
+            file="missing/passport.pdf", drive_sync_error="Previous upload failed",
+        )
+        path = f"/api/documents/{document.pk}/sync-drive/"
+        service = MagicMock()
+        service.files().list().execute.return_value = {"files": [{"id": "guard-folder"}]}
+        with patch("core.google_drive.build_drive_service", return_value=service):
+            result = self.client.post(path)
+        self.assertEqual(result.status_code, 409, result.data)
+        self.assertIn("original file is missing", result.data["detail"])
+        service.files().create.assert_not_called()
+        document.refresh_from_db()
+        self.assertEqual(document.verification_status, "VERIFIED")
+        self.assertTrue(document.drive_sync_error)
+
+        self.old.delete()
+        result = self.client.post(path)
+        self.assertEqual(result.status_code, 409, result.data)
+        self.assertIn("Connect Google Drive", result.data["detail"])
+
+        document.verification_status = "PENDING"
+        document.save(update_fields=["verification_status"])
+        self.assertEqual(self.client.post(path).status_code, 400)
