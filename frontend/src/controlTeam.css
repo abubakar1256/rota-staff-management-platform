@@ -16,11 +16,23 @@
 .control-capture > * + * { margin-top: 12px; }
 .control-attendance-proof { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 6px; }
 .control-office-location { flex-basis: 100%; padding-top: 12px; border-top: 1px solid #e3e9f4; }
-.control-shift-select { display: grid; gap: 5px; font-size: 13px; font-weight: 700; color: #455570; }
-.control-shift-select select { min-height: 42px; max-width: 100%; padding: 8px; border: 1px solid #d8e1f0; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
 .control-settings-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
-.control-timing-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 140px)); align-items: end; gap: 10px; width: min(100%, 620px); }
-.control-timing-row strong { align-self: center; }
+.control-timing-row {
+  display: grid; grid-template-columns: minmax(105px, .55fr) repeat(2, minmax(0, 138px)) minmax(205px, 1.5fr);
+  align-items: start; gap: 12px; width: 100%; padding: 12px; border: 1px solid #e3e9f4; border-radius: 10px;
+}
+.control-timing-row > strong { padding-top: 23px; }
+.control-assignment-date { display: grid; gap: 5px; color: #455570; font-size: 13px; font-weight: 700; }
+.control-assignment-date input { min-height: 40px; padding: 8px 10px; border: 1px solid #d8e1f0; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
+.control-assignment-cell { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; min-width: 0; }
+.control-assignment-cell .secondary-button { min-height: 40px; }
+.control-assignment-note, .control-assignment-list { grid-column: 1 / -1; margin: 0; }
+.control-assignment-list { list-style: none; padding: 0; display: grid; gap: 5px; }
+.control-assignment-list li {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
+  background: #f4f7fb; border-radius: 7px; padding: 6px 8px; font-size: 13px; overflow-wrap: anywhere;
+}
+.control-remove-assignment { color: #a03447; }
 .control-identity { display: flex; gap: 12px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .control-avatar {
   position: relative; display: grid; place-items: center; flex: 0 0 auto; width: 46px; height: 46px;
@@ -53,13 +65,14 @@
 .control-reason { margin: 8px 0 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 850px) {
   .control-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-timing-row { grid-template-columns: minmax(105px, 1fr) repeat(2, minmax(0, 1fr)); }
+  .control-assignment-cell { grid-column: 1 / -1; }
 }
 @media (max-width: 520px) {
   .control-form-grid { grid-template-columns: minmax(0, 1fr); }
   .control-attendance-card .primary-button { width: 100%; }
-  .control-attendance-buttons, .control-shift-select { width: 100%; }
   .control-timing-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .control-timing-row strong { grid-column: 1 / -1; }
+  .control-timing-row > strong { grid-column: 1 / -1; padding-top: 0; }
   .control-office-heading .control-actions { width: 100%; }
   .control-office-heading .control-actions .primary-button { width: auto; }
   .control-member { grid-template-columns: minmax(0, 1fr) auto; }

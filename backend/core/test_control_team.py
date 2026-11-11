@@ -16,6 +16,7 @@ from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMem
 
 
 SETTINGS_URL = "/api/control/attendance/settings/"
+ASSIGNMENTS_URL = "/api/control/team/assignments/"
 OFFICE_GPS = {"latitude": 51.5074, "longitude": -0.1278, "accuracy_m": 12}
 
 
@@ -49,6 +50,14 @@ class ControlTeamTests(TestCase):
         self.portal.credentials(HTTP_AUTHORIZATION=f"Token {response.data['token']}")
         self.enterContext(patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 11, 9, tzinfo=timezone.utc)))
         self.settings_record = ControlAttendanceSettings.objects.create(pk=1, latitude=51.5074, longitude=-0.1278)
+        self.assignment_id = self.assign("M", "2026-11-11")["id"]
+
+    def assign(self, shift, date, member=None):
+        response = self.office.post(
+            ASSIGNMENTS_URL, {"shift": shift, "shift_date": date, "member": (member or self.member).pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data
 
     def complete_profile(self):
         response = self.portal.put("/api/control/profile/", {
@@ -60,10 +69,10 @@ class ControlTeamTests(TestCase):
         return response.data["photo_url"]
 
     def mark(self, action, **fields):
-        shift = {"shift": "M"} if action == "check_in" else {}
+        assignment = {"assignment_id": self.assignment_id} if action == "check_in" else {}
         return self.portal.post(
             "/api/control/attendance/",
-            {"action": action, "photo": picture(), **OFFICE_GPS, **shift, **fields},
+            {"action": action, "photo": picture(), **OFFICE_GPS, **assignment, **fields},
             format="multipart",
         )
 
@@ -92,6 +101,7 @@ class ControlTeamTests(TestCase):
         self.assertEqual(self.mark("check_in").status_code, 403)
         self.complete_profile()
         start = datetime(2026, 11, 6, 9, tzinfo=timezone.utc)
+        self.assignment_id = self.assign("M", "2026-11-06")["id"]
         with patch("core.control_team.timezone.now", return_value=start):
             for _ in range(2):
                 self.assertEqual(self.mark("check_in").status_code, 200)
@@ -201,14 +211,18 @@ class ControlTeamTests(TestCase):
         saved = self.office.put(SETTINGS_URL, config, format="json")
         self.assertEqual(saved.status_code, 200, saved.data)
         self.assertEqual(saved.data, self.portal.get(SETTINGS_URL).data)
-        entry = self.mark("check_in").data["attendance"][0]
+        assignment = self.assign("M", "2026-11-12")
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 12, 9, tzinfo=timezone.utc)):
+            entry = self.mark("check_in", assignment_id=assignment["id"]).data["attendance"][0]
         self.assertEqual(entry["late_minutes"], 0)
         self.assertEqual(entry["shift_name"], "Morning")
 
     def test_manual_check_in_and_out_enforce_radius_and_record_their_own_location(self):
         self.complete_profile()
         path = "/api/control/attendance/"
-        incomplete = self.portal.post(path, {"action": "check_in", "shift": "M", "photo": picture()}, format="multipart")
+        incomplete = self.portal.post(
+            path, {"action": "check_in", "assignment_id": self.assignment_id, "photo": picture()}, format="multipart",
+        )
         self.assertEqual(incomplete.status_code, 400)
         self.assertIn("latitude", incomplete.data)
         for gps in [{"latitude": "NaN"}, {"latitude": 51.52}, {"accuracy_m": 151}]:
@@ -234,8 +248,9 @@ class ControlTeamTests(TestCase):
     def test_overnight_checkout_deadline_survives_shift_edit_and_runs_from_cron(self):
         self.complete_profile()
         # Check in after UK midnight on the night the clocks move forward.
+        assignment = self.assign("N", "2026-03-28")
         with patch("core.control_team.timezone.now", return_value=datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc)):
-            checked_in = self.mark("check_in", shift="N")
+            checked_in = self.mark("check_in", assignment_id=assignment["id"])
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
         entry = self.member.attendance.get()
         self.assertEqual(entry.scheduled_start_at, datetime(2026, 3, 28, 22, tzinfo=timezone.utc))
@@ -260,6 +275,60 @@ class ControlTeamTests(TestCase):
         self.assertIsNone(entry.check_out_location)
         self.assertIsNone(member["checked_in_at"])
         self.assertTrue(member["attendance"][0]["auto_checked_out"])
+
+    def test_admin_assigns_reassigns_and_removes_without_exposing_other_members_shifts(self):
+        user = get_user_model().objects.create_user("other_control")
+        UserProfile.objects.create(user=user, role=UserProfile.Role.CONTROL_TEAM)
+        other = ControlTeamMember.objects.create(user=user, name="Other Member")
+        self.assertEqual(self.portal.get(ASSIGNMENTS_URL).status_code, 403)
+        self.assertEqual(self.portal.post(ASSIGNMENTS_URL, {}, format="json").status_code, 403)
+        self.assign("M", "2026-11-11", other)
+        night = self.assign("N", "2026-11-11")
+        self.assertEqual([row["id"] for row in self.portal.get("/api/control/profile/").data["assigned_shifts"]],
+                         [self.assignment_id, night["id"]])
+        for code, date in (("D", "2026-11-11"), ("M", "2026-11-12")):
+            conflict = self.office.post(
+                ASSIGNMENTS_URL, {"member": self.member.pk, "shift": code, "shift_date": date}, format="json",
+            )
+            self.assertEqual(conflict.status_code, 400)
+            self.assertIn("conflicting", conflict.data["detail"])
+        path = f"{ASSIGNMENTS_URL}{night['id']}/"
+        reassigned = self.office.patch(path, {"member": other.pk}, format="json")
+        self.assertEqual(reassigned.status_code, 200, reassigned.data)
+        self.assertEqual(reassigned.data["member_name"], other.name)
+        self.complete_profile()
+        self.assertEqual(self.mark("check_in", assignment_id=night["id"]).status_code, 409)
+        self.assertEqual(self.office.delete(path).status_code, 204)
+        self.assertEqual(len(self.office.get(ASSIGNMENTS_URL + "?date=2026-11-11").data), 2)
+
+    def test_check_in_requires_an_available_assignment_and_locks_its_record(self):
+        self.complete_profile()
+        future = self.assign("E", "2026-11-12")
+        self.assertEqual(future["status"], "Upcoming")
+        self.assertEqual(self.mark("check_in", assignment_id=future["id"]).status_code, 409)
+        ended = self.assign("M", "2026-11-10")
+        self.assertEqual(self.mark("check_in", assignment_id=ended["id"]).status_code, 409)
+        self.settings_record.shifts["M"] = {"start": "08:00", "end": "16:00"}
+        self.settings_record.save(update_fields=["shifts"])
+        checked_in = self.mark("check_in")
+        self.assertEqual(checked_in.status_code, 200, checked_in.data)
+        self.assertEqual(checked_in.data["attendance"][0]["late_minutes"], 120)
+        entry = self.member.attendance.get()
+        self.assertEqual(entry.auto_checkout_at.hour, 19)
+        path = f"{ASSIGNMENTS_URL}{self.assignment_id}/"
+        self.assertEqual(self.office.delete(path).status_code, 409)
+        self.assertEqual(self.office.patch(path, {"member": self.member.pk}, format="json").status_code, 409)
+        self.assertEqual(self.mark("check_out", attendance_id=entry.pk).status_code, 200)
+        self.assertEqual(self.mark("check_in").status_code, 409)
+
+    def test_existing_open_attendance_can_check_out_without_an_assignment(self):
+        self.complete_profile()
+        entry = ControlAttendance.objects.create(
+            member=self.member, checked_in_at=datetime(2026, 11, 11, 8, tzinfo=timezone.utc),
+        )
+        result = self.mark("check_out", attendance_id=entry.pk)
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertIsNone(result.data["checked_in_at"])
 
     def test_leave_and_replacement_requests_are_reviewed_by_admin(self):
         self.complete_profile()

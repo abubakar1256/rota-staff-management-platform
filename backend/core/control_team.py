@@ -22,10 +22,15 @@ from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
-from .control_attendance import AUTO_CHECKOUT_GRACE, LONDON, attendance_settings, close_expired_attendance, minutes_late, shift_window
+from .control_attendance import (
+    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late, shift_window,
+)
 from .geo import haversine_distance_m
 from .location_tracking import valid_coordinates
-from .models import AuditLog, ControlAttendance, ControlAttendanceSettings, ControlLeaveRequest, ControlTeamMember, Employee, UserProfile
+from .models import (
+    AuditLog, ControlAttendance, ControlAttendanceSettings, ControlLeaveRequest, ControlShiftAssignment,
+    ControlTeamMember, Employee, UserProfile,
+)
 from .permissions import is_admin, role_of
 from .serializers import LoginSerializer
 
@@ -166,7 +171,7 @@ class AttendanceActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["check_in", "check_out"])
     photo = ControlPhotoField(error_messages={"required": "Take an attendance photo before submitting."})
     attendance_id = serializers.IntegerField(min_value=1, required=False)
-    shift = serializers.ChoiceField(choices=ControlAttendance.Shift.choices, required=False)
+    assignment_id = serializers.IntegerField(min_value=1, required=False)
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     accuracy_m = serializers.FloatField()
@@ -174,8 +179,8 @@ class AttendanceActionSerializer(serializers.Serializer):
     def validate(self, data):
         if data["action"] == "check_out" and "attendance_id" not in data:
             raise serializers.ValidationError({"attendance_id": "Select the attendance entry to check out."})
-        if data["action"] == "check_in" and "shift" not in data:
-            raise serializers.ValidationError({"shift": "Choose your shift before checking in."})
+        if data["action"] == "check_in" and "assignment_id" not in data:
+            raise serializers.ValidationError({"assignment_id": "Choose one of your assigned shifts before checking in."})
         if not valid_coordinates(data["latitude"], data["longitude"], data["accuracy_m"]):
             raise serializers.ValidationError("A valid GPS location and accuracy are required. Allow location access and try again.")
         return data
@@ -208,6 +213,68 @@ class ControlSettingsSerializer(serializers.ModelSerializer):
         if set(data["shifts"]) != set(ControlAttendance.Shift.values):
             raise serializers.ValidationError({"shifts": "Enter start and end times for all four shifts."})
         return data
+
+
+class AssignmentMemberSerializer(serializers.Serializer):
+    member = serializers.PrimaryKeyRelatedField(
+        queryset=ControlTeamMember.objects.filter(user__is_active=True, user__profile__role=UserProfile.Role.CONTROL_TEAM),
+    )
+
+
+class NewAssignmentSerializer(AssignmentMemberSerializer):
+    shift_date = serializers.DateField()
+    shift = serializers.ChoiceField(choices=ControlAttendance.Shift.choices)
+
+
+class ShiftAssignmentSerializer(serializers.ModelSerializer):
+    member_name = serializers.CharField(source="member.name")
+    shift_name = serializers.CharField(source="get_shift_display")
+    status = serializers.SerializerMethodField()
+    started = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ControlShiftAssignment
+        fields = [
+            "id", "member", "member_name", "shift", "shift_date", "shift_name",
+            "scheduled_start_at", "scheduled_end_at", "status", "started",
+        ]
+
+    def get_status(self, assignment):
+        return assignment_status(assignment, self.context["now"])
+
+    def get_started(self, assignment):
+        return hasattr(assignment, "attendance")
+
+
+def save_assignment(serializer, settings, assignment=None):
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    if assignment:
+        shift_date, shift = assignment.shift_date, assignment.shift
+        start, end = assignment.scheduled_start_at, assignment.scheduled_end_at
+    else:
+        shift_date, shift = data["shift_date"], data["shift"]
+        start, end = shift_window(settings.shifts[shift], shift_date)
+        if start >= end:
+            raise serializers.ValidationError({"detail": "These shift times are unavailable on the selected UK clock-change date."})
+    member = data["member"]
+    conflicts = ControlShiftAssignment.objects.filter(member=member).filter(
+        Q(scheduled_start_at__lt=end, scheduled_end_at__gt=start) | Q(shift_date=shift_date, shift=shift),
+    )
+    if assignment:
+        conflicts = conflicts.exclude(pk=assignment.pk)
+    conflict = conflicts.first()
+    if conflict:
+        raise serializers.ValidationError({
+            "detail": f"{member.name} already has a conflicting {conflict.get_shift_display()} shift on {conflict.shift_date:%d %b %Y}.",
+        })
+    if assignment:
+        assignment.member = member
+        assignment.save(update_fields=["member"])
+        return assignment
+    return ControlShiftAssignment.objects.create(
+        member=member, shift=shift, shift_date=shift_date, scheduled_start_at=start, scheduled_end_at=end,
+    )
 
 
 def verified_location(data, settings):
@@ -265,7 +332,7 @@ def period_attendance(now):
     )
 
 
-def member_data(member, now, *, history=False):
+def member_data(member, now, *, history=False, include_assignments=False):
     week_start, month_start = attendance_periods(now)
     attendance = getattr(member, "period_attendance", None)
     if attendance is None:
@@ -293,6 +360,13 @@ def member_data(member, now, *, history=False):
     }
     if history:
         data["attendance"] = AttendanceSerializer(member.attendance.all()[:50], many=True).data
+    if include_assignments:
+        today = now.astimezone(LONDON).date()
+        assignments = member.shift_assignments.filter(
+            shift_date__range=(today - timedelta(days=1), today + timedelta(days=6)),
+            scheduled_end_at__gt=datetime.combine(today, time.min, LONDON),
+        ).select_related("member", "attendance")
+        data["assigned_shifts"] = ShiftAssignmentSerializer(assignments, many=True, context={"now": now}).data
     return data
 
 
@@ -331,7 +405,7 @@ def profile(request):
         serializer.save()
     now = timezone.now()
     close_expired_attendance(now, member_id=member.pk)
-    return Response(member_data(member, now, history=True))
+    return Response(member_data(member, now, history=True, include_assignments=True))
 
 
 @api_view(["GET", "PUT"])
@@ -353,6 +427,50 @@ def team_attendance_settings(request):
     return Response(serializer.data)
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsControlAdmin])
+@transaction.atomic
+def team_assignments(request):
+    now = timezone.now()
+    if request.method == "GET":
+        raw_date = request.query_params.get("date")
+        selected_date = serializers.DateField().run_validation(raw_date) if raw_date else now.astimezone(LONDON).date()
+        assignments = ControlShiftAssignment.objects.filter(shift_date=selected_date).select_related("member", "attendance")
+        return Response(ShiftAssignmentSerializer(assignments, many=True, context={"now": now}).data)
+
+    # Serialize roster edits with timing updates and other assignments, including overlapping shifts.
+    settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
+    assignment = save_assignment(NewAssignmentSerializer(data=request.data), settings)
+    AuditLog.objects.create(
+        user=request.user, action="CREATE", model_name="ControlShiftAssignment", object_id=str(assignment.pk),
+        summary="Assigned a Control Team shift",
+    )
+    return Response(ShiftAssignmentSerializer(assignment, context={"now": now}).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsControlAdmin])
+@transaction.atomic
+def team_assignment(request, pk):
+    settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
+    assignment = get_object_or_404(ControlShiftAssignment.objects.select_for_update(), pk=pk)
+    if hasattr(assignment, "attendance"):
+        return Response({"detail": "This shift already has attendance recorded."}, status=status.HTTP_409_CONFLICT)
+    if request.method == "DELETE":
+        assignment.delete()
+        AuditLog.objects.create(
+            user=request.user, action="DELETE", model_name="ControlShiftAssignment", object_id=str(pk),
+            summary="Removed a Control Team shift assignment",
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    assignment = save_assignment(AssignmentMemberSerializer(data=request.data), settings, assignment)
+    AuditLog.objects.create(
+        user=request.user, action="UPDATE", model_name="ControlShiftAssignment", object_id=str(pk),
+        summary="Reassigned a Control Team shift",
+    )
+    return Response(ShiftAssignmentSerializer(assignment, context={"now": timezone.now()}).data)
+
+
 @api_view(["POST"])
 @permission_classes([IsControlMember])
 @transaction.atomic
@@ -372,14 +490,18 @@ def attendance(request):
     if data["action"] == "check_in":
         if not member.profile_complete:
             raise PermissionDenied("Complete your profile and upload a photo before checking in.")
+        if current and current.assignment_id != data["assignment_id"]:
+            return Response({"detail": "You are already checked in. Check out before starting another shift."}, status=status.HTTP_409_CONFLICT)
         if not current:
-            shift = data["shift"]
-            start, end = shift_window(settings.shifts[shift], now)
-            if now >= end:
-                raise serializers.ValidationError({"shift": "This shift has already ended. Select your scheduled shift."})
+            assignment = member.shift_assignments.select_for_update().filter(pk=data["assignment_id"]).first()
+            now = timezone.now()
+            if not assignment or assignment_status(assignment, now) != "Available":
+                return Response({"detail": "This shift is unavailable for check-in. Check your assigned shifts."}, status=status.HTTP_409_CONFLICT)
             ControlAttendance.objects.create(
                 member=member, checked_in_at=now, check_in_photo=data["photo"], check_in_location=location,
-                shift=shift, scheduled_start_at=start, scheduled_end_at=end, auto_checkout_at=end + AUTO_CHECKOUT_GRACE,
+                assignment=assignment, shift=assignment.shift,
+                scheduled_start_at=assignment.scheduled_start_at, scheduled_end_at=assignment.scheduled_end_at,
+                auto_checkout_at=assignment.scheduled_end_at + AUTO_CHECKOUT_GRACE,
             )
     elif current:
         if current.pk != data["attendance_id"]:
@@ -391,7 +513,7 @@ def attendance(request):
         current.check_out_photo = data["photo"]
         current.check_out_location = location
         current.save(update_fields=["checked_out_at", "check_out_photo", "check_out_location"])
-    return Response(member_data(member, now, history=True))
+    return Response(member_data(member, now, history=True, include_assignments=True))
 
 
 @api_view(["GET", "POST"])
@@ -524,6 +646,8 @@ urlpatterns = [
     path("requests/", member_requests, name="requests"),
     path("photos/<int:pk>/", photo, name="photo"),
     path("team/", team, name="team"),
+    path("team/assignments/", team_assignments, name="team-assignments"),
+    path("team/assignments/<int:pk>/", team_assignment, name="team-assignment"),
     path("team/<int:pk>/", team_member, name="member"),
     path("team/requests/", team_requests, name="team-requests"),
     path("team/requests/<int:pk>/", review_request, name="review"),

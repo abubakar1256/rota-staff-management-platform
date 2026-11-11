@@ -63,6 +63,7 @@ class ControlAttendance(models.Model):
         NIGHT = "N", "Night"
 
     member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="attendance")
+    assignment = models.OneToOneField("ControlShiftAssignment", on_delete=models.PROTECT, related_name="attendance", null=True, blank=True)
     checked_in_at = models.DateTimeField()
     checked_out_at = models.DateTimeField(null=True, blank=True)
     check_in_photo = models.ImageField(upload_to="control-team/attendance/", blank=True)
@@ -83,6 +84,21 @@ class ControlAttendance(models.Model):
         ]
         indexes = [
             models.Index(fields=["auto_checkout_at"], condition=models.Q(checked_out_at__isnull=True), name="control_open_checkout_due"),
+        ]
+
+
+class ControlShiftAssignment(models.Model):
+    member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="shift_assignments")
+    shift_date = models.DateField(db_index=True)
+    shift = models.CharField(max_length=1, choices=ControlAttendance.Shift.choices)
+    scheduled_start_at = models.DateTimeField()
+    scheduled_end_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["scheduled_start_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["member", "shift_date", "shift"], name="control_unique_member_shift"),
+            models.CheckConstraint(condition=models.Q(scheduled_start_at__lt=models.F("scheduled_end_at")), name="control_shift_times_in_order"),
         ]
 
 

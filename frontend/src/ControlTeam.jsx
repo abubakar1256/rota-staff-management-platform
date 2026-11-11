@@ -3,13 +3,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, Camera, Clock3, LogOut, MapPin, UserPlus, Users } from "lucide-react";
 import { readCurrentLocation } from "./attendanceGeofence";
 import { googleSiteLinks, sitePoint } from "./siteCoordinates";
-import { formatUkAttendanceTime, formatUkDateTime } from "./ukTime";
+import { formatUkAttendanceTime, formatUkDateTime, ukDate } from "./ukTime";
 import "./controlTeam.css";
 
 const root = "/control";
 const profilePath = root + "/profile/";
 const settingsPath = root + "/attendance/settings/";
 const teamPath = root + "/team/";
+const assignmentsPath = teamPath + "assignments/";
 const requestsPath = root + "/requests/";
 const officeRequestsPath = teamPath + "requests/";
 const queryKey = (path) => ["rota", "control", path];
@@ -345,10 +346,24 @@ function AttendanceCapture({ action, onClose, onSubmit }) {
   </dialog>;
 }
 
+function AssignedShifts({ shifts, canCheckIn, onCheckIn }) {
+  return <section className="panel">
+    <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time</p></div></div>
+    {shifts.length ? <div className="control-member-list">{shifts.map((shift) => <article className="control-member" key={shift.id}>
+      <div><strong>{shift.shift_name}</strong>
+        <small className="table-subtext">{formatUkDateTime(shift.scheduled_start_at)} – {formatUkDateTime(shift.scheduled_end_at)}</small>
+      </div>
+      <div><span className={`status-pill ${shift.started ? "active" : "neutral"}`}>{shift.status}</span></div>
+      {shift.status === "Available" && <button type="button" className="primary-button" disabled={!canCheckIn} onClick={() => onCheckIn(shift.id)}>
+        <Camera size={15} aria-hidden="true" /> Check In
+      </button>}
+    </article>)}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
+  </section>;
+}
+
 export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
   const [page, setPage] = useState("attendance");
   const [capture, setCapture] = useState(null);
-  const [shift, setShift] = useState("");
   const client = useQueryClient();
   const profile = useControlQuery(api, profilePath);
   const member = profile.data;
@@ -362,15 +377,12 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
     client.setQueryData(queryKey(profilePath), data);
     setPage("attendance");
   };
-  function beginAttendance() {
-    setCapture(current ? { action: "check_out", id: current.id } : { action: "check_in", shift });
-  }
   async function markAttendance(photo, location) {
     const body = new FormData();
     body.set("action", capture.action);
     body.set("photo", photo, "attendance.jpg");
-    if (capture.id) body.set("attendance_id", capture.id);
-    if (capture.shift) body.set("shift", capture.shift);
+    if (capture.action === "check_out") body.set("attendance_id", capture.id);
+    else body.set("assignment_id", capture.id);
     body.set("latitude", location.latitude);
     body.set("longitude", location.longitude);
     body.set("accuracy_m", location.accuracy);
@@ -380,7 +392,6 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
       });
       await client.cancelQueries({ queryKey: queryKey(profilePath), exact: true });
       client.setQueryData(queryKey(profilePath), updated);
-      setShift("");
       setCapture(null);
     } catch (err) {
       if (err.status === 409) profile.refetch();
@@ -406,19 +417,10 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
               <ShiftDetails entry={current} />
               {current?.auto_checkout_at && <small className="table-subtext">Auto checkout at {formatUkDateTime(current.auto_checkout_at)}</small>}
             </div></div>
-            <div className="control-actions control-attendance-buttons">
-              {!current && office && <label className="control-shift-select">Your shift (UK time)
-                <select value={shift} onChange={(event) => setShift(event.target.value)}>
-                  <option value="">Select your shift</option>
-                  {Object.entries(office.shifts).map(([code, timing]) => <option key={code} value={code}>
-                    {code} · {shiftNames[code]} · {timing.start}–{timing.end}{timing.end < timing.start ? " (+1 day)" : ""}
-                  </option>)}
-                </select>
-              </label>}
-              <button type="button" className="primary-button" disabled={!officePin || (!current && !shift)} onClick={beginAttendance}>
-                <Camera size={16} /> {current ? "Check Out" : "Check In"}
-              </button>
-            </div>
+            {current && <button type="button" className="primary-button" disabled={!officePin}
+              onClick={() => setCapture({ action: "check_out", id: current.id })}>
+              <Camera size={16} aria-hidden="true" /> Check Out
+            </button>}
             <div className="control-office-location">
               {!office ? <QueryStatus query={settings} label="attendance location" /> : officePin ?
                 <div className="control-actions"><LocationLink location={officePin} label="Attendance location" />
@@ -426,6 +428,8 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
                 <p className="muted">The office needs to set the attendance location.</p>}
             </div>
           </section>
+          <AssignedShifts shifts={member.assigned_shifts || []} canCheckIn={Boolean(officePin && !current)}
+            onCheckIn={(id) => setCapture({ action: "check_in", id })} />
           <div className="control-metrics">
             <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
             <Metric icon={CalendarDays} label="This month" value={duration(member.monthly_seconds)} detail="Calendar month · UK time" />
@@ -497,11 +501,68 @@ function MemberDetail({ member, api, FilePreview, onClose }) {
   </>;
 }
 
-function AttendanceSettingsForm({ settings, api, onSaved }) {
+function ShiftAssignmentControls({ api, code, date, assignments, members, onChanged, timingDirty }) {
+  const [memberId, setMemberId] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function saveAssignment(removeId) {
+    setBusy(true);
+    setError("");
+    try {
+      if (removeId) {
+        await api(`${assignmentsPath}${removeId}/`, { method: "DELETE", silentError: true, silentLoading: true });
+      } else {
+        const path = editingId ? `${assignmentsPath}${editingId}/` : assignmentsPath;
+        const fields = editingId ? { member: memberId } : { member: memberId, shift: code, shift_date: date };
+        await api(path, { ...requestOptions(editingId ? "PATCH" : "POST", fields), silentError: true, silentLoading: true });
+      }
+      await onChanged();
+      setMemberId("");
+      setEditingId(null);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="control-assignment-cell">
+    <label>{editingId ? "Reassign to" : "Assign member"}
+      <select aria-label={`${shiftNames[code]} member`} value={memberId} disabled={busy} onChange={(event) => setMemberId(event.target.value)}>
+        <option value="">Select member</option>
+        {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+      </select>
+    </label>
+    <div className="control-actions">
+      <button type="button" className="secondary-button" disabled={busy || !memberId || (timingDirty && !editingId)}
+        onClick={() => saveAssignment()}>{editingId ? "Save assignment" : "Assign"}</button>
+      {editingId && <button type="button" className="text-button" disabled={busy} onClick={() => { setEditingId(null); setMemberId(""); setError(""); }}>Cancel</button>}
+    </div>
+    {timingDirty && !editingId && <small className="muted control-assignment-note">Save the new shift timing before assigning.</small>}
+    {error && <p className="error control-assignment-note" role="alert">{error}</p>}
+    {assignments.length > 0 && <ul className="control-assignment-list">
+      {assignments.map((assignment) => <li key={assignment.id}>
+        <div><strong>{assignment.member_name}</strong>
+          <small className="table-subtext">{formatUkAttendanceTime(assignment.scheduled_start_at)} – {formatUkAttendanceTime(assignment.scheduled_end_at)}{assignment.started && ` · ${assignment.status}`}</small>
+        </div>
+        {!assignment.started && <div className="control-actions">
+          <button type="button" className="text-button" disabled={busy} aria-label={`Edit ${assignment.member_name} assignment`}
+            onClick={() => { setEditingId(assignment.id); setMemberId(String(assignment.member)); setError(""); }}>Edit</button>
+          <button type="button" className="text-button control-remove-assignment" disabled={busy}
+            aria-label={`Remove ${assignment.member_name} assignment`} onClick={() => saveAssignment(assignment.id)}>Remove</button>
+        </div>}
+      </li>)}
+    </ul>}
+  </div>;
+}
+
+function AttendanceSettingsForm({ settings, api, onSaved, team }) {
   const [draft, setDraft] = useState(settings);
+  const [date, setDate] = useState(() => ukDate());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const assignments = useControlQuery(api, `${assignmentsPath}?date=${encodeURIComponent(date)}`, Boolean(date));
+  const members = (team.data || []).filter((member) => member.is_active);
 
   function change(fields) {
     setSaved(false);
@@ -557,19 +618,29 @@ function AttendanceSettingsForm({ settings, api, onSaved }) {
         <LocationLink location={draft} label="Preview office pin" />
       </div>
     </fieldset>
-    <div>
-      <h3>Shift timings</h3>
-      <p className="muted">UK time · An end time before the start time means the shift ends the next day.</p>
+    <div className="control-between">
+      <div><h3>Shift timings & assignments</h3>
+        <p className="muted">Assignments use the saved UK timings. For overnight shifts, select the start date.</p>
+      </div>
+      <label className="control-assignment-date">Assignment date
+        <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+      </label>
     </div>
+    {date && !assignments.data && <QueryStatus query={assignments} label="shift assignments" />}
+    {!team.data && <QueryStatus query={team} label="team members" />}
     <fieldset disabled={Boolean(busy)} className="control-form control-settings-fields">
-      {Object.entries(draft.shifts).map(([code, timing]) => <div className="control-timing-row" key={code}>
+      {Object.keys(shiftNames).map((code) => <div className="control-timing-row" key={code}>
         <strong>{code} · {shiftNames[code]}</strong>
         {["start", "end"].map((field) => <label key={field}>
           {field === "start" ? "Start time" : "End time"}
-          <input type="time" required value={timing[field]} aria-label={shiftNames[code] + " " + field + " time"} onChange={(event) => {
-            change({ shifts: { ...draft.shifts, [code]: { ...timing, [field]: event.target.value } } });
+          <input type="time" required value={draft.shifts[code][field]} aria-label={shiftNames[code] + " " + field + " time"} onChange={(event) => {
+            change({ shifts: { ...draft.shifts, [code]: { ...draft.shifts[code], [field]: event.target.value } } });
           }} />
         </label>)}
+        {date && assignments.data && team.data && <ShiftAssignmentControls key={date + code} api={api} code={code} date={date}
+          assignments={assignments.data.filter((assignment) => assignment.shift === code)} members={members}
+          timingDirty={draft.shifts[code].start !== settings.shifts[code].start || draft.shifts[code].end !== settings.shifts[code].end}
+          onChanged={assignments.refetch} />}
       </div>)}
     </fieldset>
     {error && <p className="error" role="alert">{error}</p>}
@@ -582,7 +653,7 @@ export function ControlTeamAdmin({ api, Photo, FilePreview }) {
   const [page, setPage] = useState("team");
   const [adding, setAdding] = useState(false);
   const [selected, setSelected] = useState(null);
-  const team = useControlQuery(api, teamPath, page === "team");
+  const team = useControlQuery(api, teamPath, page !== "requests");
   const detail = useControlQuery(api, teamPath + selected + "/", Boolean(selected && page === "team"));
   const requests = useControlQuery(api, officeRequestsPath, page === "requests");
   const settings = useControlQuery(api, settingsPath, page === "settings");
@@ -600,7 +671,8 @@ export function ControlTeamAdmin({ api, Photo, FilePreview }) {
     <ControlTabs label="Control Team management" page={page} onChange={setPage}
       tabs={[["team", "Members & attendance"], ["requests", "Leave & replacement"], ["settings", "Attendance settings"]]} />
     {page === "settings" && (settings.data ?
-      <AttendanceSettingsForm settings={settings.data} api={api} onSaved={(data) => client.setQueryData(queryKey(settingsPath), data)} /> :
+      <AttendanceSettingsForm settings={settings.data} api={api} team={team}
+        onSaved={(data) => client.setQueryData(queryKey(settingsPath), data)} /> :
       <QueryStatus query={settings} label="attendance settings" />)}
     {page === "requests" && <RequestList query={requests} api={api} office />}
     {page === "team" && <>

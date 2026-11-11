@@ -16,20 +16,24 @@ def attendance_settings():
     return ControlAttendanceSettings.objects.filter(pk=1).first() or ControlAttendanceSettings(pk=1)
 
 
-def shift_window(timing, now):
+def shift_window(timing, shift_date):
     start_time = time.fromisoformat(timing["start"])
     end_time = time.fromisoformat(timing["end"])
-    local_today = now.astimezone(LONDON).date()
-    starts_on = ends_on = local_today
-    if end_time < start_time:
-        end_today = datetime.combine(local_today, end_time, LONDON).astimezone(utc_timezone.utc)
-        if now < end_today:
-            starts_on -= timedelta(days=1)
-        else:
-            ends_on += timedelta(days=1)
-    start = datetime.combine(starts_on, start_time, LONDON).astimezone(utc_timezone.utc)
-    end = datetime.combine(ends_on, end_time, LONDON).astimezone(utc_timezone.utc)
+    end_date = shift_date + timedelta(days=end_time < start_time)
+    start = datetime.combine(shift_date, start_time, LONDON).astimezone(utc_timezone.utc)
+    end = datetime.combine(end_date, end_time, LONDON).astimezone(utc_timezone.utc)
     return start, end
+
+
+def assignment_status(assignment, now):
+    entry = getattr(assignment, "attendance", None)
+    if entry is not None:
+        return "Completed" if entry.checked_out_at else "Checked in"
+    if now >= assignment.scheduled_end_at:
+        return "Ended"
+    if assignment.shift_date > now.astimezone(LONDON).date():
+        return "Upcoming"
+    return "Available"
 
 
 def close_expired_attendance(now=None, *, member_id=None):
