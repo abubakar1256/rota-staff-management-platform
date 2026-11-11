@@ -225,12 +225,13 @@ def sync_verified_document(document):
             uploaded = service.files().create(body=body, media_body=media, fields="id").execute()
         document.drive_file_id = uploaded["id"]
         document.drive_folder_id = guard_folder_id
+        document.drive_root_folder_id = root_id
         document.drive_synced_at = timezone.now()
         document.drive_sync_error = ""
         with transaction.atomic():
             current = GoogleDriveConnection.objects.select_for_update().get(pk=item.pk)
             if current.root_folder_id == root_id:
-                document.save(update_fields=["drive_file_id", "drive_folder_id", "drive_synced_at", "drive_sync_error", "updated_at"])
+                document.save(update_fields=["drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "updated_at"])
         return uploaded["id"]
     except Exception as exc:  # Drive failure must not undo office verification.
         document.drive_sync_error = str(exc)[:2000]

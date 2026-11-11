@@ -71,6 +71,27 @@ export function certificateLabel(document) {
   return document.certificate_type === "OTHER" ? document.certificate_name || "Other" : certificateTypes.find((item) => item.value === document.certificate_type)?.label || "Certificate";
 }
 
+export function documentDriveStatus(document, activeRootId) {
+  if (!document.secure_file_url && !document.file) return { label: "No uploaded file", tone: "neutral" };
+  if (document.verification_status === "REJECTED") return { label: "On hold", tone: "neutral" };
+  if (document.verification_status !== "VERIFIED") return { label: "Awaiting verification", tone: "neutral" };
+  if (document.drive_sync_error) return { label: "Upload failed", tone: "rejected" };
+  if (!document.drive_file_id || !document.drive_synced_at) return { label: "Not uploaded", tone: "pending" };
+
+  const copy = {
+    url: `https://drive.google.com/file/d/${encodeURIComponent(document.drive_file_id)}/view`,
+    syncedAt: document.drive_synced_at,
+  };
+  if (Date.parse(document.reviewed_at) > Date.parse(document.drive_synced_at)) {
+    return { ...copy, label: "Earlier copy", tone: "pending" };
+  }
+  if (activeRootId && document.drive_root_folder_id && document.drive_root_folder_id !== activeRootId) {
+    return { ...copy, label: "Previous Drive folder", tone: "pending" };
+  }
+  const detail = document.drive_root_folder_id ? "" : "Drive account unknown";
+  return { ...copy, label: "Uploaded", tone: "active", detail };
+}
+
 export async function saveDocument(api, employee, item, existing, draft = {}) {
   const merged = { ...existing, ...draft, file: draft.file || existing?.file };
   const error = documentError(item, merged);

@@ -109,6 +109,7 @@ class GoogleDriveSwitchTests(APITestCase):
             response = self.finish(state, credentials, service)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["authorized_email"], "new@example.com")
+        self.assertEqual(response.data["root_folder_id"], "new-folder")
         service.files().get.assert_not_called()
         self.old.refresh_from_db()
         self.assertEqual(self.old.updated_at, previous_update)
@@ -132,3 +133,15 @@ class GoogleDriveSwitchTests(APITestCase):
         document.refresh_from_db()
         self.assertEqual(document.drive_folder_id, "new-guard-folder")
         self.assertEqual(document.drive_file_id, "new-file")
+        self.assertEqual(document.drive_root_folder_id, "new-folder")
+        self.assertIsNotNone(document.drive_synced_at)
+
+        attempted_edit = self.client.patch(f"/api/documents/{document.pk}/", {
+            "drive_file_id": "forged-file", "drive_root_folder_id": "forged-folder",
+        }, format="json")
+        self.assertEqual(attempted_edit.status_code, 200)
+        summary = self.client.get("/api/documents/employee-summary/")
+        self.assertEqual(summary.status_code, 200)
+        row = summary.data["results"][0]["documents"][0]
+        self.assertEqual(row["drive_file_id"], "new-file")
+        self.assertEqual(row["drive_root_folder_id"], "new-folder")

@@ -86,7 +86,7 @@ def google_drive_connect(request):
         except Exception as exc:
             logger.warning("Google Drive authorization failed (%s)", type(exc).__name__)
             return Response({"detail": "Google Drive could not be connected. Check that the account can authorize RotaOps and try again."}, status=status.HTTP_502_BAD_GATEWAY)
-        return Response({"configured": True, "connected": True, "authorized_email": item.authorized_email})
+        return Response({"configured": True, "connected": True, "authorized_email": item.authorized_email, "root_folder_id": item.root_folder_id})
 
     redirect = google_drive_redirect_uri(request)
     origin = request.headers.get("Origin", "")

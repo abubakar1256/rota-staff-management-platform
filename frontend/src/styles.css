@@ -514,6 +514,10 @@ textarea, select, input { max-width: 100%; }
 .document-save-all .primary-button { font-size: 0; }
 .document-save-all .primary-button::after { content: "Upload documents"; font-size: 12px; }
 .document-status-stack { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; min-width: 150px; }
+.document-drive-status { display: grid; justify-items: start; gap: 4px; min-width: 118px; }
+.document-drive-status .status-pill { gap: 4px; }
+.document-drive-status time, .document-drive-status small { font-size: 10px; color: #64748b; }
+.document-drive-status a { display: inline-flex; align-items: center; gap: 4px; color: #355db6; font-size: 11px; }
 .status-pill.review_required { color: #9b6a18; background: #fff5df; }
 .status-pill.verified { color: #218c72; background: #e5f8f1; }
 .document-review-reason { display: block; max-width: 220px; margin-top: 5px; color: #a45d68; font-size: 10px; line-height: 1.4; }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { certificateLabel, certificateTypes, documentComplete, documentFieldRules, documentsProgress, findStepDocument, optionalDocumentItems, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
+import { certificateLabel, certificateTypes, documentComplete, documentDriveStatus, documentFieldRules, documentsProgress, findStepDocument, optionalDocumentItems, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
 
 const today = "2026-11-03";
 const complete = (nationality = "Pakistani") => requiredDocumentItems({ nationality }).map((item, index) => ({ id: index + 1, document_type: item.label, file: `/file-${index}.pdf`, document_number: "123456", expiry_date: "2099-01-01", issue_date: today, verification_status: "PENDING" }));
@@ -93,4 +93,21 @@ test("replacing an optional file can clear a previously saved expiry date", asyn
     return { id: 9, expiry_date: null };
   };
   await saveDocument(api, { id: 1 }, item, existing, { file: replacement, expiry_date: "" });
+});
+
+test("Drive status distinguishes completed uploads, previous folders, and documents still needing a copy", () => {
+  const verified = { file: "/files/passport.pdf", verification_status: "VERIFIED", reviewed_at: "2026-11-11T09:00:00Z" };
+  const uploaded = { ...verified, drive_file_id: "drive-file", drive_synced_at: "2026-11-11T09:00:01Z", drive_root_folder_id: "current" };
+  const current = documentDriveStatus(uploaded, "current");
+  assert.equal(current.label, "Uploaded");
+  assert.equal(current.url, "https://drive.google.com/file/d/drive-file/view");
+  assert.equal(current.syncedAt, uploaded.drive_synced_at);
+  assert.equal(documentDriveStatus(uploaded, "another").label, "Previous Drive folder");
+  assert.equal(documentDriveStatus({ ...uploaded, drive_root_folder_id: "" }, "current").detail, "Drive account unknown");
+  assert.equal(documentDriveStatus({ ...uploaded, reviewed_at: "2026-11-11T09:10:00Z" }, "current").label, "Earlier copy");
+  assert.equal(documentDriveStatus({ ...uploaded, drive_sync_error: "test failure" }, "current").label, "Upload failed");
+  assert.equal(documentDriveStatus({ ...uploaded, verification_status: "PENDING" }, "current").label, "Awaiting verification");
+  assert.equal(documentDriveStatus({ ...uploaded, verification_status: "REJECTED" }, "current").label, "On hold");
+  assert.equal(documentDriveStatus({ ...verified, file: null }, "current").label, "No uploaded file");
+  assert.equal(documentDriveStatus(verified, "current").label, "Not uploaded");
 });

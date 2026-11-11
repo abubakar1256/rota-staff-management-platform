@@ -521,6 +521,7 @@ class EmployeeDocument(models.Model):
     rejection_reason = models.TextField(blank=True)
     drive_file_id = models.CharField(max_length=160, blank=True)
     drive_folder_id = models.CharField(max_length=160, blank=True)
+    drive_root_folder_id = models.CharField(max_length=160, blank=True)
     drive_synced_at = models.DateTimeField(null=True, blank=True)
     drive_sync_error = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_documents")
