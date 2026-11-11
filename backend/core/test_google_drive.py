@@ -104,11 +104,14 @@ class GoogleDriveSwitchTests(APITestCase):
         service.files().list().execute.return_value = {"files": [{"id": "shared-folder", "ownedByMe": True, "shared": True}]}
         service.files().create().execute.return_value = {"id": "new-folder"}
         credentials = SimpleNamespace(refresh_token="new-token", scopes=[])
-        response = self.finish(state, credentials, service)
+        previous_update = self.old.updated_at
+        with patch("django.db.models.fields.timezone.now", return_value=previous_update):
+            response = self.finish(state, credentials, service)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["authorized_email"], "new@example.com")
         service.files().get.assert_not_called()
         self.old.refresh_from_db()
+        self.assertEqual(self.old.updated_at, previous_update)
         self.assertEqual(self.old.root_folder_id, "new-folder")
         self.assertEqual(decrypt_refresh_token(self.old.encrypted_refresh_token), "new-token")
         self.assertEqual(self.finish(state, credentials, service).status_code, 400)

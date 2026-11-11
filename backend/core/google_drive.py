@@ -77,7 +77,10 @@ def connection():
 
 
 def connection_version(item):
-    return item.updated_at.isoformat() if item else ""
+    if not item:
+        return ""
+    state = f"{item.encrypted_refresh_token}:{item.root_folder_id}"
+    return hashlib.sha256(state.encode("utf-8")).hexdigest()
 
 
 def save_oauth_connection(credentials, user, expected_version):
