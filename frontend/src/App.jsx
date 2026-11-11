@@ -1143,11 +1143,92 @@ function EmployeeDocumentRow({ employee, expanded, onToggle, onAddDocument, onEd
         </td>}<td><strong>{label}</strong>{item.rejection_reason && <small className="document-review-reason">Reason: {item.rejection_reason}</small>}</td><td>{item.document_number || "—"}</td><td>{item.expiry_date || "No expiry"}</td><td><div className="document-status-stack"><span className={`status-pill ${(item.verification_status || "PENDING").toLowerCase()}`}>{verificationLabel[item.verification_status] || "Needs review"}</span><span className={`status-pill ${item.status.toLowerCase()}`}>{item.status.replace("_", " ")}</span></div></td><td>{fileHref(item) ? <ProtectedFilePreview value={fileHref(item)} label={`${employee.employee_name} · ${item.document_type}`} buttonLabel="View" /> : "—"}</td><td><div className="row-actions compliance-review-actions">{item.verification_status === "PENDING" && <><button className="mini-button approve" onClick={() => onReview(item, "verify")}><CheckCircle2 size={13} /> Verify</button><button className="mini-button reject" onClick={() => onReview(item, "reject")}>Reject</button></>}<button className="mini-button" onClick={() => onEdit(item)}><Pencil size={13} /> Edit</button><button className="mini-button reject" onClick={() => onDelete(item.id)}><Trash2 size={13} /> Delete</button></div></td></tr>; })}</tbody></table></div> : <div className="empty-state compact-empty"><strong>No documents yet</strong><span>Add the first document for this employee.</span></div>}</div></td></tr>}</>;
 }
 
-function DocumentsPage({ onNavigate, target = {}, canDownloadZip = false }) {
+const driveConnectionPath = "/integrations/google-drive/connect/";
+const driveConnectionStateKey = "rotaops.google-drive.state";
+
+function GoogleDriveConnection() {
+  const [connection, setConnection] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState("");
+  const checked = useRef(false);
+
+  useEffect(() => {
+    if (checked.current) return;
+    checked.current = true;
+    const url = new URL(window.location.href);
+    const result = url.searchParams.get("google_drive");
+
+    const load = async () => {
+      if (result === "authorize" || result === "cancelled") {
+        const params = new URLSearchParams(url.hash.slice(1));
+        url.searchParams.delete("google_drive");
+        url.hash = "";
+        window.history.replaceState(window.history.state, "", url);
+        setConnecting(true);
+        try {
+          const state = params.get("state");
+          const expected = sessionStorage.getItem(driveConnectionStateKey);
+          if (!state || state !== expected) throw new Error("Start the connection again from this browser tab.");
+          sessionStorage.removeItem(driveConnectionStateKey);
+          if (result === "cancelled") throw new Error("Google Drive authorisation was cancelled.");
+          const updated = await api(driveConnectionPath, {
+            method: "POST", body: JSON.stringify({ state, code: params.get("code") }),
+            silentLoading: true, silentToast: true, silentError: true,
+          });
+          setConnection(updated);
+          notifyToast(`Google Drive connected as ${updated.authorized_email}.`, "success");
+          return;
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setConnecting(false);
+        }
+      }
+      try {
+        setConnection(await api("/integrations/google-drive/status/", { silentLoading: true, silentError: true }));
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    load();
+  }, []);
+
+  const connect = async () => {
+    setConnecting(true);
+    setError("");
+    try {
+      const result = await api(driveConnectionPath, { silentLoading: true, silentError: true });
+      sessionStorage.setItem(driveConnectionStateKey, result.state);
+      window.location.assign(result.authorization_url);
+    } catch (err) {
+      setError(err.message);
+      setConnecting(false);
+    }
+  };
+
+  return <section className="panel" aria-labelledby="documents-google-drive">
+    <div className="toolbar">
+      <div>
+        <h3 id="documents-google-drive">Google Drive</h3>
+        {connection?.connected && <>
+          <p className="muted">{connection.authorized_email ? `Connected as ${connection.authorized_email}` : "Connected. Authorise the account again to show its email."}</p>
+          <p className="muted">Changing accounts sends future verified documents to the new Drive. Existing copies stay in their original Drive.</p>
+        </>}
+        {connection && !connection.configured && <p className="muted">Google OAuth configuration is required on the backend.</p>}
+      </div>
+      <button type="button" className="secondary-button" disabled={!connection?.configured || connecting} onClick={connect}>
+        {connecting ? "Connecting…" : connection?.connected ? "Change Google Account" : "Connect Google Drive"}
+      </button>
+    </div>
+    {error && <p className="error" role="alert">{error}</p>}
+  </section>;
+}
+
+function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
   const [selectedDocuments, setSelectedDocuments] = useState(new Set());
   const [zipBusy, setZipBusy] = useState(false);
   const [zipError, setZipError] = useState("");
-  const [items, setItems] = useState([]); const [employees, setEmployees] = useState([]); const [open, setOpen] = useState(false); const [error, setError] = useState(""); const [editingDocument, setEditingDocument] = useState(null); const [expandedId, setExpandedId] = useState(target.employee_record_id || null); const [searchInput, setSearchInput] = useState(target.employee_name || ""); const [searchQuery, setSearchQuery] = useState(target.employee_name || ""); const [status, setStatus] = useState("ALL"); const [pagination, setPagination] = useState({ page: 1, total_pages: 1, total_employees: 0 }); const [driveStatus, setDriveStatus] = useState(null); const [driveConnecting, setDriveConnecting] = useState(false); const empty = { employee: "", document_type: "", document_number: "", certificate_type: "", certificate_name: "", issue_date: "", expiry_date: "", file_url: "", file: null, notes: "" }; const [form, setForm] = useState(empty);
+  const [items, setItems] = useState([]); const [employees, setEmployees] = useState([]); const [open, setOpen] = useState(false); const [error, setError] = useState(""); const [editingDocument, setEditingDocument] = useState(null); const [expandedId, setExpandedId] = useState(target.employee_record_id || null); const [searchInput, setSearchInput] = useState(target.employee_name || ""); const [searchQuery, setSearchQuery] = useState(target.employee_name || ""); const [status, setStatus] = useState("ALL"); const [pagination, setPagination] = useState({ page: 1, total_pages: 1, total_employees: 0 }); const empty = { employee: "", document_type: "", document_number: "", certificate_type: "", certificate_name: "", issue_date: "", expiry_date: "", file_url: "", file: null, notes: "" }; const [form, setForm] = useState(empty);
   const uniqueEmployees = Array.from(new Map(employees.map((employee) => [employee.name.trim().toLowerCase(), employee])).values());
   const editingId = editingDocument?.id;
   const selectedEmployee = uniqueEmployees.find((employee) => String(employee.id) === form.employee);
@@ -1160,8 +1241,6 @@ function DocumentsPage({ onNavigate, target = {}, canDownloadZip = false }) {
   const optionalExpiry = optionalDocumentItems.some((item) => item.label === selectedType && item.optionalExpiry);
   const load = async () => { setError(""); try { const data = await api(`/documents/employee-summary/?page=${pagination.page}&page_size=25&q=${encodeURIComponent(searchQuery)}&status=${status}`); setItems(data.results); setPagination(data.pagination); } catch (err) { setError(err.message); } };
   useEffect(() => { load(); api("/employees/?status=ACTIVE").then(setEmployees).catch(() => {}); }, [pagination.page, searchQuery, status]);
-  useEffect(() => { api("/integrations/google-drive/status/", { silentLoading: true }).then(setDriveStatus).catch(() => {}); if (new URLSearchParams(window.location.search).get("google_drive") === "connected") { notifyToast("Google Drive connected successfully."); window.history.replaceState({}, "", window.location.pathname); } }, []);
-  const connectDrive = async () => { setDriveConnecting(true); try { const result = await api("/integrations/google-drive/connect/", { silentLoading: true }); window.location.assign(result.authorization_url); } catch (err) { setError(err.message); setDriveConnecting(false); } };
   const runSearch = (event) => { event?.preventDefault(); setPagination((current) => ({ ...current, page: 1 })); setSearchQuery(searchInput); };
   const openNewDocument = (employeeId = "") => { setEditingDocument(null); setForm({ ...empty, employee: String(employeeId || "") }); setOpen(true); };
   const save = async (event) => { event.preventDefault(); if (!selectedType) return; setError(""); const data = new FormData(); Object.entries(form).forEach(([key, value]) => { if (key !== "file" && value !== "") data.append(key, value); }); if (editingId && optionalExpiry && !form.expiry_date) data.set("expiry_date", ""); if (form.file) data.append("file", form.file); try { await api(`/documents/${editingId ? `${editingId}/` : ""}`, { method: editingId ? "PATCH" : "POST", body: data }); setOpen(false); setEditingDocument(null); setForm(empty); await load(); } catch (err) { setError(err.message); } };
@@ -1196,11 +1275,11 @@ function DocumentsPage({ onNavigate, target = {}, canDownloadZip = false }) {
     } catch (err) { setZipError(err.message); }
     finally { setZipBusy(false); }
   };
-  const archiveSelection = canDownloadZip ? {
+  const archiveSelection = isOfficeAdmin ? {
     selected: selectedDocuments, busy: zipBusy, error: zipError,
     update: updateSelection, clear: clearSelection, download: downloadZip,
   } : null;
-  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions">{driveStatus?.connected ? <span className="status-pill active">Google Drive connected</span> : <button className="secondary-button" disabled={!driveStatus?.configured || driveConnecting} onClick={connectDrive}>{driveConnecting ? "Connecting..." : "Connect Google Drive"}</button>}<button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => toggleEmployee(employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
+  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions"><button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}{isOfficeAdmin && <GoogleDriveConnection />}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => toggleEmployee(employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
       <select required value={selectedType} onChange={(event) => setForm({ ...form, document_type: event.target.value })}>
         <option value="">Select document type</option>
         <optgroup label="Required documents">
@@ -2033,7 +2112,16 @@ function App() {
     window.addEventListener("rota:live-refresh", loadDashboard);
     return () => window.removeEventListener("rota:live-refresh", loadDashboard);
   }, [user, clientPath, controlPath]);
-  useEffect(() => { if (user) setPage((user.role === "EMPLOYEE" || user.role_display === "EMPLOYEE") ? "profile" : "dashboard"); }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    const role = user.role || user.role_display;
+    const driveResult = new URLSearchParams(window.location.search).get("google_drive");
+    if ((role === "ADMIN" || role === "SUPER_ADMIN" || user.is_superuser) && (driveResult === "authorize" || driveResult === "cancelled")) {
+      setPage("documents");
+    } else {
+      setPage(role === "EMPLOYEE" ? "profile" : "dashboard");
+    }
+  }, [user]);
   useEffect(() => {
     setUnreadNotifications(0);
     if (!user || clientPath || controlPath) return undefined;
@@ -2086,7 +2174,7 @@ function App() {
   if ((guardPath || attendanceOnlyPath) && !isEmployee) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA GUARD PORTAL</p><h1>Guard access only</h1><p className="muted">This link is reserved for guard accounts. Admin users should use the main operations portal.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (attendanceOnlyPath) return <GuardAttendanceOnly user={user} onSignOut={signOut} />;
   if (isEmployee) return <GuardPortal user={user} onSignOut={signOut} unreadNotifications={unreadNotifications} initialPage={guardInitialPage} />;
-  const content = page === "control-team" ? <ControlTeamAdmin api={api} Photo={ProtectedImage} /> : page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords canManagePins={isSuperAdmin || role === "ADMIN"} /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "whatsapp-announcements" && canShareWhatsApp ? <StaffAnnouncements api={api} /> : (page === "rota" || (page === "whatsapp-rota" && canShareWhatsApp)) ? <Rota canShareWhatsApp={canShareWhatsApp} target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 canManageCortex={isSuperAdmin || role === "ADMIN"} /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} canDownloadZip={isSuperAdmin || role === "ADMIN"} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
+  const content = page === "control-team" ? <ControlTeamAdmin api={api} Photo={ProtectedImage} /> : page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords canManagePins={isSuperAdmin || role === "ADMIN"} /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "whatsapp-announcements" && canShareWhatsApp ? <StaffAnnouncements api={api} /> : (page === "rota" || (page === "whatsapp-rota" && canShareWhatsApp)) ? <Rota canShareWhatsApp={canShareWhatsApp} target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 canManageCortex={isSuperAdmin || role === "ADMIN"} /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} isOfficeAdmin={isSuperAdmin || role === "ADMIN"} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
   return <><ToastHost />{(isSuperAdmin || role === "ADMIN") && <AdminSessionMonitor api={api} />}<div className="app-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{navItems.filter((item) => isEmployee ? item.employeeOnly : !item.employeeOnly && (!item.superAdminOnly || isSuperAdmin) && (!item.adminOnly || isSuperAdmin || role === "ADMIN") && (!item.operatorHidden || !isOperator)).map(({ id, label, icon: Icon, disabled, groupHeading, whatsapp }) => <Fragment key={id}>{groupHeading && <div className="whatsapp-nav-heading">{groupHeading}</div>}<button className={["nav-item", page === id ? "active" : "", whatsapp ? "whatsapp-nav-item" : ""].filter(Boolean).join(" ")} disabled={disabled} onClick={() => { setNotificationTarget({}); setPage(id); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}{disabled && <small>soon</small>}</button></Fragment>)}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{isEmployee ? (user.first_name || "G").slice(0, 1).toUpperCase() : (user.first_name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{isEmployee ? (user.first_name || "Guard") : (user.first_name || "System")}</strong><span>{user.role_label || user.role_display || role || "ADMIN"}</span></div></div><button className="logout-button" onClick={signOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{navItems.find((item) => item.id === page)?.label || "Dashboard"}</strong></div><div className="topbar-right"><span className="online-dot" /> System online</div></header><div className="page-content" key={dataVersion}>{content}</div></main></div></>;
 }
 

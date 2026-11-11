@@ -11,6 +11,7 @@ import re
 from io import BytesIO
 from secrets import randbelow, token_urlsafe
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from django.conf import settings
@@ -50,7 +51,7 @@ from .availability import assignment_availability_conflicts, unavailable_for_shi
 from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
 from .pin_encryption import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
-from .google_drive import OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
+from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 
@@ -58,39 +59,66 @@ from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, Clie
 User = get_user_model()
 
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def google_drive_connect(request):
     if role_of(request.user) not in {"SUPER_ADMIN", "ADMIN"}:
         return Response({"detail": "Only Admin or Super Admin users can connect Google Drive."}, status=status.HTTP_403_FORBIDDEN)
     if not google_drive_is_configured():
         return Response({"detail": "Google Drive OAuth is not configured. Add the client ID and secret to Railway Variables first."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    if request.method == "POST":
+        state = request.data.get("state")
+        code = request.data.get("code")
+        if not isinstance(state, str) or not isinstance(code, str) or not state or not code:
+            raise ValidationError({"detail": "Google authorization is incomplete. Connect Google Drive again."})
+        try:
+            attempt = signing.loads(state, salt=OAUTH_SALT, max_age=OAUTH_STATE_MAX_AGE)
+        except signing.BadSignature:
+            raise ValidationError({"detail": "Google authorization expired. Connect Google Drive again."})
+        if attempt.get("user_id") != request.user.pk:
+            raise PermissionDenied("Sign in as the admin who started the Google Drive connection.")
+        try:
+            flow = build_flow(attempt["redirect"], state=state)
+            flow.fetch_token(code=code)
+            item = save_oauth_connection(flow.credentials, request.user, attempt["version"])
+        except DriveConnectionError as exc:
+            raise ValidationError({"detail": str(exc)})
+        except Exception as exc:
+            logger.warning("Google Drive authorization failed (%s)", type(exc).__name__)
+            return Response({"detail": "Google Drive could not be connected. Check that the account can authorize RotaOps and try again."}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"configured": True, "connected": True, "authorized_email": item.authorized_email})
+
     redirect = google_drive_redirect_uri(request)
-    state = signing.dumps({"user_id": request.user.pk, "nonce": token_urlsafe(16)}, salt=OAUTH_SALT)
+    origin = request.headers.get("Origin", "")
+    frontend_url = (origin if origin in settings.CORS_ALLOWED_ORIGINS else os.getenv("FRONTEND_URL", "")).rstrip("/")
+    frontend_url = frontend_url or request.build_absolute_uri("/").rstrip("/")
+    state = signing.dumps({
+        "user_id": request.user.pk, "nonce": token_urlsafe(16), "frontend_url": frontend_url,
+        "redirect": redirect, "version": connection_version(google_drive_connection()),
+    }, salt=OAUTH_SALT)
     flow = build_flow(redirect, state=state)
-    authorization_url, _ = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
-    return Response({"authorization_url": authorization_url, "redirect_uri": redirect})
+    authorization_url, _ = flow.authorization_url(access_type="offline", prompt="select_account consent", code_challenge_method="S256")
+    return Response({"authorization_url": authorization_url, "redirect_uri": redirect, "state": state})
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def google_drive_callback(request):
-    if request.query_params.get("error"):
-        return HttpResponse("Google Drive authorization was cancelled. You can close this window and try again.", status=status.HTTP_400_BAD_REQUEST)
+    state = request.query_params.get("state", "")
     try:
-        state = signing.loads(request.query_params.get("state", ""), salt=OAUTH_SALT, max_age=OAUTH_STATE_MAX_AGE)
-        user = User.objects.get(pk=state["user_id"])
-        if role_of(user) not in {"SUPER_ADMIN", "ADMIN"}:
-            raise PermissionDenied("Only Admin or Super Admin users can connect Google Drive.")
-        redirect = google_drive_redirect_uri(request)
-        flow = build_flow(redirect, state=request.query_params.get("state"))
-        flow.fetch_token(authorization_response=request.build_absolute_uri())
-        save_oauth_connection(flow.credentials, user)
-        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
-        return HttpResponseRedirect(f"{frontend_url}/?google_drive=connected" if frontend_url else "/")
-    except Exception as exc:
-        logger.exception("Google Drive OAuth callback failed")
-        return HttpResponse(f"Google Drive connection failed: {exc}", status=status.HTTP_400_BAD_REQUEST)
+        attempt = signing.loads(state, salt=OAUTH_SALT, max_age=OAUTH_STATE_MAX_AGE)
+    except signing.BadSignature:
+        return HttpResponse("Google authorization expired. Return to RotaOps Documents and try again.", status=status.HTTP_400_BAD_REQUEST)
+    frontend_url = attempt.get("frontend_url")
+    if not frontend_url:
+        return HttpResponse("Return to RotaOps Documents and start a new Google Drive connection.", status=status.HTTP_400_BAD_REQUEST)
+    code = request.query_params.get("code", "")
+    fragment = urlencode({"state": state, "code": code})
+    result = "cancelled" if request.query_params.get("error") or not code else "authorize"
+    response = HttpResponseRedirect(f"{frontend_url}/?google_drive={result}#{fragment}")
+    response["Cache-Control"] = "no-store"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @api_view(["GET"])
