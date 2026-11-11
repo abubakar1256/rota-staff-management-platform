@@ -14,7 +14,66 @@
 .modal-card.control-capture { width: min(560px, calc(100% - 28px)); border: 0; border-radius: 14px; margin: auto; }
 .control-capture::backdrop { background: rgb(15 23 42 / 55%); }
 .control-capture > * + * { margin-top: 12px; }
-.control-attendance-proof { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 6px; }
+.control-history { container-type: inline-size; }
+.control-history-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; }
+.control-history-icon {
+  display: grid; place-items: center; flex: 0 0 40px; height: 40px;
+  border-radius: 10px; background: #edf2ff; color: #3155ae;
+}
+.control-history-heading h3 { font-size: 17px; }
+.control-history-heading p { margin: 0; color: #5c6c85; font-size: 12px; }
+.control-history-list { border: 1px solid #dfe7f2; border-radius: 10px; }
+.control-history-table { table-layout: fixed; min-width: 0; }
+.control-history-table th, .control-history-table td { padding: 13px 16px; }
+.control-history-table th {
+  background: #f4f7fc; color: #53627a; font-size: 11px;
+  border-bottom: 1px solid #dfe7f2;
+}
+.control-history-table th:first-child { border-start-start-radius: 9px; }
+.control-history-table th:last-child { width: 126px; border-start-end-radius: 9px; text-align: right; }
+.control-history-table td { vertical-align: top; overflow-wrap: anywhere; }
+.control-history-table tr:last-child td { border-bottom: 0; }
+.control-history-table time, .control-history-duration strong {
+  color: #22314a; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.control-history-table .status-pill { margin-top: 5px; }
+.control-history-table .table-subtext, .control-history-note {
+  display: block; margin-top: 4px; color: #5c6c85; font-size: 12px; line-height: 1.45;
+}
+.control-history-duration { text-align: right; }
+.control-history-duration strong { white-space: nowrap; }
+.control-history-label { display: none; }
+.control-attendance-proof { margin-top: 7px; }
+.control-proof-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.control-proof-actions .file-link-button {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 4px 9px;
+  border: 1px solid #d8e4fb; border-radius: 7px; color: #284fae; background: #f5f8ff;
+  font-size: 12px; font-weight: 650; text-decoration: none;
+}
+.control-proof-actions .file-link-button:hover { background: #eaf0ff; text-decoration: underline; }
+@container (max-width: 560px) {
+  .control-history-list { border: 0; }
+  .control-history-table, .control-history-table tbody { display: grid; gap: 10px; }
+  .control-history-table thead {
+    position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  .control-history-table tbody tr {
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    border: 1px solid #dfe7f2; border-radius: 10px; overflow: hidden;
+  }
+  .control-history-table tbody td { display: block; padding: 11px 13px; border: 0; }
+  .control-history-table tbody td + td { border-top: 1px solid #e6edf7; }
+  .control-history-label {
+    display: block; margin-bottom: 4px; color: #53627a; font-size: 11px;
+    font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .control-history-table .control-history-duration {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #f4f7fc;
+  }
+  .control-history-duration .control-history-label { margin: 0; }
+  .control-proof-actions .file-link-button { min-height: 44px; padding-inline: 11px; }
+}
 .control-office-location { flex-basis: 100%; padding-top: 12px; border-top: 1px solid #e3e9f4; }
 .control-settings-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
 .control-timing-row {
@@ -86,8 +145,6 @@
 .control-form input[readonly] { background: #f4f7fb; }
 .control-form textarea { resize: vertical; }
 .control-profile-photo { display: flex; align-items: center; gap: 14px; width: min(100%, 460px); }
-.control-table-wrap { overflow-x: auto; margin-top: 10px; }
-.control-table { min-width: 440px; }
 .control-empty { margin-top: 8px; }
 .control-member-list { display: grid; gap: 8px; }
 .control-member {
@@ -121,6 +178,4 @@
   .control-member .control-identity { grid-column: 1 / -1; }
   .control-member > button { justify-self: start; }
   .control-header .client-portal-user strong { display: none; }
-  .control-table { min-width: 0; }
-  .control-table td, .control-table th { padding-inline: 7px; white-space: normal; }
 }

@@ -78,10 +78,13 @@ function LocationLink({ location, label }) {
 function AttendanceEvidence({ photoUrl, location, label, FilePreview }) {
   if (!photoUrl && !location) return null;
   return <div className="control-attendance-proof">
-    {photoUrl && <FilePreview value={photoUrl} label={label + " photo"} buttonLabel="View photo" />}
-    {location && <div><LocationLink location={location} label="View GPS" /><small className="table-subtext">
+    <div className="control-proof-actions">
+      {photoUrl && <FilePreview value={photoUrl} label={label + " photo"} buttonLabel="View photo" />}
+      {location && <LocationLink location={location} label="View GPS" />}
+    </div>
+    {location && <small className="control-history-note">
       {location.distance_m} m from pin{location.radius_m && ` · ${location.radius_m} m radius`} · GPS ±{Math.round(location.accuracy_m)} m
-    </small></div>}
+    </small>}
   </div>;
 }
 
@@ -93,23 +96,37 @@ function ShiftDetails({ entry }) {
 }
 
 function AttendanceHistory({ member, FilePreview }) {
-  return <section className="panel">
-    <h3>Attendance history</h3>
-    <p className="muted">Latest 50 entries · UK time</p>
-    {member.attendance.length ? <div className="table-wrap control-table-wrap"><table className="control-table">
-      <thead><tr><th scope="col">Check in</th><th scope="col">Check out</th><th scope="col">Duration</th></tr></thead>
-      <tbody>{member.attendance.map((entry) => <tr key={entry.id}>
-        <td>{formatUkDateTime(entry.checked_in_at)}
+  return <section className="panel control-history">
+    <header className="control-history-heading">
+      <span className="control-history-icon"><Clock3 size={19} aria-hidden="true" /></span>
+      <div><h3>Attendance history</h3><p>Latest 50 entries · UK time</p></div>
+    </header>
+    {member.attendance.length ? <div className="control-history-list"><table className="control-history-table" role="table" aria-label="Attendance history">
+      <thead role="rowgroup"><tr role="row">
+        <th scope="col" role="columnheader">Check in</th>
+        <th scope="col" role="columnheader">Check out</th>
+        <th scope="col" role="columnheader">Duration</th>
+      </tr></thead>
+      <tbody role="rowgroup">{member.attendance.map((entry) => <tr key={entry.id} role="row">
+        <td role="cell">
+          <span className="control-history-label" aria-hidden="true">Check in</span>
+          <time dateTime={entry.checked_in_at}>{formatUkDateTime(entry.checked_in_at)}</time>
           <ShiftDetails entry={entry} />
           <LateBadge minutes={entry.late_minutes} />
           <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
         </td>
-        <td>{entry.checked_out_at ? formatUkDateTime(entry.checked_out_at) : "In progress"}
-          {entry.closed_by_admin && <small className="table-subtext">Closed by admin</small>}
-          {entry.auto_checked_out && <small className="table-subtext">Automatic checkout</small>}
+        <td role="cell">
+          <span className="control-history-label" aria-hidden="true">Check out</span>
+          {entry.checked_out_at ? <time dateTime={entry.checked_out_at}>{formatUkDateTime(entry.checked_out_at)}</time> :
+            <span className="status-pill active">In progress</span>}
+          {entry.closed_by_admin && <small className="control-history-note">Closed by admin</small>}
+          {entry.auto_checked_out && <small className="control-history-note">Automatic checkout</small>}
           <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
         </td>
-        <td>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.checked_in_at)) / 1000) : "—"}</td>
+        <td role="cell" className="control-history-duration">
+          <span className="control-history-label" aria-hidden="true">Duration</span>
+          <strong>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.checked_in_at)) / 1000) : "—"}</strong>
+        </td>
       </tr>)}</tbody>
     </table></div> : <p className="muted control-empty">No attendance recorded yet.</p>}
   </section>;
