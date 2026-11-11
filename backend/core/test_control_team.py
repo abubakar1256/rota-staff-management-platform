@@ -12,12 +12,13 @@ from django.test import TestCase
 from PIL import Image
 from rest_framework.test import APIClient
 
-from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMember, Employee, UserProfile
+from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMember, Employee, Notification, UserProfile
 
 
 SETTINGS_URL = "/api/control/attendance/settings/"
 ASSIGNMENTS_URL = "/api/control/team/assignments/"
 WEEKLY_URL = "/api/control/team/weekly-assignments/"
+NOTIFICATIONS_URL = "/api/control/notifications/"
 OFFICE_GPS = {"latitude": 51.5074, "longitude": -0.1278, "accuracy_m": 12}
 
 
@@ -119,6 +120,40 @@ class ControlTeamTests(TestCase):
                 self.assertEqual(response.data["weekly_seconds"], 92 * 60)
                 self.assertEqual(response.data["monthly_seconds"], 92 * 60)
         self.assertEqual(self.member.attendance.get().checked_out_at, end)
+        for recipient in (self.member.user, None):
+            alerts = Notification.objects.filter(link="control-team", user=recipient, category="ATTENDANCE")
+            self.assertEqual(alerts.count(), 2)
+            late = alerts.get(title__endswith="Late Check In")
+            self.assertEqual(late.priority, "URGENT")
+            self.assertIn("120 min late", late.message)
+            self.assertTrue(alerts.filter(title__endswith="Check Out recorded").exists())
+
+    def test_control_notification_inbox_and_mark_read_are_scoped(self):
+        another_user = get_user_model().objects.create_user("another-control")
+        UserProfile.objects.create(user=another_user, role=UserProfile.Role.CONTROL_TEAM)
+        other_alert = Notification.objects.create(user=another_user, title="Other member", link="control-team")
+        office_only = Notification.objects.create(title="Office team update", link="control-team")
+        unrelated = Notification.objects.create(title="Guard office update", link="attendance-review")
+        own_alert = Notification.objects.get(user=self.member.user, link="control-team", title="Shift assigned")
+        result = self.portal.get(NOTIFICATIONS_URL + "inbox/?category=ROTA_STAFFING")
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual([item["id"] for item in result.data["results"]], [own_alert.pk])
+        self.assertEqual(result.data["summary"]["unread"], 1)
+        self.assertEqual(self.portal.post(f"{NOTIFICATIONS_URL}{other_alert.pk}/mark_read/").status_code, 404)
+        self.assertEqual(self.portal.post(f"{NOTIFICATIONS_URL}{office_only.pk}/mark_read/").status_code, 404)
+        self.assertEqual(self.portal.post(NOTIFICATIONS_URL + "mark-all-read/").data["updated"], 1)
+        self.assertFalse(Notification.objects.filter(pk=own_alert.pk, is_read=False).exists())
+        office_ids = {item["id"] for item in self.office.get(NOTIFICATIONS_URL).data}
+        self.assertIn(office_only.pk, office_ids)
+        self.assertFalse(office_ids.intersection({own_alert.pk, other_alert.pk, unrelated.pk}))
+        self.assertEqual(self.office.post(NOTIFICATIONS_URL + "mark-all-read/").status_code, 200)
+        self.assertEqual(Notification.objects.filter(pk__in=[other_alert.pk, unrelated.pk], is_read=False).count(), 2)
+
+        guard = get_user_model().objects.create_user("guard-notification-test")
+        UserProfile.objects.create(user=guard, role=UserProfile.Role.EMPLOYEE)
+        guard_client = APIClient()
+        guard_client.force_authenticate(guard)
+        self.assertEqual(guard_client.get(NOTIFICATIONS_URL).status_code, 403)
 
     def test_attendance_photos_are_required_and_private(self):
         self.complete_profile()
@@ -312,6 +347,10 @@ class ControlTeamTests(TestCase):
         self.assertIsNone(entry.check_out_location)
         self.assertIsNone(member["checked_in_at"])
         self.assertTrue(member["attendance"][0]["auto_checked_out"])
+        for recipient in (self.member.user, None):
+            alerts = Notification.objects.filter(link="control-team", user=recipient, title__endswith="Automatic Check Out")
+            self.assertEqual(alerts.count(), 1)
+            self.assertIn("10:00 BST", alerts.get().message)
 
     def test_admin_assigns_reassigns_and_removes_without_exposing_other_members_shifts(self):
         user = get_user_model().objects.create_user("other_control")
@@ -337,6 +376,9 @@ class ControlTeamTests(TestCase):
         self.assertEqual(self.mark("check_in", assignment_id=night["id"]).status_code, 409)
         self.assertEqual(self.office.delete(path).status_code, 204)
         self.assertEqual(len(self.office.get(ASSIGNMENTS_URL + "?date=2026-11-11").data), 2)
+        for recipient in (self.member.user, other.user):
+            removed = Notification.objects.get(user=recipient, title="Shift removed")
+            self.assertIn("Night", removed.message)
 
     def test_check_in_requires_an_available_assignment_and_locks_its_record(self):
         self.complete_profile()
@@ -450,3 +492,8 @@ class ControlTeamTests(TestCase):
         member_requests = self.portal.get("/api/control/requests/").data
         self.assertEqual({item["status"] for item in member_requests}, {"APPROVED", "REJECTED"})
         self.assertTrue(all(item["review_note"] == "Office response" for item in member_requests))
+        alerts = self.portal.get(NOTIFICATIONS_URL + "inbox/?category=LEAVE_REPLACEMENT").data["results"]
+        self.assertEqual({item["title"] for item in alerts}, {
+            "Leave request submitted", "Leave request approved", "Replacement request submitted", "Replacement request rejected",
+        })
+        self.assertTrue(all(item["context"]["control_tab"] == "requests" for item in alerts))

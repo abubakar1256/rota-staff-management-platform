@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Camera, Clock3, LogOut, MapPin, UserPlus, Users } from "lucide-react";
+import { Bell, CalendarDays, Camera, Clock3, LogOut, MapPin, UserPlus, Users } from "lucide-react";
+import AdminNotifications from "./AdminNotifications";
+import CheckUpdatesButton from "./CheckUpdatesButton";
 import { readCurrentLocation } from "./attendanceGeofence";
 import { googleSiteLinks, sitePoint } from "./siteCoordinates";
 import { formatUkAttendanceTime, formatUkDateTime, ukDate } from "./ukTime";
@@ -28,6 +30,25 @@ function useControlQuery(api, path, enabled = true) {
     refetchInterval: 30_000,
     refetchOnWindowFocus: true,
   });
+}
+
+function ControlUpdatesButton({ api, paths, disabled = false }) {
+  const client = useQueryClient();
+  return <CheckUpdatesButton api={api} paths={paths} disabled={disabled}
+    currentData={paths.map((path) => client.getQueryData(queryKey(path)))} onUpdate={(results) => {
+      paths.forEach((path, index) => {
+        const key = queryKey(path);
+        void client.cancelQueries({ queryKey: key, exact: true });
+        client.setQueryData(key, results[index]);
+      });
+    }} />;
+}
+
+function ControlInboxButton({ unread, onClick, selected }) {
+  return <button type="button" className="secondary-button control-inbox-button" aria-pressed={selected} onClick={onClick}>
+    <Bell size={16} aria-hidden="true" /> Notifications
+    {unread > 0 && <span className="control-unread" aria-label={`${unread} unread`}>{unread > 99 ? "99+" : unread}</span>}
+  </button>;
 }
 
 function duration(seconds) {
@@ -400,14 +421,14 @@ function AssignedShifts({ shifts, canCheckIn, hasOfficePin, onCheckIn }) {
   </section>;
 }
 
-export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
+export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }) {
   const [page, setPage] = useState("attendance");
   const [capture, setCapture] = useState(null);
   const client = useQueryClient();
   const profile = useControlQuery(api, profilePath);
   const member = profile.data;
   const requests = useControlQuery(api, requestsPath, Boolean(member?.profile_complete && page === "requests"));
-  const activePage = member?.profile_complete ? page : "profile";
+  const activePage = member?.profile_complete || page === "notifications" ? page : "profile";
   const current = member?.attendance.find((entry) => !entry.checked_out_at);
   const assignedShifts = member?.assigned_shifts || [];
   const availableShifts = assignedShifts.filter((shift) => shift.status === "Available");
@@ -418,6 +439,9 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
   const settings = useControlQuery(api, settingsPath, Boolean(member?.profile_complete && activePage === "attendance" && showOfficeLocation));
   const office = settings.data;
   const officePin = sitePoint(office?.latitude, office?.longitude);
+  const updatePaths = [profilePath];
+  if (activePage === "attendance" && showOfficeLocation) updatePaths.push(settingsPath);
+  if (activePage === "requests") updatePaths.push(requestsPath);
   const saveProfile = (data) => {
     client.setQueryData(queryKey(profilePath), data);
     setPage("attendance");
@@ -438,7 +462,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
     }
     try {
       const updated = await api(root + "/attendance/", {
-        method: "POST", body, silentError: true, silentLoading: true, skipInvalidation: true,
+        method: "POST", body, silentError: true, silentLoading: true, silentToast: true, skipInvalidation: true,
       });
       await client.cancelQueries({ queryKey: queryKey(profilePath), exact: true });
       client.setQueryData(queryKey(profilePath), updated);
@@ -454,7 +478,13 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
       <div className="client-portal-user"><strong>{member?.name}</strong><button type="button" className="logout-button" onClick={onSignOut}><LogOut size={15} /> Sign out</button></div>
     </header>
     <main className="client-portal-content control-stack">
-      <div><p className="eyebrow">STAFF PORTAL</p><h1 className="control-title">Control Team</h1><p className="muted">Your attendance, hours and requests.</p></div>
+      <div className="control-between">
+        <div><p className="eyebrow">STAFF PORTAL</p><h1 className="control-title">Control Team</h1><p className="muted">Your attendance, hours and requests.</p></div>
+        {member && <div className="control-actions">
+          {activePage !== "notifications" && <ControlUpdatesButton key={activePage} api={api} paths={updatePaths} disabled={Boolean(capture)} />}
+          <ControlInboxButton unread={unread} selected={activePage === "notifications"} onClick={() => setPage(activePage === "notifications" ? "attendance" : "notifications")} />
+        </div>}
+      </div>
       {!member ? <QueryStatus query={profile} label="your profile" /> : <>
         {member.profile_complete && <ControlTabs label="Control Team portal" page={activePage} onChange={setPage}
           tabs={[["attendance", "Attendance"], ["requests", "Leave & replacement"], ["profile", "My profile"]]} />}
@@ -489,6 +519,8 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
             onClose={() => setCapture(null)} onSubmit={markAttendance} />}
         </>}
         {activePage === "requests" && <><RequestForm api={api} /><RequestList query={requests} api={api} /></>}
+        {activePage === "notifications" && <AdminNotifications api={api} audience="control"
+          onNavigate={(_, context) => setPage(context.control_tab === "requests" ? "requests" : "attendance")} />}
       </>}
     </main>
   </div>;
@@ -636,19 +668,22 @@ function ShiftAssignmentControls({ api, code, date, assignments, members, onChan
 }
 
 function AttendanceSettingsForm({ settings, api, onSaved, team }) {
-  const [draft, setDraft] = useState(settings);
+  const [editedSettings, setEditedSettings] = useState(null);
+  const draft = editedSettings ?? settings;
   const [scheduleMode, setScheduleMode] = useState("weekly");
   const [date, setDate] = useState(() => ukDate());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const weekly = scheduleMode === "weekly";
-  const assignments = useControlQuery(api, weekly ? weeklyAssignmentsPath : `${assignmentsPath}?date=${encodeURIComponent(date)}`, weekly || Boolean(date));
+  const schedulePath = weekly ? weeklyAssignmentsPath : `${assignmentsPath}?date=${encodeURIComponent(date)}`;
+  const hasSchedule = weekly || Boolean(date);
+  const assignments = useControlQuery(api, schedulePath, hasSchedule);
   const members = (team.data || []).filter((member) => member.is_active);
 
   function change(fields) {
     setSaved(false);
-    setDraft((previous) => ({ ...previous, ...fields }));
+    setEditedSettings((previous) => ({ ...(previous ?? settings), ...fields }));
   }
 
   async function useCurrentLocation() {
@@ -676,17 +711,18 @@ function AttendanceSettingsForm({ settings, api, onSaved, team }) {
         ...draft, latitude: draft.latitude === "" ? null : draft.latitude,
         longitude: draft.longitude === "" ? null : draft.longitude,
       }), silentError: true });
-      setDraft(updated);
       onSaved(updated);
+      setEditedSettings(null);
       setSaved(true);
     } catch (err) { setError(err.message); }
     finally { setBusy(""); }
   }
 
   return <form className="panel control-stack" onSubmit={save}>
-    <div>
-      <h3>Attendance location</h3>
-      <p className="muted">Set the office pin and allowed distance for Check In and Check Out.</p>
+    <div className="control-between">
+      <div><h3>Attendance location</h3>
+        <p className="muted">Set the office pin and allowed distance for Check In and Check Out.</p></div>
+      <ControlUpdatesButton api={api} paths={[settingsPath, teamPath, ...(hasSchedule ? [schedulePath] : [])]} disabled={Boolean(busy)} />
     </div>
     <fieldset disabled={Boolean(busy)} className="control-form control-settings-fields">
       <label>Address (optional)<input value={draft.address} maxLength={250} onChange={(e) => change({ address: e.target.value })} /></label>
@@ -735,12 +771,13 @@ function AttendanceSettingsForm({ settings, api, onSaved, team }) {
   </form>;
 }
 
-export function ControlTeamAdmin({ api, Photo, FilePreview }) {
-  const [page, setPage] = useState("team");
+export function ControlTeamAdmin({ api, Photo, FilePreview, unread = 0, initialTarget }) {
+  const [page, setPage] = useState(initialTarget?.control_tab || "team");
   const [adding, setAdding] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const team = useControlQuery(api, teamPath, page !== "requests");
-  const detail = useControlQuery(api, teamPath + selected + "/", Boolean(selected && page === "team"));
+  const [selected, setSelected] = useState(initialTarget?.control_tab === "team" ? initialTarget.control_member_id : null);
+  const team = useControlQuery(api, teamPath, page === "team" || page === "settings");
+  const detailPath = teamPath + selected + "/";
+  const detail = useControlQuery(api, detailPath, Boolean(selected && page === "team"));
   const requests = useControlQuery(api, officeRequestsPath, page === "requests");
   const settings = useControlQuery(api, settingsPath, page === "settings");
   const client = useQueryClient();
@@ -750,6 +787,9 @@ export function ControlTeamAdmin({ api, Photo, FilePreview }) {
     <header className="page-heading control-office-heading">
       <div><p className="eyebrow">PEOPLE MANAGEMENT</p><h2>Control Team</h2><p className="muted">Manage team access, attendance and requests.</p></div>
       <div className="control-actions">
+        {page === "team" && <ControlUpdatesButton api={api} paths={selected ? [teamPath, detailPath] : [teamPath]} disabled={adding} />}
+        {page === "requests" && <ControlUpdatesButton api={api} paths={[officeRequestsPath]} />}
+        <ControlInboxButton unread={unread} selected={page === "notifications"} onClick={() => setPage(page === "notifications" ? "team" : "notifications")} />
         <a className="secondary-button" href="/control" target="_blank" rel="noopener noreferrer">Open /control</a>
         <button type="button" className="primary-button" onClick={() => { setPage("team"); setAdding(true); }}><UserPlus size={16} /> Add member</button>
       </div>
@@ -759,8 +799,13 @@ export function ControlTeamAdmin({ api, Photo, FilePreview }) {
     {page === "settings" && (settings.data ?
       <AttendanceSettingsForm settings={settings.data} api={api} team={team}
         onSaved={(data) => client.setQueryData(queryKey(settingsPath), data)} /> :
-      <QueryStatus query={settings} label="attendance settings" />)}
+      <><QueryStatus query={settings} label="attendance settings" /><ControlUpdatesButton api={api} paths={[settingsPath, teamPath]} /></>)}
     {page === "requests" && <RequestList query={requests} api={api} office />}
+    {page === "notifications" && <AdminNotifications api={api} audience="control" onNavigate={(_, context) => {
+      const tab = context.control_tab || "team";
+      setSelected(tab === "team" ? context.control_member_id : null);
+      setPage(tab);
+    }} />}
     {page === "team" && <>
       {adding && <AddMemberForm api={api} onClose={(member) => { setAdding(false); if (member) setSelected(member.id); }} />}
       {!team.data ? <QueryStatus query={team} label="team members" /> : <>

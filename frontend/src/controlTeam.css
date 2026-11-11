@@ -4,6 +4,12 @@
 .control-actions, .control-tabs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .control-actions a { text-decoration: none; }
 .control-actions button, .control-tabs button { display: inline-flex; align-items: center; gap: 7px; }
+.control-inbox-button { display: inline-flex; align-items: center; gap: 7px; }
+.control-inbox-button[aria-pressed="true"] { color: #284fae; border-color: #9cb2f4; background: #eef3ff; }
+.control-unread {
+  display: inline-grid; place-items: center; min-width: 22px; min-height: 20px; padding: 0 5px;
+  border-radius: 20px; background: #bd3853; color: #fff; font-size: 11px; font-weight: 800;
+}
 .control-actions .control-deactivate { color: #a03447; border-color: #ecc9d1; }
 .control-tabs button[aria-pressed="true"], .control-member button[aria-pressed="true"] {
   border-color: #9cb2f4; background: #eef3ff; color: #284fae;

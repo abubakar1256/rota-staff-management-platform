@@ -8,7 +8,7 @@ export function inboxPath({ category = "ALL", view = "ALL", search = "", page = 
   return `/notifications/inbox/?${new URLSearchParams({ category, view, q: search, page: String(page) })}`;
 }
 export function notificationAction(item) {
-  const allowed = new Set(["documents", "security-screening", "compliance-approvals", "attendance-review", "rota", "rota-confirmation", "coverage-staffing", "leave", "timesheets"]);
+  const allowed = new Set(["documents", "security-screening", "compliance-approvals", "attendance-review", "rota", "rota-confirmation", "coverage-staffing", "leave", "timesheets", "control-team"]);
   const link = String(item.link || "").split("?")[0];
   const page = link === "compliance" || link === "diligent-registration" ? "compliance-approvals" : link === "attendance" || link === "operations" ? "attendance-review" : link;
   if (!allowed.has(page)) return null;
@@ -24,6 +24,11 @@ export const guardNotificationCategories = [
 export function guardInboxPath(filters) {
   return inboxPath(filters).replace("/notifications/inbox/", "/notifications/guard-inbox/");
 }
+
+export const controlNotificationCategories = [
+  { key: "ATTENDANCE", label: "Attendance" }, { key: "ROTA_STAFFING", label: "Shifts" },
+  { key: "LEAVE_REPLACEMENT", label: "Leave & Replacement" }, { key: "SYSTEM", label: "Team & Profile" },
+];
 export function guardNotificationAction(item) {
   if (item.category === "SYSTEM") return null;
   const original = String(item.link || "").split("?")[0];

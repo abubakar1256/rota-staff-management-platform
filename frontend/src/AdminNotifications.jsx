@@ -1,31 +1,43 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bell, CalendarDays, Check, CheckCheck, ChevronLeft, ChevronRight, ExternalLink, Search } from "lucide-react";
 import CheckUpdatesButton from "./CheckUpdatesButton";
-import { guardInboxPath, guardNotificationAction, guardNotificationCategories, inboxPath, notificationAction, notificationCategories } from "./notificationInbox";
+import { controlNotificationCategories, guardInboxPath, guardNotificationAction, guardNotificationCategories, inboxPath, notificationAction, notificationCategories } from "./notificationInbox";
 import "./notificationInbox.css";
 
 export default function AdminNotifications({ api, onNavigate, audience = "admin" }) {
   const guard = audience === "guard";
-  const categories = guard ? guardNotificationCategories : notificationCategories;
+  const control = audience === "control";
+  const categories = control ? controlNotificationCategories : guard ? guardNotificationCategories : notificationCategories;
   const [category, setCategory] = useState("ALL"), [view, setView] = useState("ALL"), [search, setSearch] = useState(""), [searchInput, setSearchInput] = useState(""), [page, setPage] = useState(1);
   const [data, setData] = useState(null), [loadedPath, setLoadedPath] = useState(""), [loading, setLoading] = useState(true), [error, setError] = useState(""), [marking, setMarking] = useState(null);
   const request = useRef(0);
   const mutationPending = useRef(false);
-  const path = (guard ? guardInboxPath : inboxPath)({ category, view, search, page });
-  const load = async () => {
-    const current = ++request.current; setLoading(true); setError("");
-    try { const result = await api(path, { silentLoading: true }); if (current === request.current) { setData(result); setLoadedPath(path); } }
-    catch (err) { if (current === request.current) setError(err.message); }
+  const notificationRoot = control ? "/control/notifications/" : "/notifications/";
+  const path = (control ? "/control" : "") + (guard ? guardInboxPath : inboxPath)({ category, view, search, page });
+  const load = async ({ background = false } = {}) => {
+    const current = ++request.current;
+    if (!background) { setLoading(true); setError(""); }
+    try {
+      const result = await api(path, { silentLoading: true, silentError: background });
+      if (current === request.current) { setData(result); setLoadedPath(path); setError(""); }
+    }
+    catch (err) { if (current === request.current && !background) setError(err.message); }
     finally { if (current === request.current) setLoading(false); }
   };
-  useEffect(() => { load(); return () => { request.current++; }; }, [path]);
+  useEffect(() => {
+    load();
+    const timer = control && window.setInterval(() => {
+      if (!mutationPending.current) load({ background: true });
+    }, 30_000);
+    return () => { request.current++; if (timer) window.clearInterval(timer); };
+  }, [path, control]);
   const filter = (setter, value) => { setPage(1); setter(value); };
   const markRead = async (item) => {
     if (mutationPending.current) return;
     mutationPending.current = true;
     setMarking(item.id); setError("");
     try {
-      await api(`/notifications/${item.id}/mark_read/`, { method: "POST", body: "{}", silentLoading: true, silentToast: true });
+      await api(`${notificationRoot}${item.id}/mark_read/`, { method: "POST", body: "{}", silentLoading: true, silentToast: true });
       window.dispatchEvent(new Event("rota:notifications-changed"));
       if (page > 1 && data.results.length === 1 && view !== "ALL") setPage((value) => value - 1);
       else await load();
@@ -36,7 +48,7 @@ export default function AdminNotifications({ api, onNavigate, audience = "admin"
     mutationPending.current = true;
     setMarking("all"); setError("");
     try {
-      const result = await api("/notifications/mark-all-read/", { method: "POST", body: "{}", silentLoading: true, silentToast: true });
+      const result = await api(`${notificationRoot}mark-all-read/`, { method: "POST", body: "{}", silentLoading: true, silentToast: true });
       window.dispatchEvent(new Event("rota:notifications-changed"));
       window.dispatchEvent(new CustomEvent("rota:toast", { detail: { type: "success", message: result.updated ? "All notifications marked as read." : "No unread notifications remaining." } }));
       if (page !== 1) setPage(1); else await load();
@@ -46,11 +58,24 @@ export default function AdminNotifications({ api, onNavigate, audience = "admin"
   const currentData = loadedPath === path ? data : null;
   const categoryCounts = new Map(summary.categories.map((item) => [item.key, item]));
   return <>
-    <div className="page-heading"><div><p className="eyebrow">{guard ? "GUARD INBOX" : "OFFICE INBOX"}</p><h2>Notifications</h2><p className="muted">{guard ? "Your shifts, documents and application updates in one place." : "Review urgent exceptions, pending approvals and updates by category."}</p></div><div className="page-heading-actions"><button type="button" className="secondary-button mark-all-read-button" title="Mark unread notifications across all categories and pages in your inbox as read" aria-busy={marking === "all"} disabled={loading || Boolean(marking) || !data?.summary?.unread} onClick={markAllRead}><CheckCheck size={16} />{marking === "all" ? "Marking as read…" : "Mark all as read"}</button><CheckUpdatesButton key={marking == null ? "idle" : `mark-${marking}`} api={api} paths={path} currentData={data} onUpdate={(result) => { setData(result); setLoadedPath(path); setError(""); }} setError={setError} disabled={loading || Boolean(marking)} /></div></div>
+    <div className="page-heading">
+      <div><p className="eyebrow">{control ? "CONTROL TEAM INBOX" : guard ? "GUARD INBOX" : "OFFICE INBOX"}</p><h2>Notifications</h2>
+        <p className="muted">{control ? "Shift, attendance and request updates." : guard ? "Your shifts, documents and application updates in one place." : "Review urgent exceptions, pending approvals and updates by category."}</p></div>
+      <div className="page-heading-actions">
+        <button type="button" className="secondary-button mark-all-read-button" title="Mark unread notifications across all categories and pages in your inbox as read" aria-busy={marking === "all"} disabled={loading || Boolean(marking) || !data?.summary?.unread} onClick={markAllRead}>
+          <CheckCheck size={16} />{marking === "all" ? "Marking as read…" : "Mark all as read"}
+        </button>
+        <CheckUpdatesButton key={marking == null ? "idle" : `mark-${marking}`} api={api} paths={path} currentData={currentData} onUpdate={(result) => {
+          request.current++;
+          setData(result); setLoadedPath(path); setLoading(false); setError("");
+          if (control) window.dispatchEvent(new Event("rota:notifications-changed"));
+        }} setError={setError} disabled={loading || Boolean(marking)} />
+      </div>
+    </div>
     {error && <p className="error page-error" role="alert">{error}</p>}
     <section className="panel admin-notification-controls" aria-label="Notification filters">
       <div className="admin-inbox-tabs" role="group" aria-label="Notification view">{[["ALL", "All", summary.total], ["UNREAD", "Unread", summary.unread], ["URGENT", "Urgent", summary.urgent]].map(([key, label, count]) => <button type="button" key={key} disabled={Boolean(marking)} aria-pressed={view === key} className={view === key ? "selected" : ""} onClick={() => filter(setView, key)}>{key === "URGENT" ? <AlertTriangle size={16} /> : <Bell size={16} />}{label}<span>{count}</span></button>)}</div>
-      <form className="admin-inbox-search" onSubmit={(event) => { event.preventDefault(); filter(setSearch, searchInput.trim()); }}><div className="search-box"><Search size={17} /><input disabled={Boolean(marking)} aria-label="Search notifications" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder={guard ? "Search your notifications…" : "Search guard name, site or alert…"} /></div><button disabled={Boolean(marking)} className="secondary-button" type="submit">Search</button></form>
+      <form className="admin-inbox-search" onSubmit={(event) => { event.preventDefault(); filter(setSearch, searchInput.trim()); }}><div className="search-box"><Search size={17} /><input disabled={Boolean(marking)} aria-label="Search notifications" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder={guard || control ? "Search notifications…" : "Search guard name, site or alert…"} /></div><button disabled={Boolean(marking)} className="secondary-button" type="submit">Search</button></form>
       <div className="admin-inbox-categories" role="group" aria-label="Notification categories"><button type="button" disabled={Boolean(marking)} aria-pressed={category === "ALL"} onClick={() => filter(setCategory, "ALL")}><strong>All categories</strong><span>{summary.unread} unread</span></button>{categories.map((item) => <button type="button" key={item.key} disabled={Boolean(marking)} aria-pressed={category === item.key} onClick={() => filter(setCategory, item.key)}><strong>{item.label}</strong><span>{categoryCounts.get(item.key)?.unread || 0} unread</span></button>)}</div>
     </section>
     <section className="panel admin-notification-list" aria-busy={loading}>

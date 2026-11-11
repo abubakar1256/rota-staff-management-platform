@@ -2,10 +2,12 @@ from datetime import datetime, time, timedelta, timezone as utc_timezone
 from math import ceil
 from zoneinfo import ZoneInfo
 
-from django.db.models import F, Q
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import ControlAttendance, ControlAttendanceSettings, ControlShiftAssignment, ControlWeeklyAssignment
+from .notifications import publish_control_notification
 
 
 LONDON = ZoneInfo("Europe/London")
@@ -110,13 +112,46 @@ def assignment_status(assignment, now):
     return "Available"
 
 
+@transaction.atomic
 def close_expired_attendance(now=None, *, member_id=None):
     due = ControlAttendance.objects.filter(checked_out_at__isnull=True, auto_checkout_at__lte=now or timezone.now())
     if member_id is not None:
         due = due.filter(member_id=member_id)
-    return due.update(checked_out_at=F("auto_checkout_at"), auto_checked_out=True)
+    entries = list(due.select_related("member__user").select_for_update(of=("self",)).order_by("pk"))
+    for entry in entries:
+        entry.checked_out_at = entry.auto_checkout_at
+        entry.auto_checked_out = True
+    ControlAttendance.objects.bulk_update(entries, ["checked_out_at", "auto_checked_out"])
+    for entry in entries:
+        notify_control_attendance(entry, "auto_checkout")
+    return len(entries)
 
 
 def minutes_late(entry):
     if entry.scheduled_start_at is not None:
         return max(0, ceil((entry.checked_in_at - entry.scheduled_start_at).total_seconds() / 60))
+
+
+def notify_control_attendance(entry, event):
+    late = (minutes_late(entry) or 0) if event == "check_in" else 0
+    if event == "check_in":
+        title, action, recorded = "Check In recorded", "checked in", entry.checked_in_at
+    elif event == "auto_checkout":
+        title, action, recorded = "Automatic Check Out", "were automatically checked out", entry.checked_out_at
+    else:
+        title, action, recorded = "Check Out recorded", "checked out", entry.checked_out_at
+    if late:
+        title = "Late Check In"
+    warning = late or event == "auto_checkout"
+    shift = f" for the {entry.get_shift_display()} shift" if entry.shift else ""
+    details = f"{shift} at {recorded.astimezone(LONDON):%d %b %Y, %H:%M %Z}"
+    details += f" ({late} min late)." if late else "."
+    for office in (False, True):
+        subject = entry.member.name if office else "You"
+        verb = "was automatically checked out" if office and event == "auto_checkout" else action
+        publish_control_notification(
+            entry.member, office=office, tab="team", title=f"Control Team: {title}" if office else title,
+            message=f"{subject} {verb}{details}", event_key=f"attendance:{entry.pk}:{event}",
+            category="ATTENDANCE", notification_type="WARNING" if warning else "SUCCESS",
+            priority="URGENT" if warning else "NORMAL",
+        )

@@ -23,17 +23,19 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
 from .control_attendance import (
-    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late,
+    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late, notify_control_attendance,
     shift_window, weekly_conflict_for_assignment, weekly_occurrence, weekly_occurrences, weekly_rules, weekly_schedule_conflict,
 )
 from .geo import haversine_distance_m
 from .location_tracking import valid_coordinates
 from .models import (
     AuditLog, ControlAttendance, ControlAttendanceSettings, ControlLeaveRequest, ControlShiftAssignment,
-    ControlTeamMember, ControlWeeklyAssignment, Employee, UserProfile,
+    ControlTeamMember, ControlWeeklyAssignment, Employee, Notification, UserProfile,
 )
+from .notifications import publish_control_notification
 from .permissions import is_admin, role_of
 from .serializers import LoginSerializer
+from .views import NotificationViewSet
 
 User = get_user_model()
 
@@ -46,6 +48,25 @@ class IsControlMember(BasePermission):
 class IsControlAdmin(BasePermission):
     def has_permission(self, request, view):
         return is_admin(request.user)
+
+
+class ControlNotificationViewSet(NotificationViewSet):
+    permission_classes = [IsControlAdmin | IsControlMember]
+
+    def get_queryset(self):
+        user = self.request.user
+        audience = Q(user=user) | Q(user__isnull=True) if is_admin(user) else Q(user=user)
+        return Notification.objects.filter(audience, link="control-team").order_by("-created_at", "-pk")
+
+    def inbox(self, request):
+        categories = [
+            ("ATTENDANCE", "Attendance"), ("ROTA_STAFFING", "Shifts"),
+            ("LEAVE_REPLACEMENT", "Leave & Replacement"), ("SYSTEM", "Team & Profile"),
+        ]
+        return self._inbox_data(request, self.get_queryset(), categories)
+
+    def mark_all_read(self, request):
+        return Response({"updated": self.get_queryset().filter(is_read=False).update(is_read=True)})
 
 
 class ControlLoginThrottle(AnonRateThrottle):
@@ -328,6 +349,26 @@ def save_weekly_assignment(data, settings, today):
     return rule
 
 
+def notify_shift_assignment(assignment, action, audit_id, *, member=None):
+    member = member or assignment.member
+    shift = assignment.get_shift_display()
+    if isinstance(assignment, ControlWeeklyAssignment):
+        weekday_names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+        days = ", ".join(weekday_names[day] for day in assignment.weekdays)
+        details = f"weekly {shift} shift ({days}, {assignment.start_time:%H:%M}–{assignment.end_time:%H:%M} UK time)"
+    else:
+        start = assignment.scheduled_start_at.astimezone(LONDON)
+        end = assignment.scheduled_end_at.astimezone(LONDON)
+        details = f"{shift} shift ({start:%d %b %Y, %H:%M %Z} to {end:%d %b %Y, %H:%M %Z})"
+    for office in (False, True):
+        owner = f"{member.name}'s" if office else "Your"
+        publish_control_notification(
+            member, office=office, tab="settings", title=f"Control Team: Shift {action}" if office else f"Shift {action}",
+            message=f"{owner} {details} was {action}.", event_key=f"schedule:{audit_id}:{member.pk}:{action}",
+            category="ROTA_STAFFING",
+        )
+
+
 def schedule_rows(dated, rules, first, last, now, *, after=None):
     shifts = [(entry, None) for entry in dated]
     occupied = {(entry.member_id, entry.shift_date, entry.shift) for entry, _ in shifts}
@@ -495,9 +536,16 @@ def logout(request):
 def profile(request):
     member = member_for(request.user, lock=request.method == "PUT")
     if request.method == "PUT":
+        was_complete = member.profile_complete
         serializer = ProfileSerializer(member, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if not was_complete and member.profile_complete:
+            publish_control_notification(
+                member, office=True, tab="team", title="Control Team: Profile completed",
+                message=f"{member.name} completed their staff profile.", category="SYSTEM",
+                event_key=f"profile:{member.pk}:completed",
+            )
     now = timezone.now()
     close_expired_attendance(now, member_id=member.pk)
     return Response(member_data(member, now, history=True, include_assignments=True))
@@ -539,10 +587,11 @@ def team_assignments(request):
     # Serialize roster edits with timing updates and other assignments, including overlapping shifts.
     settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
     assignment = save_assignment(NewAssignmentSerializer(data=request.data), settings)
-    AuditLog.objects.create(
+    audit = AuditLog.objects.create(
         user=request.user, action="CREATE", model_name="ControlShiftAssignment", object_id=str(assignment.pk),
         summary="Assigned a Control Team shift",
     )
+    notify_shift_assignment(assignment, "assigned", audit.pk)
     return Response(ShiftAssignmentSerializer(assignment, context={"now": now}).data, status=status.HTTP_201_CREATED)
 
 
@@ -556,16 +605,21 @@ def team_assignment(request, pk):
         return Response({"detail": "This shift already has attendance recorded."}, status=status.HTTP_409_CONFLICT)
     if request.method == "DELETE":
         assignment.delete()
-        AuditLog.objects.create(
+        audit = AuditLog.objects.create(
             user=request.user, action="DELETE", model_name="ControlShiftAssignment", object_id=str(pk),
             summary="Removed a Control Team shift assignment",
         )
+        notify_shift_assignment(assignment, "removed", audit.pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
+    previous_member = assignment.member
     assignment = save_assignment(AssignmentMemberSerializer(data=request.data), settings, assignment)
-    AuditLog.objects.create(
+    audit = AuditLog.objects.create(
         user=request.user, action="UPDATE", model_name="ControlShiftAssignment", object_id=str(pk),
         summary="Reassigned a Control Team shift",
     )
+    if previous_member.pk != assignment.member_id:
+        notify_shift_assignment(assignment, "removed", audit.pk, member=previous_member)
+        notify_shift_assignment(assignment, "assigned", audit.pk)
     return Response(ShiftAssignmentSerializer(assignment, context={"now": timezone.now()}).data)
 
 
@@ -578,10 +632,11 @@ def team_weekly_assignments(request):
         return Response(WeeklyAssignmentSerializer(rules, many=True).data)
     settings, _ = ControlAttendanceSettings.objects.select_for_update().get_or_create(pk=1)
     rule = save_weekly_assignment(request.data, settings, timezone.localdate(timezone=LONDON))
-    AuditLog.objects.create(
+    audit = AuditLog.objects.create(
         user=request.user, action="CREATE", model_name="ControlWeeklyAssignment", object_id=str(rule.pk),
         summary="Assigned repeating Control Team shifts",
     )
+    notify_shift_assignment(rule, "assigned", audit.pk)
     return Response(WeeklyAssignmentSerializer(rule).data, status=status.HTTP_201_CREATED)
 
 
@@ -594,17 +649,22 @@ def team_weekly_assignment(request, pk):
     today = timezone.localdate(timezone=LONDON)
     rule.ends_before = today
     rule.save(update_fields=["ends_before"])
-    if request.method == "PATCH":
-        updated = save_weekly_assignment(request.data, settings, today)
-        response = Response(WeeklyAssignmentSerializer(updated).data)
-    else:
-        response = Response(status=status.HTTP_204_NO_CONTENT)
-    AuditLog.objects.create(
-        user=request.user, action="UPDATE" if request.method == "PATCH" else "DELETE",
+    editing = request.method == "PATCH"
+    updated = save_weekly_assignment(request.data, settings, today) if editing else None
+    audit = AuditLog.objects.create(
+        user=request.user, action="UPDATE" if editing else "DELETE",
         model_name="ControlWeeklyAssignment", object_id=str(pk),
-        summary="Updated repeating Control Team shifts" if request.method == "PATCH" else "Ended repeating Control Team shifts",
+        summary="Updated repeating Control Team shifts" if editing else "Ended repeating Control Team shifts",
     )
-    return response
+    if not updated:
+        notify_shift_assignment(rule, "removed", audit.pk)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    if rule.member_id != updated.member_id:
+        notify_shift_assignment(rule, "removed", audit.pk)
+        notify_shift_assignment(updated, "assigned", audit.pk)
+    else:
+        notify_shift_assignment(updated, "updated", audit.pk)
+    return Response(WeeklyAssignmentSerializer(updated).data)
 
 
 @api_view(["POST"])
@@ -640,12 +700,13 @@ def attendance(request):
         if not current:
             if not assignment.pk:
                 assignment.save()
-            ControlAttendance.objects.create(
+            entry = ControlAttendance.objects.create(
                 member=member, checked_in_at=now, check_in_photo=data["photo"], check_in_location=location,
                 assignment=assignment, shift=assignment.shift,
                 scheduled_start_at=assignment.scheduled_start_at, scheduled_end_at=assignment.scheduled_end_at,
                 auto_checkout_at=assignment.scheduled_end_at + AUTO_CHECKOUT_GRACE,
             )
+            notify_control_attendance(entry, "check_in")
     elif current:
         if current.pk != data["attendance_id"]:
             return Response(
@@ -657,7 +718,21 @@ def attendance(request):
         current.check_out_photo = data["photo"]
         current.check_out_location = location
         current.save(update_fields=["checked_out_at", "check_out_photo", "check_out_location"])
+        notify_control_attendance(current, "check_out")
     return Response(member_data(member, now, history=True, include_assignments=True))
+
+
+def notify_control_request(item, action):
+    kind = item.get_kind_display()
+    for office in (False, True):
+        owner = f"{item.member.name}'s" if office else "Your"
+        title = f"{kind} request {action}"
+        publish_control_notification(
+            item.member, office=office, tab="requests", title=f"Control Team: {title}" if office else title,
+            message=f"{owner} request for {item.start_date:%d %b %Y} to {item.end_date:%d %b %Y} was {action}.",
+            event_key=f"request:{item.pk}:{action}", category="LEAVE_REPLACEMENT",
+            notification_type={"approved": "SUCCESS", "rejected": "WARNING"}.get(action, "INFO"),
+        )
 
 
 @api_view(["GET", "POST"])
@@ -671,7 +746,8 @@ def member_requests(request):
         raise PermissionDenied("Complete your profile before sending a request.")
     serializer = RequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    serializer.save(member=member)
+    item = serializer.save(member=member)
+    notify_control_request(item, "submitted")
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -724,6 +800,11 @@ def team(request):
                 user=request.user, action="CREATE", model_name="ControlTeamMember", object_id=str(member.pk),
                 summary="Created Control Team account",
             )
+            publish_control_notification(
+                member, office=True, tab="team", title="Control Team member added",
+                message=f"{member.name} was added to the Control Team.", category="SYSTEM",
+                event_key=f"member:{member.pk}:created",
+            )
         return Response(member_data(member, now), status=status.HTTP_201_CREATED)
     close_expired_attendance(now)
     members = ControlTeamMember.objects.select_related("user").prefetch_related(
@@ -747,12 +828,21 @@ def team_member(request, pk):
         if member.user.is_active != active:
             member.user.is_active = active
             member.user.save(update_fields=["is_active"])
+            closed = 0
             if not active:
-                member.attendance.filter(checked_out_at__isnull=True).update(checked_out_at=now, closed_by_admin=True)
+                closed = member.attendance.filter(checked_out_at__isnull=True).update(checked_out_at=now, closed_by_admin=True)
                 Token.objects.filter(user=member.user).delete()
-            AuditLog.objects.create(
+            audit = AuditLog.objects.create(
                 user=request.user, action="UPDATE", model_name="ControlTeamMember", object_id=str(member.pk),
                 summary="Reactivated Control Team member" if active else "Deactivated Control Team member",
+            )
+            action = "reactivated" if active else "deactivated"
+            message = f"{member.name}'s Control Team access was {action}."
+            if closed:
+                message += " Their open attendance was checked out by the office."
+            publish_control_notification(
+                member, office=True, tab="team", title=f"Control Team member {action}", message=message,
+                category="SYSTEM", event_key=f"member:{audit.pk}:{action}",
             )
     return Response(member_data(member, now, history=True))
 
@@ -777,6 +867,7 @@ def review_request(request, pk):
     item.reviewed_by = request.user
     item.reviewed_at = timezone.now()
     item.save(update_fields=["status", "review_note", "reviewed_by", "reviewed_at"])
+    notify_control_request(item, item.status.lower())
     return Response(RequestSerializer(item).data)
 
 
@@ -788,6 +879,10 @@ urlpatterns = [
     path("attendance/settings/", team_attendance_settings, name="attendance-settings"),
     path("attendance/<int:pk>/photos/<str:action>/", attendance_photo, name="attendance-photo"),
     path("requests/", member_requests, name="requests"),
+    path("notifications/", ControlNotificationViewSet.as_view({"get": "list"}), name="notifications"),
+    path("notifications/inbox/", ControlNotificationViewSet.as_view({"get": "inbox"}), name="notification-inbox"),
+    path("notifications/mark-all-read/", ControlNotificationViewSet.as_view({"post": "mark_all_read"}), name="notifications-read"),
+    path("notifications/<int:pk>/mark_read/", ControlNotificationViewSet.as_view({"post": "mark_read"}), name="notification-read"),
     path("photos/<int:pk>/", photo, name="photo"),
     path("team/", team, name="team"),
     path("team/assignments/", team_assignments, name="team-assignments"),

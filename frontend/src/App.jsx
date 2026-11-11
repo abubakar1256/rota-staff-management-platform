@@ -86,6 +86,9 @@ async function api(path, options = {}) {
       notifyToast(method === "DELETE" ? "Deleted successfully." : method === "PATCH" ? "Changes saved successfully." : "Saved successfully.");
     }
     if (method !== "GET" && !path.startsWith("/auth/") && !options.skipInvalidation) invalidateForPath(path);
+    if (method !== "GET" && path.startsWith("/control/") && !path.startsWith("/control/notifications/") && path !== "/control/logout/") {
+      window.dispatchEvent(new Event("rota:notifications-changed"));
+    }
     return result;
   } finally {
     if (showRequestLoader) window.dispatchEvent(new Event("rota:request-end"));
@@ -2165,8 +2168,7 @@ function App() {
   const [mobileNav, setMobileNav] = useState(false);
   const [stats, setStats] = useState({ active_employees: 0, active_sites: 0, employees_on_leave: 0, unfilled_shifts: 0, documents_expiring_soon: 0 });
   const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const notificationIdsRef = useRef(new Set());
-  const notificationPrimedRef = useRef(false);
+  const [controlUnread, setControlUnread] = useState(0);
   const guardPath = window.location.pathname === "/guard" || window.location.pathname.startsWith("/guard/");
   const attendanceOnlyPath = window.location.pathname === "/guard-attendance" || window.location.pathname.startsWith("/guard-attendance/");
   const clientPath = window.location.pathname === "/client" || window.location.pathname.startsWith("/client/");
@@ -2197,22 +2199,30 @@ function App() {
   }, [user]);
   useEffect(() => {
     setUnreadNotifications(0);
-    if (!user || clientPath || controlPath) return undefined;
+    setControlUnread(0);
+    if (!user || clientPath) return undefined;
     let active = true;
-    notificationIdsRef.current = new Set();
-    notificationPrimedRef.current = false;
+    let seen = null;
+    let loading = false;
+    let queued = false;
     const loadNotifications = async () => {
+      if (loading) { queued = true; return; }
+      loading = true;
       try {
-        const items = await api("/notifications/", { silentLoading: true });
+        const items = await api(controlPath ? "/control/notifications/" : "/notifications/", { silentLoading: true, silentError: true });
         if (!active) return;
         const unread = items.filter((item) => !item.is_read);
-        if (notificationPrimedRef.current) {
-          unread.filter((item) => !notificationIdsRef.current.has(item.id)).forEach((item) => notifyToast(`${item.title}: ${item.message}`, item.notification_type?.toLowerCase() || "info"));
+        if (seen) {
+          unread.filter((item) => !seen.has(item.id)).reverse().forEach((item) => notifyToast(`${item.title}: ${item.message}`, item.notification_type?.toLowerCase() || "info"));
         }
-        notificationIdsRef.current = new Set(items.map((item) => item.id));
-        notificationPrimedRef.current = true;
-        setUnreadNotifications((current) => current === unread.length ? current : unread.length);
-      } catch { /* api already displays the error toast */ }
+        seen = new Set(items.map((item) => item.id));
+        setUnreadNotifications(unread.length);
+        setControlUnread(unread.filter((item) => item.link === "control-team").length);
+      } catch { /* Retry on the next background check. */ }
+      finally {
+        loading = false;
+        if (active && queued) { queued = false; void loadNotifications(); }
+      }
     };
     loadNotifications();
     const timer = window.setInterval(loadNotifications, 30000);
@@ -2241,13 +2251,14 @@ function App() {
   const isOperator = role === "OPERATOR" || role === "RECEPTIONIST";
   const canShareWhatsApp = isSuperAdmin || role === "ADMIN";
   const isClientAdmin = role === "CLIENT_ADMIN";
-  if (controlPath) return <><ToastHost /><ControlPortal api={api} Photo={ProtectedImage} FilePreview={ProtectedFilePreview} onSignOut={signOut} /></>;
+  if (controlPath) return <><ToastHost /><ControlPortal api={api} Photo={ProtectedImage} FilePreview={ProtectedFilePreview} onSignOut={signOut} unread={controlUnread} /></>;
   if (clientPath && !isClientAdmin) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA CLIENT PORTAL</p><h1>Client access only</h1><p className="muted">This portal is reserved for linked Client Admin accounts.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (isClientAdmin) return <><ToastHost /><ClientPortal user={user} onSignOut={signOut} /></>;
   if ((guardPath || attendanceOnlyPath) && !isEmployee) return <><ToastHost /><main className="login-shell"><section className="login-card"><div className="brand-mark"><ShieldCheck size={22} /></div><p className="eyebrow">ROTA GUARD PORTAL</p><h1>Guard access only</h1><p className="muted">This link is reserved for guard accounts. Admin users should use the main operations portal.</p><button className="primary-button" onClick={signOut}>Sign out</button></section></main></>;
   if (attendanceOnlyPath) return <GuardAttendanceOnly user={user} onSignOut={signOut} />;
   if (isEmployee) return <GuardPortal user={user} onSignOut={signOut} unreadNotifications={unreadNotifications} initialPage={guardInitialPage} />;
-  const content = page === "control-team" ? <ControlTeamAdmin api={api} Photo={ProtectedImage} FilePreview={ProtectedFilePreview} /> : page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords canManagePins={isSuperAdmin || role === "ADMIN"} /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "whatsapp-announcements" && canShareWhatsApp ? <StaffAnnouncements api={api} /> : (page === "rota" || (page === "whatsapp-rota" && canShareWhatsApp)) ? <Rota canShareWhatsApp={canShareWhatsApp} target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 canManageCortex={isSuperAdmin || role === "ADMIN"} /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} isOfficeAdmin={isSuperAdmin || role === "ADMIN"} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
+  const content = page === "control-team" ? <ControlTeamAdmin api={api} Photo={ProtectedImage} FilePreview={ProtectedFilePreview}
+    unread={controlUnread} initialTarget={notificationTarget.page === "control-team" ? notificationTarget : undefined} /> : page === "security" ? <AdminSecurity api={api} user={user} /> : page === "security-screening" ? <AdminScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} initialCaseId={notificationTarget.screening_id} /> : page === "profile" ? <EmployeeProfilePage /> : page === "attendance" ? <EmployeeAttendancePage /> : page === "attendance-review" ? <AttendanceReviewPage canTrack={!isOperator} target={notificationTarget.page === "attendance-review" ? notificationTarget : {}} /> : page === "dashboard" ? <Dashboard stats={stats} onCreateRota={() => setPage("rota")} /> : page === "employees" ? <EmployeeRecords canManagePins={isSuperAdmin || role === "ADMIN"} /> : page === "clients" ? <ClientsPage /> : page === "sites" ? <SiteRecords /> : page === "whatsapp-announcements" && canShareWhatsApp ? <StaffAnnouncements api={api} /> : (page === "rota" || (page === "whatsapp-rota" && canShareWhatsApp)) ? <Rota canShareWhatsApp={canShareWhatsApp} target={notificationTarget.page === "rota" ? notificationTarget : {}} /> : page === "guard-availability" ? <GuardAvailability api={api} /> : page === "guard-induction" ? <GuardInductionPageV2 canManageCortex={isSuperAdmin || role === "ADMIN"} /> : page === "coverage-staffing" ? <CoverageStaffingPage /> : page === "rota-confirmation" ? <RotaConfirmationPage /> : page === "leave" ? <LeavePage initialLeaveId={notificationTarget.leave_id} /> : page === "documents" ? <DocumentsPage onNavigate={setPage} isOfficeAdmin={isSuperAdmin || role === "ADMIN"} target={notificationTarget.page === "documents" ? notificationTarget : {}} /> : page === "compliance-approvals" ? <ComplianceApprovalsPage initialRegistrationId={notificationTarget.registration_id} /> : page === "timesheets" ? <TimesheetsPage canApprove={!isOperator} initialTimesheetId={notificationTarget.timesheet_id} /> : page === "reports" ? <ReportsPage /> : page === "arrival-report" ? <ArrivalReportPage canRegenerate={isSuperAdmin || role === "ADMIN"} /> : page === "operations" ? <OperationsPage canEdit={!isOperator} canTrack={!isOperator} /> : page === "notifications" ? ((isSuperAdmin || role === "ADMIN") ? <AdminNotifications api={api} onNavigate={(target, context) => { setNotificationTarget({ ...context, page: target }); setPage(target); }} /> : <NotificationsPage />) : page === "audit" ? <AuditPage /> : <UsersPage />;
   return <><ToastHost />{(isSuperAdmin || role === "ADMIN") && <AdminSessionMonitor api={api} />}<div className="app-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{navItems.filter((item) => isEmployee ? item.employeeOnly : !item.employeeOnly && (!item.superAdminOnly || isSuperAdmin) && (!item.adminOnly || isSuperAdmin || role === "ADMIN") && (!item.operatorHidden || !isOperator)).map(({ id, label, icon: Icon, disabled, groupHeading, whatsapp }) => <Fragment key={id}>{groupHeading && <div className="whatsapp-nav-heading">{groupHeading}</div>}<button className={["nav-item", page === id ? "active" : "", whatsapp ? "whatsapp-nav-item" : ""].filter(Boolean).join(" ")} disabled={disabled} onClick={() => { setNotificationTarget({}); setPage(id); setMobileNav(false); }}><Icon size={18} /><span>{label}</span>{id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}{disabled && <small>soon</small>}</button></Fragment>)}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{isEmployee ? (user.first_name || "G").slice(0, 1).toUpperCase() : (user.first_name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{isEmployee ? (user.first_name || "Guard") : (user.first_name || "System")}</strong><span>{user.role_label || user.role_display || role || "ADMIN"}</span></div></div><button className="logout-button" onClick={signOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Workspace <span>/</span> <strong>{navItems.find((item) => item.id === page)?.label || "Dashboard"}</strong></div><div className="topbar-right"><span className="online-dot" /> System online</div></header><div className="page-content" key={dataVersion}>{content}</div></main></div></>;
 }
 

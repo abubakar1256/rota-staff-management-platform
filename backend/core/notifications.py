@@ -20,3 +20,12 @@ def publish_notification(*, user=None, title, message, link="", notification_typ
     identity = event_key or json.dumps([title, message, link, metadata], sort_keys=True, default=str)
     key = hashlib.sha256(f"{getattr(user, 'pk', None)}:{identity}".encode()).hexdigest()
     return Notification.objects.get_or_create(dedupe_key=key, defaults=values)
+
+
+def publish_control_notification(member, *, office=False, tab, title, message, event_key,
+                                 category, notification_type="INFO", priority="NORMAL"):
+    return publish_notification(
+        user=None if office else member.user, link="control-team", title=title, message=message,
+        context={"control_tab": tab, "control_member_id": member.pk},
+        event_key=f"control:{event_key}", category=category, notification_type=notification_type, priority=priority,
+    )
