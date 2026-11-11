@@ -34,6 +34,12 @@ Railway is configured from the dashboard using the commands above; the included 
 6. Configure persistent media storage before accepting real employee documents or attendance photos. On Railway, attach a Volume to the backend service at `/data` and set `DJANGO_MEDIA_ROOT=/data/media`. The application already reads this setting and serves uploaded files through authenticated media endpoints, so documents and attendance photos are not lost on redeploy and are not publicly exposed.
 7. Run `python backend/manage.py seed_demo` only for a non-production demo environment; never use the demo password in production.
 
+## Control Team attendance
+
+After applying migrations `0047` and `0048`, set the office coordinates and radius in **Control Team → Attendance settings**. The four UK-time shift templates are editable. Each new check-in saves the selected shift's start, end and automatic checkout deadline.
+
+Deploy the updated `python manage.py check_location_tracking` command on the existing five-minute Railway cron service, or configure it using [railway-location-cron.json](deploy/railway-location-cron.json) with the same production database after the backend migrations. This closes overdue attendance while both portals are closed and records the deadline as the checkout time. Opening either Control Team portal also processes overdue records. Older open records without a saved shift deadline can be checked out manually.
+
 ## Brevo API and password reset
 
 The application includes a secure **Forgot password?** flow for the admin and guard portals. When `BREVO_API_KEY` is configured, it sends a one-time six-digit verification code through Brevo's HTTPS transactional-email API. The code expires after 10 minutes, is single-use, and is protected by an attempt limit and resend cooldown. Without that key, local development can still use the configured Django email backend.

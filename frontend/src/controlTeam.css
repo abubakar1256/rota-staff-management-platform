@@ -10,8 +10,17 @@
 }
 .control-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .control-between, .control-attendance-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-.control-attendance-card .primary-button { min-width: 128px; min-height: 42px; }
-.control-attendance-card .error { width: 100%; }
+.control-attendance-card .primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-width: 128px; min-height: 42px; }
+.modal-card.control-capture { width: min(560px, calc(100% - 28px)); border: 0; border-radius: 14px; margin: auto; }
+.control-capture::backdrop { background: rgb(15 23 42 / 55%); }
+.control-capture > * + * { margin-top: 12px; }
+.control-attendance-proof { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 6px; }
+.control-office-location { flex-basis: 100%; padding-top: 12px; border-top: 1px solid #e3e9f4; }
+.control-shift-select { display: grid; gap: 5px; font-size: 13px; font-weight: 700; color: #455570; }
+.control-shift-select select { min-height: 42px; max-width: 100%; padding: 8px; border: 1px solid #d8e1f0; border-radius: 8px; background: #fff; color: #172033; font: inherit; }
+.control-settings-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.control-timing-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 140px)); align-items: end; gap: 10px; width: min(100%, 620px); }
+.control-timing-row strong { align-self: center; }
 .control-identity { display: flex; gap: 12px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
 .control-avatar {
   position: relative; display: grid; place-items: center; flex: 0 0 auto; width: 46px; height: 46px;
@@ -23,7 +32,7 @@
 .control-form { display: grid; justify-items: start; gap: 12px; margin-top: 14px; }
 .control-form-grid { width: 100%; display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .control-form label { display: grid; gap: 5px; width: 100%; min-width: 0; font-size: 13px; font-weight: 700; color: #455570; }
-.control-form label small, .control-member-hours small { color: #65738b; font-size: 11px; font-weight: 500; }
+.control-form label small { color: #65738b; font-size: 11px; font-weight: 500; }
 .control-form input, .control-form select, .control-form textarea {
   width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #d8e1f0; border-radius: 8px;
   background: #fff; color: #172033; font: inherit; font-weight: 500;
@@ -36,22 +45,24 @@
 .control-empty { margin-top: 8px; }
 .control-member-list { display: grid; gap: 8px; }
 .control-member {
-  display: grid; grid-template-columns: minmax(150px, 1.5fr) minmax(90px, .65fr) minmax(110px, 1fr) auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(125px, .45fr) auto;
   align-items: center; gap: 12px; padding: 12px; border: 1px solid #e3e9f4; border-radius: 10px; background: #fbfcff;
 }
-.control-member-hours { display: flex; flex-wrap: wrap; gap: 10px 14px; }
-.control-member-hours span { display: grid; gap: 3px; }
 .control-request { padding: 14px; border: 1px solid #e3e9f4; border-radius: 10px; background: #fbfcff; }
 .control-request .muted { margin-top: 3px; }
 .control-reason { margin: 8px 0 0; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 850px) {
-  .control-form-grid, .control-member { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 520px) {
   .control-form-grid { grid-template-columns: minmax(0, 1fr); }
   .control-attendance-card .primary-button { width: 100%; }
+  .control-attendance-buttons, .control-shift-select { width: 100%; }
+  .control-timing-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .control-timing-row strong { grid-column: 1 / -1; }
   .control-office-heading .control-actions { width: 100%; }
   .control-office-heading .control-actions .primary-button { width: auto; }
+  .control-member { grid-template-columns: minmax(0, 1fr) auto; }
   .control-member .control-identity { grid-column: 1 / -1; }
   .control-member > button { justify-self: start; }
   .control-header .client-portal-user strong { display: none; }

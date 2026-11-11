@@ -2,6 +2,22 @@ const numeric = (value) => value == null || typeof value === "boolean" || String
 const latitudeValid = (value) => Number.isFinite(value) && value >= -90 && value <= 90;
 const longitudeValid = (value) => Number.isFinite(value) && value >= -180 && value <= 180;
 
+export function readCurrentLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Location is unavailable on this device. Enable GPS and use the secure HTTPS portal."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }),
+      (error) => reject(new Error(error.code === 1
+        ? "Location permission was denied. Allow location access, then try again."
+        : "Unable to read your GPS location. Make sure GPS is switched on and try again.")),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  });
+}
+
 export function attendanceGeofenceCheck(site, location) {
   const siteLat = numeric(site.site_latitude), siteLon = numeric(site.site_longitude), radius = numeric(site.site_geofence_radius_m);
   if (!latitudeValid(siteLat) || !longitudeValid(siteLon) || !Number.isFinite(radius) || radius <= 0)

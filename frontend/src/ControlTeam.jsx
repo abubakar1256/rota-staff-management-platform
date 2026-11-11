@@ -1,16 +1,20 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Clock3, LogOut, UserPlus, Users } from "lucide-react";
-import { formatUkDateTime } from "./ukTime";
+import { CalendarDays, Camera, Clock3, LogOut, MapPin, UserPlus, Users } from "lucide-react";
+import { readCurrentLocation } from "./attendanceGeofence";
+import { googleSiteLinks, sitePoint } from "./siteCoordinates";
+import { formatUkAttendanceTime, formatUkDateTime } from "./ukTime";
 import "./controlTeam.css";
 
 const root = "/control";
 const profilePath = root + "/profile/";
+const settingsPath = root + "/attendance/settings/";
 const teamPath = root + "/team/";
 const requestsPath = root + "/requests/";
 const officeRequestsPath = teamPath + "requests/";
 const queryKey = (path) => ["rota", "control", path];
 const requestOptions = (method, data) => ({ method, body: JSON.stringify(data) });
+const shiftNames = { M: "Morning", D: "Mid-day", E: "Evening", N: "Night" };
 
 function useControlQuery(api, path, enabled = true) {
   return useQuery({
@@ -55,16 +59,51 @@ function Metric({ icon: Icon, label, value, detail }) {
   </article>;
 }
 
-function AttendanceHistory({ member }) {
+function LateBadge({ minutes }) {
+  return minutes > 0 && <span className="status-pill pending">Late · {minutes} min</span>;
+}
+
+function LocationLink({ location, label }) {
+  const point = sitePoint(location?.latitude, location?.longitude);
+  if (!point) return null;
+  return <a className="file-link-button" href={googleSiteLinks(point).map} target="_blank" rel="noopener noreferrer">
+    <MapPin size={13} aria-hidden="true" />{label}
+  </a>;
+}
+
+function AttendanceEvidence({ photoUrl, location, label, FilePreview }) {
+  if (!photoUrl && !location) return null;
+  return <div className="control-attendance-proof">
+    {photoUrl && <FilePreview value={photoUrl} label={label + " photo"} buttonLabel="View photo" />}
+    {location && <div><LocationLink location={location} label="View GPS" /><small className="table-subtext">
+      {location.distance_m} m from pin{location.radius_m && ` · ${location.radius_m} m radius`} · GPS ±{Math.round(location.accuracy_m)} m
+    </small></div>}
+  </div>;
+}
+
+function ShiftDetails({ entry }) {
+  if (!entry?.shift_name) return null;
+  return <small className="table-subtext">
+    {entry.shift_name} · {formatUkAttendanceTime(entry.scheduled_start_at)} – {formatUkAttendanceTime(entry.scheduled_end_at)}
+  </small>;
+}
+
+function AttendanceHistory({ member, FilePreview }) {
   return <section className="panel">
     <h3>Attendance history</h3>
     <p className="muted">Latest 50 entries · UK time</p>
     {member.attendance.length ? <div className="table-wrap control-table-wrap"><table className="control-table">
       <thead><tr><th scope="col">Check in</th><th scope="col">Check out</th><th scope="col">Duration</th></tr></thead>
       <tbody>{member.attendance.map((entry) => <tr key={entry.id}>
-        <td>{formatUkDateTime(entry.checked_in_at)}</td>
+        <td>{formatUkDateTime(entry.checked_in_at)}
+          <ShiftDetails entry={entry} />
+          <LateBadge minutes={entry.late_minutes} />
+          <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
+        </td>
         <td>{entry.checked_out_at ? formatUkDateTime(entry.checked_out_at) : "In progress"}
           {entry.closed_by_admin && <small className="table-subtext">Closed by admin</small>}
+          {entry.auto_checked_out && <small className="table-subtext">Automatic checkout</small>}
+          <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
         </td>
         <td>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.checked_in_at)) / 1000) : "—"}</td>
       </tr>)}</tbody>
@@ -194,28 +233,159 @@ function ControlTabs({ tabs, page, onChange, label }) {
   </nav>;
 }
 
-export function ControlPortal({ api, Photo, onSignOut }) {
-  const [page, setPage] = useState("attendance");
-  const [busy, setBusy] = useState(false);
+function AttendanceCamera({ onCapture }) {
+  const videoRef = useRef(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    let stream;
+    const video = videoRef.current;
+    async function start() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "user" } }, audio: false });
+        if (active) video.srcObject = stream;
+        else stream.getTracks().forEach((track) => track.stop());
+      } catch {
+        if (active) setError("Camera unavailable. Allow camera access and try again.");
+      }
+    }
+    start();
+    return () => {
+      active = false;
+      stream?.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+    };
+  }, [attempt]);
+
+  function capture() {
+    const video = videoRef.current;
+    if (!video.videoWidth || !video.videoHeight) return;
+    setReady(false);
+    setError("");
+    const scale = Math.min(1, 1000 / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (blob) onCapture(blob);
+      else {
+        setError("Could not capture the photo. Try again.");
+        setReady(true);
+      }
+    }, "image/jpeg", 0.88);
+  }
+
+  return <>
+    <video ref={videoRef} autoPlay muted playsInline aria-label="Live camera preview" className="camera-preview" onPlaying={() => setReady(true)} />
+    {!ready && !error && <p className="muted" role="status">Preparing camera…</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    <div className="control-actions">
+      {error && !ready ? <button type="button" className="secondary-button" onClick={() => { setError(""); setAttempt(attempt + 1); }}>Retry camera</button> :
+        <button type="button" className="primary-button" disabled={!ready} onClick={capture}><Camera size={16} /> Take photo</button>}
+    </div>
+  </>;
+}
+
+function AttendanceCapture({ action, onClose, onSubmit }) {
+  const dialogRef = useRef(null);
+  const [photo, setPhoto] = useState(null);
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [stale, setStale] = useState(false);
+  const label = action === "check_out" ? "Check Out" : "Check In";
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog.showModal();
+    return () => dialog.close();
+  }, []);
+
+  useEffect(() => {
+    if (!photo) return;
+    const url = URL.createObjectURL(photo);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo]);
+
+  async function submit() {
+    setBusy("Getting GPS…");
+    setError("");
+    try {
+      const location = await readCurrentLocation();
+      setBusy("Saving…");
+      await onSubmit(photo, location);
+    }
+    catch (err) {
+      setError(err.message);
+      setStale(err.status === 409);
+    } finally { setBusy(""); }
+  }
+
+  return <dialog ref={dialogRef} className="modal-card camera-modal control-capture" aria-labelledby="control-capture-title"
+    onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    <h3 id="control-capture-title">{label} photo</h3>
+    {photo ? <>
+      {preview && <img src={preview} alt={label + " photo preview"} className="camera-preview" />}
+      <p className="muted">Allow precise location when you confirm.</p>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="control-actions">
+        <button type="button" className="primary-button" disabled={Boolean(busy) || stale} onClick={submit}>{busy || `Confirm ${label}`}</button>
+        <button type="button" className="secondary-button" disabled={busy || stale} onClick={() => { setPhoto(null); setPreview(""); setError(""); }}>Retake</button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{stale ? "Close" : "Cancel"}</button>
+      </div>
+    </> : <>
+      <AttendanceCamera onCapture={setPhoto} />
+      <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+    </>}
+  </dialog>;
+}
+
+export function ControlPortal({ api, Photo, FilePreview, onSignOut }) {
+  const [page, setPage] = useState("attendance");
+  const [capture, setCapture] = useState(null);
+  const [shift, setShift] = useState("");
   const client = useQueryClient();
   const profile = useControlQuery(api, profilePath);
   const member = profile.data;
   const requests = useControlQuery(api, requestsPath, Boolean(member?.profile_complete && page === "requests"));
   const activePage = member?.profile_complete ? page : "profile";
+  const settings = useControlQuery(api, settingsPath, Boolean(member?.profile_complete && activePage === "attendance"));
+  const office = settings.data;
+  const officePin = sitePoint(office?.latitude, office?.longitude);
+  const current = member?.attendance.find((entry) => !entry.checked_out_at);
   const saveProfile = (data) => {
     client.setQueryData(queryKey(profilePath), data);
     setPage("attendance");
   };
-  async function markAttendance() {
-    setError("");
-    setBusy(true);
+  function beginAttendance() {
+    setCapture(current ? { action: "check_out", id: current.id } : { action: "check_in", shift });
+  }
+  async function markAttendance(photo, location) {
+    const body = new FormData();
+    body.set("action", capture.action);
+    body.set("photo", photo, "attendance.jpg");
+    if (capture.id) body.set("attendance_id", capture.id);
+    if (capture.shift) body.set("shift", capture.shift);
+    body.set("latitude", location.latitude);
+    body.set("longitude", location.longitude);
+    body.set("accuracy_m", location.accuracy);
     try {
-      const action = member.checked_in_at ? "check_out" : "check_in";
-      const updated = await api(root + "/attendance/", { ...requestOptions("POST", { action }), silentError: true });
+      const updated = await api(root + "/attendance/", {
+        method: "POST", body, silentError: true, silentLoading: true, skipInvalidation: true,
+      });
+      await client.cancelQueries({ queryKey: queryKey(profilePath), exact: true });
       client.setQueryData(queryKey(profilePath), updated);
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+      setShift("");
+      setCapture(null);
+    } catch (err) {
+      if (err.status === 409) profile.refetch();
+      throw err;
+    }
   }
   return <div className="client-portal-shell">
     <header className="client-portal-header control-header">
@@ -231,17 +401,37 @@ export function ControlPortal({ api, Photo, onSignOut }) {
         {activePage === "attendance" && <>
           <section className="panel control-attendance-card">
             <div className="control-identity"><Avatar member={member} Photo={Photo} /><div>
-              <h3>{member.name}</h3><MemberStatus member={member} />
+              <h3>{member.name}</h3><div className="control-actions"><MemberStatus member={member} /><LateBadge minutes={member.late_minutes} /></div>
               {member.checked_in_at && <p className="muted control-since">Since {formatUkDateTime(member.checked_in_at)}</p>}
+              <ShiftDetails entry={current} />
+              {current?.auto_checkout_at && <small className="table-subtext">Auto checkout at {formatUkDateTime(current.auto_checkout_at)}</small>}
             </div></div>
-            <button type="button" className="primary-button" disabled={busy} onClick={markAttendance}>{busy ? "Saving…" : member.checked_in_at ? "Check Out" : "Check In"}</button>
-            {error && <p className="error" role="alert">{error}</p>}
+            <div className="control-actions control-attendance-buttons">
+              {!current && office && <label className="control-shift-select">Your shift (UK time)
+                <select value={shift} onChange={(event) => setShift(event.target.value)}>
+                  <option value="">Select your shift</option>
+                  {Object.entries(office.shifts).map(([code, timing]) => <option key={code} value={code}>
+                    {code} · {shiftNames[code]} · {timing.start}–{timing.end}{timing.end < timing.start ? " (+1 day)" : ""}
+                  </option>)}
+                </select>
+              </label>}
+              <button type="button" className="primary-button" disabled={!officePin || (!current && !shift)} onClick={beginAttendance}>
+                <Camera size={16} /> {current ? "Check Out" : "Check In"}
+              </button>
+            </div>
+            <div className="control-office-location">
+              {!office ? <QueryStatus query={settings} label="attendance location" /> : officePin ?
+                <div className="control-actions"><LocationLink location={officePin} label="Attendance location" />
+                  <span className="muted">{office.address && `${office.address} · `}{office.radius_m} m radius</span></div> :
+                <p className="muted">The office needs to set the attendance location.</p>}
+            </div>
           </section>
           <div className="control-metrics">
             <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
             <Metric icon={CalendarDays} label="This month" value={duration(member.monthly_seconds)} detail="Calendar month · UK time" />
           </div>
-          <AttendanceHistory member={member} />
+          <AttendanceHistory member={member} FilePreview={FilePreview} />
+          {capture && <AttendanceCapture action={capture.action} onClose={() => setCapture(null)} onSubmit={markAttendance} />}
         </>}
         {activePage === "requests" && <><RequestForm api={api} /><RequestList query={requests} api={api} /></>}
       </>}
@@ -280,7 +470,7 @@ function AddMemberForm({ api, onClose }) {
   </section>;
 }
 
-function MemberDetail({ member, api, onClose }) {
+function MemberDetail({ member, api, FilePreview, onClose }) {
   const [busy, setBusy] = useState(false);
   const client = useQueryClient();
   async function toggleStatus() {
@@ -303,17 +493,100 @@ function MemberDetail({ member, api, onClose }) {
         <button type="button" className="secondary-button" onClick={onClose}>Close details</button>
       </div>
     </section>
-    <AttendanceHistory member={member} />
+    <AttendanceHistory member={member} FilePreview={FilePreview} />
   </>;
 }
 
-export function ControlTeamAdmin({ api, Photo }) {
+function AttendanceSettingsForm({ settings, api, onSaved }) {
+  const [draft, setDraft] = useState(settings);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  function change(fields) {
+    setSaved(false);
+    setDraft((previous) => ({ ...previous, ...fields }));
+  }
+
+  async function useCurrentLocation() {
+    setError("");
+    setBusy("location");
+    try {
+      const { latitude, longitude } = await readCurrentLocation();
+      change({ latitude, longitude });
+    } catch (err) { setError(err.message); }
+    finally { setBusy(""); }
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    setError("");
+    setSaved(false);
+    const matchingTimes = Object.entries(draft.shifts).find(([, timing]) => timing.start === timing.end);
+    if (matchingTimes) {
+      setError(`${shiftNames[matchingTimes[0]]} needs different start and end times.`);
+      return;
+    }
+    setBusy("save");
+    try {
+      const updated = await api(settingsPath, { ...requestOptions("PUT", {
+        ...draft, latitude: draft.latitude === "" ? null : draft.latitude,
+        longitude: draft.longitude === "" ? null : draft.longitude,
+      }), silentError: true });
+      setDraft(updated);
+      onSaved(updated);
+      setSaved(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(""); }
+  }
+
+  return <form className="panel control-stack" onSubmit={save}>
+    <div>
+      <h3>Attendance location</h3>
+      <p className="muted">Set the office pin and allowed distance for Check In and Check Out.</p>
+    </div>
+    <fieldset disabled={Boolean(busy)} className="control-form control-settings-fields">
+      <label>Address (optional)<input value={draft.address} maxLength={250} onChange={(e) => change({ address: e.target.value })} /></label>
+      <div className="control-form-grid">
+        <label>Latitude<input type="number" min="-90" max="90" step="any" value={draft.latitude ?? ""} onChange={(e) => change({ latitude: e.target.value })} /></label>
+        <label>Longitude<input type="number" min="-180" max="180" step="any" value={draft.longitude ?? ""} onChange={(e) => change({ longitude: e.target.value })} /></label>
+        <label>Radius (metres)<input type="number" min="1" max="2147483647" required value={draft.radius_m} onChange={(e) => change({ radius_m: e.target.value })} /></label>
+      </div>
+      <div className="control-actions">
+        <button type="button" className="secondary-button" onClick={useCurrentLocation}><MapPin size={15} />{busy === "location" ? "Getting GPS…" : "Use current location"}</button>
+        <LocationLink location={draft} label="Preview office pin" />
+      </div>
+    </fieldset>
+    <div>
+      <h3>Shift timings</h3>
+      <p className="muted">UK time · An end time before the start time means the shift ends the next day.</p>
+    </div>
+    <fieldset disabled={Boolean(busy)} className="control-form control-settings-fields">
+      {Object.entries(draft.shifts).map(([code, timing]) => <div className="control-timing-row" key={code}>
+        <strong>{code} · {shiftNames[code]}</strong>
+        {["start", "end"].map((field) => <label key={field}>
+          {field === "start" ? "Start time" : "End time"}
+          <input type="time" required value={timing[field]} aria-label={shiftNames[code] + " " + field + " time"} onChange={(event) => {
+            change({ shifts: { ...draft.shifts, [code]: { ...timing, [field]: event.target.value } } });
+          }} />
+        </label>)}
+      </div>)}
+    </fieldset>
+    {error && <p className="error" role="alert">{error}</p>}
+    {saved && <p className="success" role="status">Attendance settings saved.</p>}
+    <div><button type="submit" className="primary-button" disabled={Boolean(busy)}>{busy === "save" ? "Saving…" : "Save attendance settings"}</button></div>
+  </form>;
+}
+
+export function ControlTeamAdmin({ api, Photo, FilePreview }) {
   const [page, setPage] = useState("team");
   const [adding, setAdding] = useState(false);
   const [selected, setSelected] = useState(null);
   const team = useControlQuery(api, teamPath, page === "team");
   const detail = useControlQuery(api, teamPath + selected + "/", Boolean(selected && page === "team"));
   const requests = useControlQuery(api, officeRequestsPath, page === "requests");
+  const settings = useControlQuery(api, settingsPath, page === "settings");
+  const client = useQueryClient();
   const members = [...(team.data || [])].sort((a, b) => Number(Boolean(b.checked_in_at)) - Number(Boolean(a.checked_in_at)) || Number(b.is_active) - Number(a.is_active));
   const checkedIn = members.filter((member) => member.is_active && member.checked_in_at).length;
   return <div className="control-stack">
@@ -324,8 +597,13 @@ export function ControlTeamAdmin({ api, Photo }) {
         <button type="button" className="primary-button" onClick={() => { setPage("team"); setAdding(true); }}><UserPlus size={16} /> Add member</button>
       </div>
     </header>
-    <ControlTabs label="Control Team management" page={page} onChange={setPage} tabs={[["team", "Members & attendance"], ["requests", "Leave & replacement"]]} />
-    {page === "requests" ? <RequestList query={requests} api={api} office /> : <>
+    <ControlTabs label="Control Team management" page={page} onChange={setPage}
+      tabs={[["team", "Members & attendance"], ["requests", "Leave & replacement"], ["settings", "Attendance settings"]]} />
+    {page === "settings" && (settings.data ?
+      <AttendanceSettingsForm settings={settings.data} api={api} onSaved={(data) => client.setQueryData(queryKey(settingsPath), data)} /> :
+      <QueryStatus query={settings} label="attendance settings" />)}
+    {page === "requests" && <RequestList query={requests} api={api} office />}
+    {page === "team" && <>
       {adding && <AddMemberForm api={api} onClose={(member) => { setAdding(false); if (member) setSelected(member.id); }} />}
       {!team.data ? <QueryStatus query={team} label="team members" /> : <>
         <div className="control-metrics">
@@ -333,17 +611,17 @@ export function ControlTeamAdmin({ api, Photo }) {
           <Metric icon={Clock3} label="Checked in now" value={checkedIn} />
         </div>
         <section className="panel">
-          <div className="panel-header"><div><h3>Members</h3><p className="muted">Checked-in members appear first. Current hours include time worked since check-in.</p></div></div>
+          <div className="panel-header"><div><h3>Members</h3><p className="muted">Checked-in members appear first.</p></div></div>
           {members.length ? <div className="control-member-list">{members.map((member) => <Fragment key={member.id}><article className="control-member">
             <div className="control-identity"><Avatar member={member} Photo={Photo} /><div>
               <strong>{member.name}</strong>
               <p className="muted">{member.profile_complete ? member.email : "Profile setup pending"}</p>
             </div></div>
-            <div><MemberStatus member={member} />{member.checked_in_at && <small className="table-subtext">{formatUkDateTime(member.checked_in_at)}</small>}</div>
-            <div className="control-member-hours"><span><small>This week</small><strong>{duration(member.weekly_seconds)}</strong></span><span><small>This month</small><strong>{duration(member.monthly_seconds)}</strong></span></div>
+            <div><div className="control-actions"><MemberStatus member={member} /><LateBadge minutes={member.late_minutes} /></div>
+              {member.checked_in_at && <small className="table-subtext">{formatUkDateTime(member.checked_in_at)}</small>}</div>
             <button type="button" className="secondary-button" aria-pressed={selected === member.id} onClick={() => setSelected(selected === member.id ? null : member.id)}>View details</button>
           </article>
-          {selected === member.id && (detail.data ? <MemberDetail member={detail.data} api={api} onClose={() => setSelected(null)} /> : <QueryStatus query={detail} label="member details" />)}
+          {selected === member.id && (detail.data ? <MemberDetail member={detail.data} api={api} FilePreview={FilePreview} onClose={() => setSelected(null)} /> : <QueryStatus query={detail} label="member details" />)}
           </Fragment>)}</div> : <p className="muted">No Control Team members yet.</p>}
         </section>
       </>}

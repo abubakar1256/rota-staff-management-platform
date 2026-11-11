@@ -4,7 +4,7 @@ from email.utils import parseaddr
 import hashlib
 import json
 import mimetypes
-from math import asin, ceil, cos, isfinite, radians, sin, sqrt
+from math import ceil, isfinite
 import logging
 import os
 import re
@@ -35,6 +35,8 @@ from rest_framework.decorators import action, api_view, authentication_classes, 
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+from .geo import haversine_distance_m
 
 logger = logging.getLogger(__name__)
 from reportlab.lib import colors
@@ -134,14 +136,6 @@ def google_drive_status(request):
         "root_folder_id": item.root_folder_id if item else "",
         "redirect_uri": google_drive_redirect_uri(request),
     })
-
-
-def haversine_distance_m(latitude_a, longitude_a, latitude_b, longitude_b):
-    earth_radius_m = 6371000
-    lat_delta = radians(latitude_b - latitude_a)
-    lon_delta = radians(longitude_b - longitude_a)
-    a = sin(lat_delta / 2) ** 2 + cos(radians(latitude_a)) * cos(radians(latitude_b)) * sin(lon_delta / 2) ** 2
-    return earth_radius_m * 2 * asin(sqrt(min(1, max(0, a))))
 
 
 def send_transactional_email(subject, message, recipient):

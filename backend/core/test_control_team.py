@@ -1,16 +1,28 @@
+from contextlib import closing
 from datetime import datetime, timezone
-from io import BytesIO
+from io import BytesIO, StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import TestCase
 from PIL import Image
 from rest_framework.test import APIClient
 
-from .models import ControlAttendance, ControlTeamMember, Employee, UserProfile
+from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMember, Employee, UserProfile
+
+
+SETTINGS_URL = "/api/control/attendance/settings/"
+OFFICE_GPS = {"latitude": 51.5074, "longitude": -0.1278, "accuracy_m": 12}
+
+
+def picture(color="blue"):
+    buffer = BytesIO()
+    Image.new("RGB", (35, 45), color).save(buffer, format="PNG")
+    return SimpleUploadedFile("portrait.png", buffer.getvalue(), content_type="image/png")
 
 
 class ControlTeamTests(TestCase):
@@ -35,20 +47,25 @@ class ControlTeamTests(TestCase):
         response = self.portal.post("/api/control/login/", self.credentials, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.portal.credentials(HTTP_AUTHORIZATION=f"Token {response.data['token']}")
+        self.enterContext(patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 11, 9, tzinfo=timezone.utc)))
+        self.settings_record = ControlAttendanceSettings.objects.create(pk=1, latitude=51.5074, longitude=-0.1278)
 
     def complete_profile(self):
-        buffer = BytesIO()
-        Image.new("RGB", (35, 45), "blue").save(buffer, format="PNG")
         response = self.portal.put("/api/control/profile/", {
             "name": "Control Member", "phone": "01234567890",
-            "photo": SimpleUploadedFile("portrait.png", buffer.getvalue(), content_type="image/png"),
+            "photo": picture(),
         }, format="multipart")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(response.data["profile_complete"])
         return response.data["photo_url"]
 
-    def mark(self, action):
-        return self.portal.post("/api/control/attendance/", {"action": action}, format="json")
+    def mark(self, action, **fields):
+        shift = {"shift": "M"} if action == "check_in" else {}
+        return self.portal.post(
+            "/api/control/attendance/",
+            {"action": action, "photo": picture(), **OFFICE_GPS, **shift, **fields},
+            format="multipart",
+        )
 
     def test_portal_is_scoped_and_photo_is_private(self):
         photo_url = self.complete_profile()
@@ -82,13 +99,56 @@ class ControlTeamTests(TestCase):
             self.assertEqual(listing[0]["checked_in_at"], start)
             self.assertEqual(self.member.attendance.count(), 1)
         end = start.replace(hour=10, minute=32)
+        entry_id = self.member.attendance.get().pk
         with patch("core.control_team.timezone.now", return_value=end):
             for _ in range(2):
-                response = self.mark("check_out")
+                response = self.mark("check_out", attendance_id=entry_id)
+                self.assertEqual(response.status_code, 200, response.data)
                 self.assertIsNone(response.data["checked_in_at"])
                 self.assertEqual(response.data["weekly_seconds"], 92 * 60)
                 self.assertEqual(response.data["monthly_seconds"], 92 * 60)
         self.assertEqual(self.member.attendance.get().checked_out_at, end)
+
+    def test_attendance_photos_are_required_and_private(self):
+        self.complete_profile()
+        path = "/api/control/attendance/"
+        invalid_photo = SimpleUploadedFile("fake.jpg", b"not an image", content_type="image/jpeg")
+        for payload in [{"action": "check_in"}, {"action": "check_in", "photo": invalid_photo}]:
+            result = self.portal.post(path, payload, format="multipart")
+            self.assertEqual(result.status_code, 400)
+            self.assertIn("photo", result.data)
+        self.assertFalse(self.member.attendance.exists())
+
+        checked_in = self.mark("check_in", photo=picture("red")).data["attendance"][0]
+        self.assertIsNone(checked_in["check_out_photo_url"])
+        result = self.portal.post(path, {"action": "check_out", "attendance_id": checked_in["id"]}, format="multipart")
+        self.assertEqual(result.status_code, 400)
+        self.assertIn("photo", result.data)
+        self.assertEqual(self.mark("check_out", attendance_id=checked_in["id"] + 1).status_code, 409)
+        self.assertIsNone(self.member.attendance.get().checked_out_at)
+        checked_out = self.mark("check_out", attendance_id=checked_in["id"], photo=picture("green"))
+        self.assertEqual(checked_out.status_code, 200, checked_out.data)
+
+        other_user = get_user_model().objects.create_user("another_member")
+        UserProfile.objects.create(user=other_user, role=UserProfile.Role.CONTROL_TEAM)
+        other = APIClient()
+        other.force_authenticate(other_user)
+        entry = self.office.get(f"/api/control/team/{self.member.pk}/").data["attendance"][0]
+        self.assertEqual(entry, checked_out.data["attendance"][0])
+        photos = []
+        for field in ("check_in_photo_url", "check_out_photo_url"):
+            url = entry[field]
+            self.assertEqual(APIClient().get(url).status_code, 401)
+            self.assertEqual(other.get(url).status_code, 404)
+            for client in [self.portal, self.office]:
+                with closing(client.get(url)) as response:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response["Content-Type"], "image/jpeg")
+                    self.assertIn("no-store", response["Cache-Control"])
+                    content = b"".join(response.streaming_content)
+                    self.assertTrue(content.startswith(b"\xff\xd8"))
+            photos.append(content)
+        self.assertNotEqual(*photos)
 
     def test_hours_clip_at_london_week_and_month_boundaries(self):
         ControlAttendance.objects.create(
@@ -114,11 +174,92 @@ class ControlTeamTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         self.assertFalse(result.data["is_active"])
         self.assertTrue(result.data["attendance"][0]["closed_by_admin"])
+        self.assertIsNone(result.data["attendance"][0]["check_out_photo_url"])
         self.assertEqual(self.portal.get("/api/control/profile/").status_code, 401)
         self.assertEqual(self.portal.post("/api/control/login/", self.credentials, format="json").status_code, 400)
         self.assertEqual(self.office.patch(path, {"is_active": True}, format="json").status_code, 200)
         self.assertEqual(self.portal.post("/api/control/login/", self.credentials, format="json").status_code, 200)
         self.assertEqual(self.member.attendance.count(), 1)
+
+    def test_office_edits_settings_and_members_can_only_read_them(self):
+        self.settings_record.delete()
+        config = self.portal.get(SETTINGS_URL).data
+        self.assertIsNone(config["latitude"])
+        self.assertEqual(config["shifts"], {
+            "M": {"start": "07:00", "end": "17:00"},
+            "D": {"start": "11:00", "end": "21:00"},
+            "E": {"start": "13:00", "end": "23:00"},
+            "N": {"start": "22:00", "end": "08:00"},
+        })
+        config.update(address="Control office", latitude=51.5074, longitude=-0.1278, radius_m=50)
+        self.assertEqual(self.portal.put(SETTINGS_URL, config, format="json").status_code, 403)
+        self.assertEqual(self.office.put(SETTINGS_URL, {**config, "radius_m": 0}, format="json").status_code, 400)
+        self.assertEqual(self.office.put(SETTINGS_URL, {**config, "longitude": None}, format="json").status_code, 400)
+        self.complete_profile()
+        self.assertEqual(self.mark("check_in").status_code, 400)
+        config["shifts"]["M"]["start"] = "09:00"
+        saved = self.office.put(SETTINGS_URL, config, format="json")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data, self.portal.get(SETTINGS_URL).data)
+        entry = self.mark("check_in").data["attendance"][0]
+        self.assertEqual(entry["late_minutes"], 0)
+        self.assertEqual(entry["shift_name"], "Morning")
+
+    def test_manual_check_in_and_out_enforce_radius_and_record_their_own_location(self):
+        self.complete_profile()
+        path = "/api/control/attendance/"
+        incomplete = self.portal.post(path, {"action": "check_in", "shift": "M", "photo": picture()}, format="multipart")
+        self.assertEqual(incomplete.status_code, 400)
+        self.assertIn("latitude", incomplete.data)
+        for gps in [{"latitude": "NaN"}, {"latitude": 51.52}, {"accuracy_m": 151}]:
+            self.assertEqual(self.mark("check_in", **gps).status_code, 400)
+        self.assertFalse(self.member.attendance.exists())
+
+        checked_in = self.mark("check_in", latitude=51.5075)
+        self.assertEqual(checked_in.status_code, 200, checked_in.data)
+        entry = checked_in.data["attendance"][0]
+        self.assertEqual(entry["late_minutes"], 120)
+        self.assertEqual(entry["check_in_location"]["latitude"], 51.5075)
+        self.assertEqual(self.mark("check_out", attendance_id=entry["id"], latitude=51.52).status_code, 400)
+        self.assertIsNone(self.member.attendance.get().checked_out_at)
+        with patch("core.control_team.haversine_distance_m", return_value=150.004):
+            self.assertEqual(self.mark("check_out", attendance_id=entry["id"]).status_code, 400)
+        with patch("core.control_team.haversine_distance_m", return_value=150):
+            checked_out = self.mark("check_out", attendance_id=entry["id"])
+        self.assertEqual(checked_out.status_code, 200, checked_out.data)
+        self.assertEqual(checked_out.data["attendance"][0]["check_out_location"], {
+            **OFFICE_GPS, "distance_m": 150, "radius_m": 150,
+        })
+
+    def test_overnight_checkout_deadline_survives_shift_edit_and_runs_from_cron(self):
+        self.complete_profile()
+        # Check in after UK midnight on the night the clocks move forward.
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc)):
+            checked_in = self.mark("check_in", shift="N")
+        self.assertEqual(checked_in.status_code, 200, checked_in.data)
+        entry = self.member.attendance.get()
+        self.assertEqual(entry.scheduled_start_at, datetime(2026, 3, 28, 22, tzinfo=timezone.utc))
+        self.assertEqual(entry.scheduled_end_at, datetime(2026, 3, 29, 7, tzinfo=timezone.utc))
+        deadline = datetime(2026, 3, 29, 9, tzinfo=timezone.utc)
+        self.assertEqual(entry.auto_checkout_at, deadline)
+        self.settings_record.shifts["N"]["end"] = "09:00"
+        self.settings_record.save(update_fields=["shifts"])
+
+        with patch("core.control_team.timezone.now", return_value=deadline.replace(hour=8, minute=59)):
+            call_command("check_location_tracking", stdout=StringIO())
+        entry.refresh_from_db()
+        self.assertIsNone(entry.checked_out_at)
+        with patch("core.control_team.timezone.now", return_value=deadline.replace(minute=3)):
+            call_command("check_location_tracking", stdout=StringIO())
+            call_command("check_location_tracking", stdout=StringIO())
+            member = self.portal.get("/api/control/profile/").data
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_out_at, deadline)
+        self.assertTrue(entry.auto_checked_out)
+        self.assertFalse(entry.check_out_photo)
+        self.assertIsNone(entry.check_out_location)
+        self.assertIsNone(member["checked_in_at"])
+        self.assertTrue(member["attendance"][0]["auto_checked_out"])
 
     def test_leave_and_replacement_requests_are_reviewed_by_admin(self):
         self.complete_profile()

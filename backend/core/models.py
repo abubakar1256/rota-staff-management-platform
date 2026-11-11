@@ -38,16 +38,51 @@ class ControlTeamMember(models.Model):
         return bool(self.name and self.phone and self.photo)
 
 
+def default_control_shifts():
+    return {
+        "M": {"start": "07:00", "end": "17:00"},
+        "D": {"start": "11:00", "end": "21:00"},
+        "E": {"start": "13:00", "end": "23:00"},
+        "N": {"start": "22:00", "end": "08:00"},
+    }
+
+
+class ControlAttendanceSettings(models.Model):
+    address = models.CharField(max_length=250, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    radius_m = models.PositiveIntegerField(default=150)
+    shifts = models.JSONField(default=default_control_shifts)
+
+
 class ControlAttendance(models.Model):
+    class Shift(models.TextChoices):
+        MORNING = "M", "Morning"
+        MID_DAY = "D", "Mid-day"
+        EVENING = "E", "Evening"
+        NIGHT = "N", "Night"
+
     member = models.ForeignKey(ControlTeamMember, on_delete=models.PROTECT, related_name="attendance")
     checked_in_at = models.DateTimeField()
     checked_out_at = models.DateTimeField(null=True, blank=True)
+    check_in_photo = models.ImageField(upload_to="control-team/attendance/", blank=True)
+    check_out_photo = models.ImageField(upload_to="control-team/attendance/", blank=True)
+    check_in_location = models.JSONField(null=True, blank=True)
+    check_out_location = models.JSONField(null=True, blank=True)
+    shift = models.CharField(max_length=1, choices=Shift.choices, blank=True)
+    scheduled_start_at = models.DateTimeField(null=True, blank=True)
+    scheduled_end_at = models.DateTimeField(null=True, blank=True)
+    auto_checkout_at = models.DateTimeField(null=True, blank=True)
+    auto_checked_out = models.BooleanField(default=False)
     closed_by_admin = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["-checked_in_at", "-pk"]
         constraints = [
             models.UniqueConstraint(fields=["member"], condition=models.Q(checked_out_at__isnull=True), name="control_one_open_attendance"),
+        ]
+        indexes = [
+            models.Index(fields=["auto_checkout_at"], condition=models.Q(checked_out_at__isnull=True), name="control_open_checkout_due"),
         ]
 
 
