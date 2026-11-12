@@ -20,6 +20,7 @@
 .modal-card.control-capture { width: min(560px, calc(100% - 28px)); border: 0; border-radius: 14px; margin: auto; }
 .control-capture::backdrop { background: rgb(15 23 42 / 55%); }
 .control-capture > * + * { margin-top: 12px; }
+.control-capture .control-camera-mirrored { transform: scaleX(-1); }
 .control-history { container-type: inline-size; }
 .control-history-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 16px; }
 .control-history-icon {

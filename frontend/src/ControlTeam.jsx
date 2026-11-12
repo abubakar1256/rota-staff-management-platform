@@ -282,11 +282,13 @@ const attendanceCameraErrors = {
   AbortError: "The camera was interrupted. Close any apps or tabs using it, then retry.",
 };
 
-function AttendanceCamera({ onCapture }) {
+function AttendanceCamera({ facing, onFacingChange, onCapture }) {
   const videoRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [mirrored, setMirrored] = useState(facing === "user");
+  const [capturing, setCapturing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -299,18 +301,34 @@ function AttendanceCamera({ onCapture }) {
         return;
       }
       try {
+        const rear = facing === "environment";
+        if (rear && mediaDevices.getSupportedConstraints && !mediaDevices.getSupportedConstraints().facingMode) {
+          setError("This browser cannot select a back camera. Choose Front camera to continue.");
+          return;
+        }
+        const facingMode = rear ? { exact: facing } : { ideal: facing };
         try {
-          stream = await mediaDevices.getUserMedia({ video: { facingMode: { ideal: "user" } }, audio: false });
+          stream = await mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
         } catch (err) {
-          if (!active || !["NotFoundError", "OverconstrainedError", "NotReadableError", "AbortError"].includes(err.name)) throw err;
+          if (!active || rear || !["NotFoundError", "OverconstrainedError", "NotReadableError", "AbortError"].includes(err.name)) throw err;
           stream = await mediaDevices.getUserMedia({ video: true, audio: false });
         }
       } catch (err) {
-        if (active) setError(attendanceCameraErrors[err.name] || "Could not open the camera. Try again in Chrome or another browser with camera access.");
+        if (active) {
+          const rearUnavailable = facing === "environment" && ["NotFoundError", "OverconstrainedError"].includes(err.name);
+          setError(rearUnavailable
+            ? "No back camera is available. Choose Front camera to continue."
+            : attendanceCameraErrors[err.name] || "Could not open the camera. Try again in Chrome or another browser with camera access.");
+        }
         return;
       }
-      if (active) video.srcObject = stream;
-      else stream.getTracks().forEach((track) => track.stop());
+      if (!active) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      const actualFacing = stream.getVideoTracks()[0]?.getSettings?.()?.facingMode;
+      setMirrored((actualFacing || facing) === "user");
+      video.srcObject = stream;
     }
     start();
     return () => {
@@ -318,40 +336,59 @@ function AttendanceCamera({ onCapture }) {
       stream?.getTracks().forEach((track) => track.stop());
       video.srcObject = null;
     };
-  }, [attempt]);
+  }, [attempt, facing]);
 
   function capture() {
     const video = videoRef.current;
-    if (!video.videoWidth || !video.videoHeight) return;
-    setReady(false);
-    setError("");
+    const stream = video.srcObject;
+    if (!ready || capturing || !stream || !video.videoWidth || !video.videoHeight) return;
     const scale = Math.min(1, 1000 / Math.max(video.videoWidth, video.videoHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setError("Could not capture the photo. Try again.");
+      return;
+    }
+    setCapturing(true);
+    setError("");
+    if (mirrored) {
+      context.translate(canvas.width, 0);
+      context.scale(-1, 1);
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
+      if (videoRef.current?.srcObject !== stream) return;
       if (blob) onCapture(blob);
       else {
         setError("Could not capture the photo. Try again.");
-        setReady(true);
+        setCapturing(false);
       }
     }, "image/jpeg", 0.88);
   }
 
   return <>
-    <video ref={videoRef} autoPlay muted playsInline aria-label="Live camera preview" className="camera-preview" onPlaying={() => setReady(true)} />
+    <div className="control-tabs" role="group" aria-label="Camera selection">
+      {[["user", "Front camera"], ["environment", "Back camera"]].map(([mode, label]) => (
+        <button type="button" className="secondary-button" key={mode} aria-pressed={facing === mode}
+          disabled={capturing || (!ready && !error)} onClick={() => onFacingChange(mode)}>{label}</button>
+      ))}
+    </div>
+    <video ref={videoRef} autoPlay muted playsInline aria-label="Live camera preview"
+      className={mirrored ? "camera-preview control-camera-mirrored" : "camera-preview"} onPlaying={() => setReady(true)} />
     {!ready && !error && <p className="muted" role="status">Preparing camera…</p>}
     {error && <p className="error" role="alert">{error}</p>}
     <div className="control-actions">
       {error && !ready ? <button type="button" className="secondary-button" onClick={() => { setError(""); setAttempt(attempt + 1); }}>Retry camera</button> :
-        <button type="button" className="primary-button" disabled={!ready} onClick={capture}><Camera size={16} /> Take photo</button>}
+        <button type="button" className="primary-button" disabled={!ready || capturing} onClick={capture}><Camera size={16} /> Take photo</button>}
     </div>
   </>;
 }
 
 function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
   const dialogRef = useRef(null);
+  const [facing, setFacing] = useState("user");
   const [photo, setPhoto] = useState(null);
   const [preview, setPreview] = useState("");
   const [busy, setBusy] = useState("");
@@ -399,7 +436,7 @@ function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
         <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{stale ? "Close" : "Cancel"}</button>
       </div>
     </> : <>
-      <AttendanceCamera onCapture={setPhoto} />
+      <AttendanceCamera key={facing} facing={facing} onFacingChange={setFacing} onCapture={setPhoto} />
       <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
     </>}
   </dialog>;
