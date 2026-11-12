@@ -1,6 +1,9 @@
 export const UK_TIME_ZONE = "Europe/London";
 
 const formatters = new Map();
+const shortUkDateTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: UK_TIME_ZONE, day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
 
 export function ukDate(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: UK_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
@@ -14,6 +17,10 @@ export function formatUkAttendanceTime(value) {
 
 export function formatUkDateTime(value) {
   return value ? new Intl.DateTimeFormat("en-GB", { timeZone: UK_TIME_ZONE, day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" }).format(new Date(value)) : "—";
+}
+
+export function formatUkShortDateTime(value) {
+  return value ? shortUkDateTime.format(new Date(value)) : "—";
 }
 
 export function formatDashboardClock(value, timeZone = UK_TIME_ZONE) {

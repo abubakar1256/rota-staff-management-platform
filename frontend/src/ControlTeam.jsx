@@ -5,7 +5,7 @@ import AdminNotifications from "./AdminNotifications";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { readCurrentLocation } from "./attendanceGeofence";
 import { googleSiteLinks, sitePoint } from "./siteCoordinates";
-import { formatUkAttendanceTime, formatUkDateTime, ukDate } from "./ukTime";
+import { formatUkAttendanceTime, formatUkDateTime, formatUkShortDateTime, ukDate } from "./ukTime";
 import "./controlTeam.css";
 
 const root = "/control";
@@ -406,18 +406,23 @@ function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
 }
 
 function AssignedShifts({ shifts, canCheckIn, hasOfficePin, onCheckIn }) {
-  return <section className="panel">
+  return <section className="panel control-shifts">
     <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time</p></div></div>
-    {shifts.length ? <div className="control-member-list">{shifts.map((shift) => <article className="control-member" key={shift.id}>
-      <div><strong>{shift.shift_name}</strong>
-        <small className="table-subtext">{formatUkDateTime(shift.scheduled_start_at)} – {formatUkDateTime(shift.scheduled_end_at)}</small>
-      </div>
-      <div><span className={`status-pill ${shift.started ? "active" : "neutral"}`}>{shift.status}</span></div>
-      {shift.status === "Available" && <button type="button" className="primary-button"
-        disabled={!canCheckIn || (shift.shift !== NIGHT_SHIFT && !hasOfficePin)} onClick={() => onCheckIn(shift)}>
-        <Camera size={15} aria-hidden="true" /> Check In
-      </button>}
-    </article>)}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
+    {shifts.length ? <div className="control-member-list">{shifts.map((shift) => {
+      const available = shift.status === "Available";
+      return <article className={`control-shift-card${available ? " has-check-in" : ""}`} data-shift={shift.shift} key={shift.id}>
+        <strong className="control-shift-name">{shift.shift_name}</strong>
+        <div className="control-shift-times">
+          <time dateTime={shift.scheduled_start_at}>{formatUkShortDateTime(shift.scheduled_start_at)}</time>
+          {" "}<span className="control-shift-end">– <time dateTime={shift.scheduled_end_at}>{formatUkShortDateTime(shift.scheduled_end_at)}</time></span>
+        </div>
+        <span className={`status-pill control-shift-status ${available || shift.started ? "active" : "neutral"}`}>{shift.status}</span>
+        {available && <button type="button" className="primary-button control-shift-check-in"
+          disabled={!canCheckIn || (shift.shift !== NIGHT_SHIFT && !hasOfficePin)} onClick={() => onCheckIn(shift)}>
+          <Camera size={15} aria-hidden="true" /> Check In
+        </button>}
+      </article>;
+    })}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
   </section>;
 }
 

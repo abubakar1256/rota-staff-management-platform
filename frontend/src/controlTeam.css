@@ -97,25 +97,25 @@
 .control-assignment-days button[aria-pressed="true"] { color: #284fae; background: #eef3ff; border-color: #9cb2f4; }
 .control-assignment-note, .control-assignment-list { grid-column: 1 / -1; margin: 0; }
 .control-assignment-list { list-style: none; padding: 0; display: grid; gap: 5px; }
-.control-assignment-list[data-shift="M"] {
+.control-assignment-list[data-shift="M"], .control-shift-card[data-shift="M"] {
   --assignment-surface: #fffaeb;
   --assignment-accent: #b67609;
   --assignment-day-background: #ffedb9;
   --assignment-day-text: #694400;
 }
-.control-assignment-list[data-shift="D"] {
+.control-assignment-list[data-shift="D"], .control-shift-card[data-shift="D"] {
   --assignment-surface: #edf9f1;
   --assignment-accent: #268351;
   --assignment-day-background: #d5efde;
   --assignment-day-text: #1b5936;
 }
-.control-assignment-list[data-shift="E"] {
+.control-assignment-list[data-shift="E"], .control-shift-card[data-shift="E"] {
   --assignment-surface: #fff4ee;
   --assignment-accent: #c45d25;
   --assignment-day-background: #ffe1d0;
   --assignment-day-text: #813709;
 }
-.control-assignment-list[data-shift="N"] {
+.control-assignment-list[data-shift="N"], .control-shift-card[data-shift="N"] {
   --assignment-surface: #eef2ff;
   --assignment-accent: #455f9b;
   --assignment-day-background: #dce5fa;
@@ -152,6 +152,27 @@
 .control-form textarea { resize: vertical; }
 .control-profile-photo { display: flex; align-items: center; gap: 14px; width: min(100%, 460px); }
 .control-empty { margin-top: 8px; }
+.control-shifts { container: control-shifts / inline-size; }
+.control-shift-card {
+  display: grid; grid-template-columns: minmax(105px, .7fr) minmax(0, 1.6fr) auto;
+  align-items: center; gap: 10px 16px; padding: 13px 15px;
+  border: 1px solid #dfe6f1; border-inline-start: 4px solid var(--assignment-accent, #5578cb);
+  border-radius: 10px; background: var(--assignment-surface, #f4f7fc);
+}
+.control-shift-card.has-check-in { grid-template-columns: minmax(105px, .7fr) minmax(0, 1.6fr) auto auto; }
+.control-shift-name { color: var(--assignment-day-text, #243956); font-size: 15px; }
+.control-shift-times { color: #24334f; font-size: 14px; font-weight: 700; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.control-shift-times time, .control-shift-end { white-space: nowrap; }
+.control-shift-status.status-pill { justify-self: end; padding: 5px 9px; font-size: 11px; }
+.control-shift-status.status-pill.neutral { color: #475974; background: #eaf0f8; }
+.control-shift-status.status-pill.active { color: #176750; }
+.control-shift-check-in { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 42px; white-space: nowrap; }
+@container control-shifts (max-width: 560px) {
+  .control-shift-card, .control-shift-card.has-check-in { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; padding: 11px 12px; }
+  .control-shift-status { grid-column: 2; grid-row: 1; }
+  .control-shift-times, .control-shift-check-in { grid-column: 1 / -1; }
+  .control-shift-check-in { width: 100%; min-height: 44px; margin-top: 4px; }
+}
 .control-member-list { display: grid; gap: 8px; }
 .control-member {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(125px, .45fr) auto;
