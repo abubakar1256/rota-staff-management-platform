@@ -116,6 +116,11 @@ function ShiftDetails({ entry }) {
   </small>;
 }
 
+function WorkedStartNote({ entry }) {
+  if (!entry?.worked_start_at || Date.parse(entry.worked_start_at) <= Date.parse(entry.checked_in_at)) return null;
+  return <small className="table-subtext">Hours start at {formatUkShortDateTime(entry.worked_start_at)}</small>;
+}
+
 function AttendanceHistory({ member, FilePreview }) {
   return <section className="panel control-history">
     <header className="control-history-heading">
@@ -133,6 +138,7 @@ function AttendanceHistory({ member, FilePreview }) {
           <span className="control-history-label" aria-hidden="true">Check in</span>
           <time dateTime={entry.checked_in_at}>{formatUkDateTime(entry.checked_in_at)}</time>
           <ShiftDetails entry={entry} />
+          <WorkedStartNote entry={entry} />
           <LateBadge minutes={entry.late_minutes} />
           <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
         </td>
@@ -141,12 +147,12 @@ function AttendanceHistory({ member, FilePreview }) {
           {entry.checked_out_at ? <time dateTime={entry.checked_out_at}>{formatUkDateTime(entry.checked_out_at)}</time> :
             <span className="status-pill active">In progress</span>}
           {entry.closed_by_admin && <small className="control-history-note">Closed by admin</small>}
-          {entry.auto_checked_out && <small className="control-history-note">Automatic checkout</small>}
+          {entry.auto_checked_out && <small className="control-history-note">Automatic Check Out. No manual Check Out recorded.</small>}
           <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
         </td>
         <td role="cell" className="control-history-duration">
           <span className="control-history-label" aria-hidden="true">Duration</span>
-          <strong>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.checked_in_at)) / 1000) : "—"}</strong>
+          <strong>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.worked_start_at || entry.checked_in_at)) / 1000) : "—"}</strong>
         </td>
       </tr>)}</tbody>
     </table></div> : <p className="muted control-empty">No attendance recorded yet.</p>}
@@ -444,7 +450,7 @@ function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
 
 function AssignedShifts({ shifts, canCheckIn, hasOfficePin, onCheckIn }) {
   return <section className="panel control-shifts">
-    <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time</p></div></div>
+    <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time. Check In opens 30 minutes before each shift.</p></div></div>
     {shifts.length ? <div className="control-member-list">{shifts.map((shift) => {
       const available = shift.status === "Available";
       return <article className={`control-shift-card${available ? " has-check-in" : ""}`} data-shift={shift.shift} key={shift.id}>
@@ -537,6 +543,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
               <h3>{member.name}</h3><div className="control-actions"><MemberStatus member={member} /><LateBadge minutes={member.late_minutes} /></div>
               {member.checked_in_at && <p className="muted control-since">Since {formatUkDateTime(member.checked_in_at)}</p>}
               <ShiftDetails entry={current} />
+              <WorkedStartNote entry={current} />
               {current?.auto_checkout_at && <small className="table-subtext">Auto checkout at {formatUkDateTime(current.auto_checkout_at)}</small>}
             </div></div>
             {current && <button type="button" className="primary-button" disabled={current.shift !== NIGHT_SHIFT && !officePin}

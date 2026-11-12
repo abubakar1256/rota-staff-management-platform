@@ -327,16 +327,16 @@ class ControlTeamTests(TestCase):
         self.assertIsNone(entry.check_in_location)
         self.assertEqual(entry.scheduled_start_at, datetime(2026, 3, 28, 22, tzinfo=timezone.utc))
         self.assertEqual(entry.scheduled_end_at, datetime(2026, 3, 29, 7, tzinfo=timezone.utc))
-        deadline = datetime(2026, 3, 29, 9, tzinfo=timezone.utc)
+        deadline = datetime(2026, 3, 29, 7, 30, tzinfo=timezone.utc)
         self.assertEqual(entry.auto_checkout_at, deadline)
         self.settings_record.shifts["N"]["end"] = "09:00"
         self.settings_record.save(update_fields=["shifts"])
 
-        with patch("core.control_team.timezone.now", return_value=deadline.replace(hour=8, minute=59)):
+        with patch("core.control_team.timezone.now", return_value=deadline.replace(minute=29, second=59)):
             call_command("check_location_tracking", stdout=StringIO())
         entry.refresh_from_db()
         self.assertIsNone(entry.checked_out_at)
-        with patch("core.control_team.timezone.now", return_value=deadline.replace(minute=3)):
+        with patch("core.control_team.timezone.now", return_value=deadline.replace(minute=33)):
             call_command("check_location_tracking", stdout=StringIO())
             call_command("check_location_tracking", stdout=StringIO())
             member = self.portal.get("/api/control/profile/").data
@@ -350,7 +350,9 @@ class ControlTeamTests(TestCase):
         for recipient in (self.member.user, None):
             alerts = Notification.objects.filter(link="control-team", user=recipient, title__endswith="Automatic Check Out")
             self.assertEqual(alerts.count(), 1)
-            self.assertIn("10:00 BST", alerts.get().message)
+            message = alerts.get().message
+            self.assertIn("08:30 BST", message)
+            self.assertIn("No manual Check Out was recorded.", message)
 
     def test_admin_assigns_reassigns_and_removes_without_exposing_other_members_shifts(self):
         user = get_user_model().objects.create_user("other_control")
@@ -393,7 +395,7 @@ class ControlTeamTests(TestCase):
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
         self.assertEqual(checked_in.data["attendance"][0]["late_minutes"], 120)
         entry = self.member.attendance.get()
-        self.assertEqual(entry.auto_checkout_at.hour, 19)
+        self.assertEqual(entry.auto_checkout_at, datetime(2026, 11, 11, 17, 30, tzinfo=timezone.utc))
         path = f"{ASSIGNMENTS_URL}{self.assignment_id}/"
         self.assertEqual(self.office.delete(path).status_code, 409)
         self.assertEqual(self.office.patch(path, {"member": self.member.pk}, format="json").status_code, 409)
@@ -408,6 +410,47 @@ class ControlTeamTests(TestCase):
         result = self.mark("check_out", attendance_id=entry.pk)
         self.assertEqual(result.status_code, 200, result.data)
         self.assertIsNone(result.data["checked_in_at"])
+
+    def test_early_check_in_records_arrival_but_counts_hours_from_shift_start(self):
+        self.complete_profile()
+        day = datetime(2026, 11, 11, tzinfo=timezone.utc)
+        with patch("core.control_team.timezone.now", return_value=day.replace(hour=6, minute=29, second=59)):
+            profile = self.portal.get("/api/control/profile/").data
+            self.assertEqual(profile["assigned_shifts"][0]["status"], "Upcoming")
+            self.assertEqual(self.mark("check_in").status_code, 409)
+        with patch("core.control_team.timezone.now", return_value=day.replace(hour=6, minute=30)):
+            profile = self.portal.get("/api/control/profile/").data
+            self.assertEqual(profile["assigned_shifts"][0]["status"], "Available")
+            result = self.mark("check_in")
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data["weekly_seconds"], 0)
+            self.assertEqual(result.data["monthly_seconds"], 0)
+            entry = result.data["attendance"][0]
+            self.assertEqual(entry["checked_in_at"], "2026-11-11T06:30:00Z")
+            self.assertEqual(entry["worked_start_at"], day.replace(hour=7))
+            self.assertEqual(entry["late_minutes"], 0)
+        with patch("core.control_team.timezone.now", return_value=day.replace(hour=17, minute=29)):
+            result = self.mark("check_out", attendance_id=entry["id"])
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertFalse(result.data["attendance"][0]["auto_checked_out"])
+            self.assertEqual(result.data["weekly_seconds"], (10 * 60 + 29) * 60)
+            self.assertEqual(result.data["monthly_seconds"], (10 * 60 + 29) * 60)
+            office_data = self.office.get(f"/api/control/team/{self.member.pk}/").data
+            self.assertEqual(office_data["weekly_seconds"], result.data["weekly_seconds"])
+
+    def test_weekly_shift_starting_after_midnight_allows_previous_day_check_in(self):
+        self.complete_profile()
+        self.settings_record.shifts["N"] = {"start": "00:10", "end": "03:00"}
+        self.settings_record.save(update_fields=["shifts"])
+        rule = self.office.post(WEEKLY_URL, {
+            "member": self.member.pk, "shift": "N", "weekdays": [3],
+        }, format="json")
+        self.assertEqual(rule.status_code, 201, rule.data)
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 11, 23, 40, tzinfo=timezone.utc)):
+            response = self.mark("check_in", weekly_assignment_id=rule.data["id"], shift_date="2026-11-12")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["weekly_seconds"], 0)
+        self.assertEqual(response.data["attendance"][0]["worked_start_at"], datetime(2026, 11, 12, 0, 10, tzinfo=timezone.utc))
 
     def test_weekly_roster_repeats_mixed_shifts_and_uses_assignment_for_check_in(self):
         def add(shift, days):
@@ -436,7 +479,7 @@ class ControlTeamTests(TestCase):
             self.assertEqual(result.data["attendance"][0]["late_minutes"], 120)
             entry = self.member.attendance.get()
             self.assertEqual(entry.scheduled_start_at, datetime(2027, 7, 7, 6, tzinfo=timezone.utc))
-            self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 18, tzinfo=timezone.utc))
+            self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 16, 30, tzinfo=timezone.utc))
         self.assertEqual(self.member.shift_assignments.count(), 2)
 
     def test_weekly_conflicts_across_sunday_and_dated_assignments(self):

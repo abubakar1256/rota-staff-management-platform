@@ -11,7 +11,8 @@ from .notifications import publish_control_notification
 
 
 LONDON = ZoneInfo("Europe/London")
-AUTO_CHECKOUT_GRACE = timedelta(hours=2)
+EARLY_CHECK_IN_WINDOW = timedelta(minutes=30)
+AUTO_CHECKOUT_GRACE = timedelta(minutes=30)
 
 
 def attendance_settings():
@@ -107,7 +108,7 @@ def assignment_status(assignment, now):
         return "Completed" if entry.checked_out_at else "Checked in"
     if now >= assignment.scheduled_end_at:
         return "Ended"
-    if assignment.shift_date > now.astimezone(LONDON).date():
+    if now < assignment.scheduled_start_at - EARLY_CHECK_IN_WINDOW:
         return "Upcoming"
     return "Available"
 
@@ -132,6 +133,10 @@ def minutes_late(entry):
         return max(0, ceil((entry.checked_in_at - entry.scheduled_start_at).total_seconds() / 60))
 
 
+def worked_start_at(entry):
+    return max(entry.checked_in_at, entry.scheduled_start_at or entry.checked_in_at)
+
+
 def notify_control_attendance(entry, event):
     late = (minutes_late(entry) or 0) if event == "check_in" else 0
     if event == "check_in":
@@ -146,6 +151,8 @@ def notify_control_attendance(entry, event):
     shift = f" for the {entry.get_shift_display()} shift" if entry.shift else ""
     details = f"{shift} at {recorded.astimezone(LONDON):%d %b %Y, %H:%M %Z}"
     details += f" ({late} min late)." if late else "."
+    if event == "auto_checkout":
+        details += " No manual Check Out was recorded."
     for office in (False, True):
         subject = entry.member.name if office else "You"
         verb = "was automatically checked out" if office and event == "auto_checkout" else action

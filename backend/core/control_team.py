@@ -23,7 +23,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
 from .control_attendance import (
-    AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings, close_expired_attendance, minutes_late, notify_control_attendance,
+    AUTO_CHECKOUT_GRACE, EARLY_CHECK_IN_WINDOW, LONDON, assignment_status, attendance_settings,
+    close_expired_attendance, minutes_late, notify_control_attendance, worked_start_at,
     shift_window, weekly_conflict_for_assignment, weekly_occurrence, weekly_occurrences, weekly_rules, weekly_schedule_conflict,
 )
 from .geo import haversine_distance_m
@@ -151,17 +152,21 @@ class AttendanceSerializer(serializers.ModelSerializer):
     check_out_photo_url = serializers.SerializerMethodField()
     shift_name = serializers.CharField(source="get_shift_display")
     late_minutes = serializers.SerializerMethodField()
+    worked_start_at = serializers.SerializerMethodField()
 
     class Meta:
         model = ControlAttendance
         fields = [
-            "id", "checked_in_at", "checked_out_at", "closed_by_admin",
+            "id", "checked_in_at", "worked_start_at", "checked_out_at", "closed_by_admin",
             "check_in_photo_url", "check_out_photo_url", "check_in_location", "check_out_location",
             "shift", "shift_name", "scheduled_start_at", "scheduled_end_at", "auto_checkout_at", "auto_checked_out", "late_minutes",
         ]
 
     def get_late_minutes(self, entry):
         return minutes_late(entry)
+
+    def get_worked_start_at(self, entry):
+        return worked_start_at(entry)
 
     def get_check_in_photo_url(self, entry):
         if entry.check_in_photo:
@@ -404,7 +409,8 @@ def check_in_assignment(member, data, now):
         return assignments.filter(pk=data["assignment_id"]).first()
     day = data["shift_date"]
     today = now.astimezone(LONDON).date()
-    if not today - timedelta(days=1) <= day <= today:
+    latest_start_date = (now + EARLY_CHECK_IN_WINDOW).astimezone(LONDON).date()
+    if not today - timedelta(days=1) <= day <= latest_start_date:
         return None
     rule = weekly_rules(member.pk, day).filter(pk=data["weekly_assignment_id"]).first()
     occurrence = weekly_occurrence(rule, day) if rule else None
@@ -482,7 +488,7 @@ def member_data(member, now, *, history=False, include_assignments=False):
     current = None
     for entry in attendance:
         end = min(entry.checked_out_at or now, now)
-        start = entry.checked_in_at
+        start = worked_start_at(entry)
         week_seconds += max(0, (end - max(start, week_start)).total_seconds())
         month_seconds += max(0, (end - max(start, month_start)).total_seconds())
         if entry.checked_out_at is None:
@@ -694,8 +700,12 @@ def attendance(request):
             return Response({"detail": "You are already checked in. Check out before starting another shift."}, status=status.HTTP_409_CONFLICT)
         if not current:
             now = timezone.now()
-            if not assignment or assignment_status(assignment, now) != "Available":
-                return Response({"detail": "This shift is unavailable for check-in. Check your assigned shifts."}, status=status.HTTP_409_CONFLICT)
+            shift_status = assignment_status(assignment, now) if assignment else None
+            if shift_status != "Available":
+                detail = "This shift is unavailable for check-in. Check your assigned shifts."
+                if shift_status == "Upcoming":
+                    detail = "Check In opens 30 minutes before your assigned shift."
+                return Response({"detail": detail}, status=status.HTTP_409_CONFLICT)
         location = attendance_location(request.data, settings, assignment.shift)
         if not current:
             if not assignment.pk:
