@@ -13,6 +13,7 @@ from .notifications import publish_control_notification
 LONDON = ZoneInfo("Europe/London")
 EARLY_CHECK_IN_WINDOW = timedelta(minutes=30)
 AUTO_CHECKOUT_GRACE = timedelta(minutes=30)
+MORNING_LATE_GRACE = timedelta(hours=1)
 
 
 def attendance_settings():
@@ -130,7 +131,10 @@ def close_expired_attendance(now=None, *, member_id=None):
 
 def minutes_late(entry):
     if entry.scheduled_start_at is not None:
-        return max(0, ceil((entry.checked_in_at - entry.scheduled_start_at).total_seconds() / 60))
+        late_after = entry.scheduled_start_at
+        if entry.shift == ControlAttendance.Shift.MORNING:
+            late_after += MORNING_LATE_GRACE
+        return max(0, ceil((entry.checked_in_at - late_after).total_seconds() / 60))
 
 
 def worked_start_at(entry):

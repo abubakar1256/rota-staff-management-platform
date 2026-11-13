@@ -125,7 +125,7 @@ class ControlTeamTests(TestCase):
             self.assertEqual(alerts.count(), 2)
             late = alerts.get(title__endswith="Late Check In")
             self.assertEqual(late.priority, "URGENT")
-            self.assertIn("120 min late", late.message)
+            self.assertIn("60 min late", late.message)
             self.assertTrue(alerts.filter(title__endswith="Check Out recorded").exists())
 
     def test_control_notification_inbox_and_mark_read_are_scoped(self):
@@ -269,7 +269,7 @@ class ControlTeamTests(TestCase):
         checked_in = self.mark("check_in", latitude=51.5075)
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
         entry = checked_in.data["attendance"][0]
-        self.assertEqual(entry["late_minutes"], 120)
+        self.assertEqual(entry["late_minutes"], 60)
         self.assertEqual(entry["check_in_location"]["latitude"], 51.5075)
         incomplete = self.portal.post(path, {
             "action": "check_out", "attendance_id": entry["id"], "photo": picture(), "shift": "N",
@@ -323,6 +323,7 @@ class ControlTeamTests(TestCase):
         with patch("core.control_team.timezone.now", return_value=datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc)):
             checked_in = self.mark("check_in", assignment_id=assignment["id"])
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
+        self.assertEqual(checked_in.data["late_minutes"], 150)
         entry = self.member.attendance.get()
         self.assertIsNone(entry.check_in_location)
         self.assertEqual(entry.scheduled_start_at, datetime(2026, 3, 28, 22, tzinfo=timezone.utc))
@@ -393,7 +394,7 @@ class ControlTeamTests(TestCase):
         self.settings_record.save(update_fields=["shifts"])
         checked_in = self.mark("check_in")
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
-        self.assertEqual(checked_in.data["attendance"][0]["late_minutes"], 120)
+        self.assertEqual(checked_in.data["attendance"][0]["late_minutes"], 60)
         entry = self.member.attendance.get()
         self.assertEqual(entry.auto_checkout_at, datetime(2026, 11, 11, 17, 30, tzinfo=timezone.utc))
         path = f"{ASSIGNMENTS_URL}{self.assignment_id}/"
@@ -438,6 +439,33 @@ class ControlTeamTests(TestCase):
             office_data = self.office.get(f"/api/control/team/{self.member.pk}/").data
             self.assertEqual(office_data["weekly_seconds"], result.data["weekly_seconds"])
 
+    def test_morning_lateness_counts_only_after_one_hour_from_assigned_start(self):
+        self.complete_profile()
+        self.settings_record.shifts["M"] = {"start": "02:00", "end": "12:00"}
+        self.settings_record.save(update_fields=["shifts"])
+
+        for day, hour, minute, expected_late in [(12, 2, 59, 0), (13, 3, 0, 0), (14, 3, 1, 1)]:
+            with self.subTest(hour=hour, minute=minute):
+                assignment = self.assign("M", f"2026-11-{day}")
+                arrival = datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc)
+                with patch("core.control_team.timezone.now", return_value=arrival):
+                    response = self.mark("check_in", assignment_id=assignment["id"])
+                    self.assertEqual(response.status_code, 200, response.data)
+                    self.assertEqual(response.data["late_minutes"], expected_late)
+                    office = self.office.get(f"/api/control/team/{self.member.pk}/").data
+                    self.assertEqual(office["late_minutes"], expected_late)
+                    entry = office["attendance"][0]
+                    self.assertEqual(entry["late_minutes"], expected_late)
+                    self.assertEqual(entry["worked_start_at"], arrival)
+                    self.assertEqual(self.mark("check_out", attendance_id=entry["id"]).status_code, 200)
+
+        for recipient in (self.member.user, None):
+            alerts = Notification.objects.filter(
+                link="control-team", user=recipient, title__endswith="Late Check In",
+            )
+            self.assertEqual(alerts.count(), 1)
+            self.assertIn("(1 min late)", alerts.get().message)
+
     def test_weekly_shift_starting_after_midnight_allows_previous_day_check_in(self):
         self.complete_profile()
         self.settings_record.shifts["N"] = {"start": "00:10", "end": "03:00"}
@@ -476,7 +504,7 @@ class ControlTeamTests(TestCase):
             for _ in range(2):
                 result = self.mark("check_in", weekly_assignment_id=morning["id"], shift_date="2027-07-07")
                 self.assertEqual(result.status_code, 200, result.data)
-            self.assertEqual(result.data["attendance"][0]["late_minutes"], 120)
+            self.assertEqual(result.data["attendance"][0]["late_minutes"], 60)
             entry = self.member.attendance.get()
             self.assertEqual(entry.scheduled_start_at, datetime(2027, 7, 7, 6, tzinfo=timezone.utc))
             self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 16, 30, tzinfo=timezone.utc))
