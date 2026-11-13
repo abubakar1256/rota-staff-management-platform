@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clock3, LogOut, MapPin, Sun, UserPlus, Users } from "lucide-react";
+import { Bell, CalendarDays, Camera, ChevronDown, ChevronLeft, ChevronRight, Clock3, LogOut, MapPin, Sun, UserPlus, Users } from "lucide-react";
 import AdminNotifications from "./AdminNotifications";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { readCurrentLocation } from "./attendanceGeofence";
@@ -23,6 +23,9 @@ const requestOptions = (method, data) => ({ method, body: JSON.stringify(data) }
 const NIGHT_SHIFT = "N";
 const shiftNames = { M: "Morning", D: "Mid-day", E: "Evening", N: "Night" };
 const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const controlClockFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: UK_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
 
 function useControlQuery(api, path, enabled = true) {
   return useQuery({
@@ -172,49 +175,91 @@ function useControlAttendanceLocation(api, attendanceId, onCheckout) {
   return attendanceId != null && issue === attendanceId;
 }
 
+function AttendanceTimes({ entry, FilePreview, checkout = false }) {
+  const timestamp = checkout ? entry.checked_out_at : entry.checked_in_at;
+  return <>
+    {timestamp ? <time dateTime={timestamp}>{formatUkDateTime(timestamp)}</time> : <span className="status-pill active">In progress</span>}
+    {checkout ? <>
+      {entry.closed_by_admin && <small className="control-history-note">Closed by admin</small>}
+      {entry.corrected_by_admin && <small className="control-history-note">Corrected by admin</small>}
+      {entry.auto_checked_out && !entry.corrected_by_admin && <small className="control-history-note">
+        {entry.geofence_checked_out
+          ? "Automatic Check Out · Last verified office GPS time"
+          : "Automatic Check Out. No manual Check Out recorded."}
+      </small>}
+    </> : <>
+      <ShiftDetails entry={entry} />
+      <WorkedStartNote entry={entry} />
+      <LateBadge minutes={entry.late_minutes} />
+    </>}
+    <AttendanceEvidence
+      photoUrl={checkout ? entry.check_out_photo_url : entry.check_in_photo_url}
+      location={entry.shift !== NIGHT_SHIFT && (checkout ? entry.check_out_location : entry.check_in_location)}
+      label={checkout ? "Check-out" : "Check-in"} FilePreview={FilePreview} />
+  </>;
+}
+
+function attendanceDuration(entry) {
+  return duration((Date.parse(entry.checked_out_at) - Date.parse(entry.worked_start_at || entry.checked_in_at)) / 1000);
+}
+
+function CorrectAttendanceButton({ entry, onCorrect }) {
+  return onCorrect && <button type="button" className="secondary-button control-correct-button"
+    aria-label={`Correct attendance for ${formatUkDateTime(entry.checked_in_at)}`}
+    onClick={() => onCorrect(entry)}>Correct times</button>;
+}
+
+function CompactAttendanceEntry({ entry, FilePreview, onCorrect }) {
+  const checkIn = new Date(entry.checked_in_at);
+  const checkOut = entry.checked_out_at ? new Date(entry.checked_out_at) : null;
+  const sameDay = checkOut && ukDate(checkIn) === ukDate(checkOut);
+  return <details className="control-history-card" data-shift={entry.shift}>
+    <summary>
+      <span className="control-history-range">
+        <time dateTime={entry.checked_in_at}>{formatUkShortDateTime(checkIn)}</time>
+        {checkOut && <span className="control-history-range-end">– <time dateTime={entry.checked_out_at}>
+          {sameDay ? controlClockFormat.format(checkOut) : formatUkShortDateTime(checkOut)}
+        </time></span>}
+      </span>
+      <strong className="control-history-total">{checkOut ? attendanceDuration(entry) : "In progress"}</strong>
+      <ChevronDown size={15} aria-hidden="true" />
+    </summary>
+    <div className="control-history-details">
+      <div><strong>Check in</strong><AttendanceTimes entry={entry} FilePreview={FilePreview} /></div>
+      <div><strong>Check out</strong><AttendanceTimes entry={entry} FilePreview={FilePreview} checkout /></div>
+      <CorrectAttendanceButton entry={entry} onCorrect={onCorrect} />
+    </div>
+  </details>;
+}
+
 function AttendanceHistory({ member, FilePreview, onCorrect }) {
   return <section className="panel control-history">
     <header className="control-history-heading">
       <span className="control-history-icon"><Clock3 size={19} aria-hidden="true" /></span>
       <div><h3>Attendance history</h3><p>Latest 50 entries · UK time</p></div>
     </header>
-    {member.attendance.length ? <div className="control-history-list"><table className="control-history-table" role="table" aria-label="Attendance history">
-      <thead role="rowgroup"><tr role="row">
-        <th scope="col" role="columnheader">Check in</th>
-        <th scope="col" role="columnheader">Check out</th>
-        <th scope="col" role="columnheader">Duration</th>
-      </tr></thead>
-      <tbody role="rowgroup">{member.attendance.map((entry) => <tr key={entry.id} role="row">
-        <td role="cell">
-          <span className="control-history-label" aria-hidden="true">Check in</span>
-          <time dateTime={entry.checked_in_at}>{formatUkDateTime(entry.checked_in_at)}</time>
-          <ShiftDetails entry={entry} />
-          <WorkedStartNote entry={entry} />
-          <LateBadge minutes={entry.late_minutes} />
-          <AttendanceEvidence photoUrl={entry.check_in_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_in_location} label="Check-in" FilePreview={FilePreview} />
-        </td>
-        <td role="cell">
-          <span className="control-history-label" aria-hidden="true">Check out</span>
-          {entry.checked_out_at ? <time dateTime={entry.checked_out_at}>{formatUkDateTime(entry.checked_out_at)}</time> :
-            <span className="status-pill active">In progress</span>}
-          {entry.closed_by_admin && <small className="control-history-note">Closed by admin</small>}
-          {entry.corrected_by_admin && <small className="control-history-note">Corrected by admin</small>}
-          {entry.auto_checked_out && !entry.corrected_by_admin && <small className="control-history-note">
-            {entry.geofence_checked_out
-              ? "Automatic Check Out · Last verified office GPS time"
-              : "Automatic Check Out. No manual Check Out recorded."}
-          </small>}
-          <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
-        </td>
-        <td role="cell" className="control-history-duration">
-          <span className="control-history-label" aria-hidden="true">Duration</span>
-          <strong>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.worked_start_at || entry.checked_in_at)) / 1000) : "—"}</strong>
-          {onCorrect && <button type="button" className="secondary-button control-correct-button"
-            aria-label={`Correct attendance for ${formatUkDateTime(entry.checked_in_at)}`}
-            onClick={() => onCorrect(entry)}>Correct times</button>}
-        </td>
-      </tr>)}</tbody>
-    </table></div> : <p className="muted control-empty">No attendance recorded yet.</p>}
+    {member.attendance.length ? <>
+      <div className="control-history-compact">{member.attendance.map((entry) =>
+        <CompactAttendanceEntry key={entry.id} entry={entry} FilePreview={FilePreview} onCorrect={onCorrect} />,
+      )}</div>
+      <div className="control-history-list">
+        <table className="control-history-table" aria-label="Attendance history">
+          <thead><tr>
+            <th scope="col">Check in</th>
+            <th scope="col">Check out</th>
+            <th scope="col">Duration</th>
+          </tr></thead>
+          <tbody>{member.attendance.map((entry) => <tr key={entry.id}>
+            <td><AttendanceTimes entry={entry} FilePreview={FilePreview} /></td>
+            <td><AttendanceTimes entry={entry} FilePreview={FilePreview} checkout /></td>
+            <td className="control-history-duration">
+              <strong>{entry.checked_out_at ? attendanceDuration(entry) : "—"}</strong>
+              <CorrectAttendanceButton entry={entry} onCorrect={onCorrect} />
+            </td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+    </> : <p className="muted control-empty">No attendance recorded yet.</p>}
   </section>;
 }
 
@@ -754,14 +799,10 @@ function AddMemberForm({ api, onClose }) {
   </section>;
 }
 
-const correctionTimeFormat = new Intl.DateTimeFormat("en-GB", {
-  timeZone: UK_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-});
-
 function correctionInputTime(value) {
   if (!value) return "";
   const instant = new Date(value);
-  return `${ukDate(instant)}T${correctionTimeFormat.format(instant)}`;
+  return `${ukDate(instant)}T${controlClockFormat.format(instant)}`;
 }
 
 function AttendanceCorrection({ member, entry, api, onClose, onSaved, onConflict }) {
