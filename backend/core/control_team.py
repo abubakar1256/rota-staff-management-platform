@@ -23,8 +23,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
 from .control_attendance import (
-    AUTO_CHECKOUT_GRACE, EARLY_CHECK_IN_WINDOW, LONDON, assignment_status, attendance_settings,
-    close_expired_attendance, minutes_late, notify_control_attendance, worked_start_at,
+    AUTO_CHECKOUT_GRACE, EARLY_CHECK_IN_WINDOW, GPS_AUTO_CHECKOUT_GRACE, LONDON, assignment_status, attendance_settings,
+    checkout_on_geofence_exit, close_expired_attendance, minutes_late, notify_control_attendance, worked_start_at,
     shift_window, weekly_conflict_for_assignment, weekly_occurrence, weekly_occurrences, weekly_rules, weekly_schedule_conflict,
 )
 from .geo import haversine_distance_m
@@ -159,7 +159,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
         fields = [
             "id", "checked_in_at", "worked_start_at", "checked_out_at", "closed_by_admin",
             "check_in_photo_url", "check_out_photo_url", "check_in_location", "check_out_location",
-            "shift", "shift_name", "scheduled_start_at", "scheduled_end_at", "auto_checkout_at", "auto_checked_out", "late_minutes",
+            "shift", "shift_name", "scheduled_start_at", "scheduled_end_at", "auto_checkout_at", "auto_checked_out",
+            "geofence_checked_out", "corrected_by_admin", "late_minutes",
         ]
 
     def get_late_minutes(self, entry):
@@ -222,6 +223,11 @@ class AttendanceLocationSerializer(serializers.Serializer):
         if not valid_coordinates(data["latitude"], data["longitude"], data["accuracy_m"]):
             raise serializers.ValidationError("A valid GPS location and accuracy are required. Allow location access and try again.")
         return data
+
+
+class AttendanceLocationSampleSerializer(AttendanceLocationSerializer):
+    attendance_id = serializers.IntegerField(min_value=1)
+    captured_at = serializers.DateTimeField()
 
 
 class ShiftTimingSerializer(serializers.Serializer):
@@ -428,34 +434,49 @@ def check_in_assignment(member, data, now):
     return assignments.filter(shift_date=day, shift=rule.shift).first() or occurrence
 
 
-def attendance_location(data, settings, shift):
-    if shift == ControlAttendance.Shift.NIGHT:
-        return None
-    serializer = AttendanceLocationSerializer(data=data)
-    serializer.is_valid(raise_exception=True)
-    location = serializer.validated_data
+def office_location(location, settings):
     if settings.latitude is None or settings.longitude is None:
         raise serializers.ValidationError({"detail": "The Control Team location is not set. Contact the office."})
     latitude, longitude, accuracy = location["latitude"], location["longitude"], location["accuracy_m"]
     radius = settings.radius_m
     distance = haversine_distance_m(latitude, longitude, settings.latitude, settings.longitude)
-    if distance > radius:
-        raise serializers.ValidationError({
-            "detail": f"You are outside the {radius} m attendance radius (about {ceil(distance)} m away). "
-                      "Return to the Control Team location and try again.",
-        })
     if accuracy > radius:
         raise serializers.ValidationError({
             "detail": f"GPS accuracy is too low for the {radius} m attendance radius. Enable precise location and try again.",
         })
-    return {
+    return distance, {
         "latitude": latitude, "longitude": longitude, "accuracy_m": accuracy,
         "distance_m": round(distance, 1), "radius_m": radius,
     }
 
 
+def attendance_location(data, settings, shift, *, checkout_entry=None):
+    if shift == ControlAttendance.Shift.NIGHT:
+        return None
+    serializer = AttendanceLocationSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    distance, location = office_location(serializer.validated_data, settings)
+    radius = location["radius_m"]
+    if distance <= radius:
+        return location
+    if checkout_entry and checkout_on_geofence_exit(checkout_entry, location, distance):
+        return None
+    raise serializers.ValidationError({
+        "detail": f"You are outside the {radius} m attendance radius (about {ceil(distance)} m away). "
+                  "Return to the Control Team location and try again.",
+    })
+
+
 class MemberStatusSerializer(serializers.Serializer):
     is_active = serializers.BooleanField()
+
+
+class AttendanceCorrectionSerializer(serializers.Serializer):
+    checked_in_at = serializers.DateTimeField(default_timezone=LONDON, required=False)
+    checked_out_at = serializers.DateTimeField(default_timezone=LONDON, required=False)
+    original_check_in = serializers.DateTimeField(default_timezone=utc_timezone.utc)
+    original_check_out = serializers.DateTimeField(default_timezone=utc_timezone.utc, allow_null=True)
+    reason = serializers.CharField(max_length=1000)
 
 
 class RequestReviewSerializer(serializers.Serializer):
@@ -724,17 +745,20 @@ def attendance(request):
             if shift_status != "Available":
                 detail = "This shift is unavailable for check-in. Check your assigned shifts."
                 if shift_status == "Upcoming":
-                    detail = "Check In opens 30 minutes before your assigned shift."
+                    minutes = EARLY_CHECK_IN_WINDOW // timedelta(minutes=1)
+                    detail = f"Check In opens {minutes} minutes before your assigned shift."
                 return Response({"detail": detail}, status=status.HTTP_409_CONFLICT)
         location = attendance_location(request.data, settings, assignment.shift)
         if not current:
             if not assignment.pk:
                 assignment.save()
+            checkout_grace = AUTO_CHECKOUT_GRACE if assignment.shift == ControlAttendance.Shift.NIGHT else GPS_AUTO_CHECKOUT_GRACE
             entry = ControlAttendance.objects.create(
                 member=member, checked_in_at=now, check_in_photo=data["photo"], check_in_location=location,
+                last_verified_at=now if location else None,
                 assignment=assignment, shift=assignment.shift,
                 scheduled_start_at=assignment.scheduled_start_at, scheduled_end_at=assignment.scheduled_end_at,
-                auto_checkout_at=assignment.scheduled_end_at + AUTO_CHECKOUT_GRACE,
+                auto_checkout_at=assignment.scheduled_end_at + checkout_grace,
             )
             notify_control_attendance(entry, "check_in")
     elif current:
@@ -743,13 +767,45 @@ def attendance(request):
                 {"detail": "Your attendance changed. Open Check Out again to take a new photo."},
                 status=status.HTTP_409_CONFLICT,
             )
-        location = attendance_location(request.data, settings, current.shift)
-        current.checked_out_at = now
-        current.check_out_photo = data["photo"]
-        current.check_out_location = location
-        current.save(update_fields=["checked_out_at", "check_out_photo", "check_out_location"])
-        notify_control_attendance(current, "check_out")
+        location = attendance_location(request.data, settings, current.shift, checkout_entry=current)
+        if not current.geofence_checked_out:
+            current.checked_out_at = now
+            current.check_out_photo = data["photo"]
+            current.check_out_location = location
+            current.save(update_fields=["checked_out_at", "check_out_photo", "check_out_location"])
+            notify_control_attendance(current, "check_out")
     return Response(member_data(member, now, history=True, include_assignments=True))
+
+
+@api_view(["POST"])
+@permission_classes([IsControlMember])
+@transaction.atomic
+def attendance_location_sample(request):
+    serializer = AttendanceLocationSampleSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    member = member_for(request.user)
+    entry = get_object_or_404(member.attendance.select_for_update(), pk=data["attendance_id"])
+    if entry.checked_out_at or entry.shift == ControlAttendance.Shift.NIGHT:
+        return Response({"status": "inactive"})
+    now = timezone.now()
+    if entry.auto_checkout_at and entry.auto_checkout_at <= now:
+        close_expired_attendance(now, member_id=member.pk)
+        return Response({"status": "inactive"})
+    captured_at = min(data["captured_at"], now)
+    if (
+        abs(now - data["captured_at"]) > timedelta(minutes=2)
+        or captured_at <= (entry.last_verified_at or entry.checked_in_at)
+    ):
+        return Response({"status": "unverified"})
+    distance, location = office_location(data, attendance_settings())
+    if distance + location["accuracy_m"] <= location["radius_m"]:
+        entry.last_verified_at = captured_at
+        entry.save(update_fields=["last_verified_at"])
+        return Response({"status": "verified"})
+    if checkout_on_geofence_exit(entry, location, distance):
+        return Response({"status": "checked_out"})
+    return Response({"status": "unverified"})
 
 
 def notify_control_request(item, action):
@@ -877,6 +933,65 @@ def team_member(request, pk):
     return Response(member_data(member, now, history=True))
 
 
+@api_view(["PATCH"])
+@permission_classes([IsControlAdmin])
+@transaction.atomic
+def correct_attendance(request, member_pk, pk):
+    member = get_object_or_404(ControlTeamMember.objects.select_for_update(), pk=member_pk)
+    entry = get_object_or_404(member.attendance.select_for_update(), pk=pk)
+    serializer = AttendanceCorrectionSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    if data["original_check_in"] != entry.checked_in_at or data["original_check_out"] != entry.checked_out_at:
+        return Response({"detail": "This entry has changed. Reopen the correction form and try again."}, status=status.HTTP_409_CONFLICT)
+
+    original = {"checked_in_at": entry.checked_in_at, "checked_out_at": entry.checked_out_at}
+    updated = {
+        field: data[field].astimezone(utc_timezone.utc) if field in data else value
+        for field, value in original.items()
+    }
+    if updated == original:
+        raise serializers.ValidationError({"detail": "Change a Check-In or Check-Out time before saving."})
+    start, end = updated["checked_in_at"], updated["checked_out_at"]
+    now = timezone.now()
+    if start > now or (end and end > now):
+        raise serializers.ValidationError({"detail": "Attendance times cannot be in the future."})
+    if end and end < start:
+        raise serializers.ValidationError({"checked_out_at": "Check-Out must be at or after Check-In."})
+    if end is None and entry.auto_checkout_at and start >= entry.auto_checkout_at:
+        raise serializers.ValidationError({"checked_in_at": "Check-In must be before the automatic checkout deadline."})
+    other_entries = member.attendance.exclude(pk=entry.pk).filter(
+        Q(checked_out_at__isnull=True) | Q(checked_out_at__gt=start),
+    )
+    if end is not None:
+        other_entries = other_entries.filter(checked_in_at__lt=end)
+    if end != start and other_entries.exists():
+        raise serializers.ValidationError({"detail": "These times overlap another attendance entry for this member."})
+
+    entry.checked_in_at, entry.checked_out_at = start, end
+    if entry.last_verified_at is None and entry.check_in_location:
+        entry.last_verified_at = original["checked_in_at"]
+    if original["checked_out_at"] is None and end is not None:
+        entry.closed_by_admin = True
+    entry.corrected_by_admin = True
+    entry.save(update_fields=["checked_in_at", "checked_out_at", "last_verified_at", "closed_by_admin", "corrected_by_admin"])
+    audit = AuditLog.objects.create(
+        user=request.user, action="UPDATE", model_name="ControlAttendance", object_id=str(entry.pk),
+        summary="Corrected Control Team attendance",
+        before_data={field: value.isoformat() if value else None for field, value in original.items()},
+        after_data={
+            **{field: value.isoformat() if value else None for field, value in updated.items()},
+            "reason": data["reason"],
+        },
+    )
+    publish_control_notification(
+        member, tab="team", title="Attendance corrected",
+        message="The office corrected your attendance. Review the updated times in Attendance history.",
+        category="ATTENDANCE", event_key=f"attendance:{entry.pk}:correction:{audit.pk}",
+    )
+    return Response(member_data(member, now, history=True))
+
+
 @api_view(["GET"])
 @permission_classes([IsControlAdmin])
 def team_requests(request):
@@ -907,6 +1022,7 @@ urlpatterns = [
     path("profile/", profile, name="profile"),
     path("schedule/", schedule, name="schedule"),
     path("attendance/", attendance, name="attendance"),
+    path("attendance/location/", attendance_location_sample, name="attendance-location"),
     path("attendance/settings/", team_attendance_settings, name="attendance-settings"),
     path("attendance/<int:pk>/photos/<str:action>/", attendance_photo, name="attendance-photo"),
     path("requests/", member_requests, name="requests"),
@@ -921,6 +1037,7 @@ urlpatterns = [
     path("team/weekly-assignments/", team_weekly_assignments, name="team-weekly-assignments"),
     path("team/weekly-assignments/<int:pk>/", team_weekly_assignment, name="team-weekly-assignment"),
     path("team/<int:pk>/", team_member, name="member"),
+    path("team/<int:member_pk>/attendance/<int:pk>/", correct_attendance, name="correct-attendance"),
     path("team/requests/", team_requests, name="team-requests"),
     path("team/requests/<int:pk>/", review_request, name="review"),
 ]

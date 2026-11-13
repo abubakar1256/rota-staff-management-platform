@@ -86,7 +86,8 @@ async function api(path, options = {}) {
       notifyToast(method === "DELETE" ? "Deleted successfully." : method === "PATCH" ? "Changes saved successfully." : "Saved successfully.");
     }
     if (method !== "GET" && !path.startsWith("/auth/") && !options.skipInvalidation) invalidateForPath(path);
-    if (method !== "GET" && path.startsWith("/control/") && !path.startsWith("/control/notifications/") && path !== "/control/logout/") {
+    if (method !== "GET" && path.startsWith("/control/") && !path.startsWith("/control/notifications/") && path !== "/control/logout/" &&
+      (path !== "/control/attendance/location/" || result.status === "checked_out")) {
       window.dispatchEvent(new Event("rota:notifications-changed"));
     }
     return result;

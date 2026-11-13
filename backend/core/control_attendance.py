@@ -11,8 +11,9 @@ from .notifications import publish_control_notification
 
 
 LONDON = ZoneInfo("Europe/London")
-EARLY_CHECK_IN_WINDOW = timedelta(minutes=30)
+EARLY_CHECK_IN_WINDOW = timedelta(minutes=60)
 AUTO_CHECKOUT_GRACE = timedelta(minutes=30)
+GPS_AUTO_CHECKOUT_GRACE = timedelta(minutes=120)
 MORNING_LATE_GRACE = timedelta(hours=1)
 
 
@@ -141,6 +142,21 @@ def worked_start_at(entry):
     return max(entry.checked_in_at, entry.scheduled_start_at or entry.checked_in_at)
 
 
+def checkout_on_geofence_exit(entry, location, distance):
+    if distance - location["accuracy_m"] <= location["radius_m"]:
+        return False
+    verified_at = entry.last_verified_at
+    if verified_at is None and entry.check_in_location:
+        verified_at = entry.checked_in_at
+    if verified_at is None or verified_at < entry.checked_in_at:
+        return False
+    entry.checked_out_at = verified_at
+    entry.auto_checked_out = entry.geofence_checked_out = True
+    entry.save(update_fields=["checked_out_at", "auto_checked_out", "geofence_checked_out"])
+    notify_control_attendance(entry, "auto_checkout")
+    return True
+
+
 def notify_control_attendance(entry, event):
     late = (minutes_late(entry) or 0) if event == "check_in" else 0
     if event == "check_in":
@@ -156,7 +172,10 @@ def notify_control_attendance(entry, event):
     details = f"{shift} at {recorded.astimezone(LONDON):%d %b %Y, %H:%M %Z}"
     details += f" ({late} min late)." if late else "."
     if event == "auto_checkout":
-        details += " No manual Check Out was recorded."
+        if entry.geofence_checked_out:
+            details += " GPS confirmed an exit from the office radius. Check Out uses the last verified in-office time."
+        else:
+            details += " No manual Check Out was recorded."
     for office in (False, True):
         subject = entry.member.name if office else "You"
         verb = "was automatically checked out" if office and event == "auto_checkout" else action

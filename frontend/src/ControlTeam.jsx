@@ -4,8 +4,9 @@ import { Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clock3, LogOut, 
 import AdminNotifications from "./AdminNotifications";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { readCurrentLocation } from "./attendanceGeofence";
+import { requestDutyPosition } from "./dutyLocationClient";
 import { googleSiteLinks, sitePoint } from "./siteCoordinates";
-import { formatUkAttendanceTime, formatUkDateTime, formatUkShortDateTime, ukDate } from "./ukTime";
+import { formatUkAttendanceTime, formatUkDateTime, formatUkShortDateTime, UK_TIME_ZONE, ukDate } from "./ukTime";
 import "./controlTeam.css";
 
 const root = "/control";
@@ -122,7 +123,56 @@ function WorkedStartNote({ entry }) {
   return <small className="table-subtext">Hours start at {formatUkShortDateTime(entry.worked_start_at)}</small>;
 }
 
-function AttendanceHistory({ member, FilePreview }) {
+function useControlAttendanceLocation(api, attendanceId, onCheckout) {
+  const onCheckoutRef = useRef(onCheckout);
+  onCheckoutRef.current = onCheckout;
+  const [issue, setIssue] = useState(null);
+
+  useEffect(() => {
+    if (!attendanceId) return;
+    const controller = new AbortController();
+    let inFlight = false;
+    let finished = false;
+
+    async function verify() {
+      if (controller.signal.aborted || finished || inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        const { coords, timestamp } = await requestDutyPosition();
+        if (controller.signal.aborted || document.visibilityState !== "visible") return;
+        const result = await api(root + "/attendance/location/", {
+          method: "POST", signal: controller.signal,
+          silentLoading: true, silentError: true, silentToast: true, skipInvalidation: true,
+          body: JSON.stringify({
+            attendance_id: attendanceId, latitude: coords.latitude, longitude: coords.longitude,
+            accuracy_m: coords.accuracy, captured_at: new Date(timestamp).toISOString(),
+          }),
+        });
+        if (controller.signal.aborted) return;
+        setIssue(null);
+        finished = result.status === "checked_out" || result.status === "inactive";
+        if (finished) onCheckoutRef.current(attendanceId, result.status === "checked_out");
+      } catch {
+        if (!controller.signal.aborted) setIssue(attendanceId);
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    void verify();
+    const timer = window.setInterval(verify, 60_000);
+    document.addEventListener("visibilitychange", verify);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", verify);
+    };
+  }, [api, attendanceId]);
+
+  return attendanceId != null && issue === attendanceId;
+}
+
+function AttendanceHistory({ member, FilePreview, onCorrect }) {
   return <section className="panel control-history">
     <header className="control-history-heading">
       <span className="control-history-icon"><Clock3 size={19} aria-hidden="true" /></span>
@@ -148,12 +198,20 @@ function AttendanceHistory({ member, FilePreview }) {
           {entry.checked_out_at ? <time dateTime={entry.checked_out_at}>{formatUkDateTime(entry.checked_out_at)}</time> :
             <span className="status-pill active">In progress</span>}
           {entry.closed_by_admin && <small className="control-history-note">Closed by admin</small>}
-          {entry.auto_checked_out && <small className="control-history-note">Automatic Check Out. No manual Check Out recorded.</small>}
+          {entry.corrected_by_admin && <small className="control-history-note">Corrected by admin</small>}
+          {entry.auto_checked_out && !entry.corrected_by_admin && <small className="control-history-note">
+            {entry.geofence_checked_out
+              ? "Automatic Check Out · Last verified office GPS time"
+              : "Automatic Check Out. No manual Check Out recorded."}
+          </small>}
           <AttendanceEvidence photoUrl={entry.check_out_photo_url} location={entry.shift !== NIGHT_SHIFT && entry.check_out_location} label="Check-out" FilePreview={FilePreview} />
         </td>
         <td role="cell" className="control-history-duration">
           <span className="control-history-label" aria-hidden="true">Duration</span>
           <strong>{entry.checked_out_at ? duration((Date.parse(entry.checked_out_at) - Date.parse(entry.worked_start_at || entry.checked_in_at)) / 1000) : "—"}</strong>
+          {onCorrect && <button type="button" className="secondary-button control-correct-button"
+            aria-label={`Correct attendance for ${formatUkDateTime(entry.checked_in_at)}`}
+            onClick={() => onCorrect(entry)}>Correct times</button>}
         </td>
       </tr>)}</tbody>
     </table></div> : <p className="muted control-empty">No attendance recorded yet.</p>}
@@ -484,7 +542,7 @@ function AssignedShifts({ today, start, schedule, scheduleQuery, offset, onNavig
   const days = Array.from({ length: 7 }, (_, index) => scheduleDate(start, index));
   return <section className="panel control-shifts">
     <div className="panel-header">
-      <div><h3>My shifts</h3><p className="muted">UK time · Check In opens 30 minutes before each shift.</p></div>
+      <div><h3>My shifts</h3><p className="muted">UK time · Check In opens 60 minutes before each shift.</p></div>
     </div>
     <nav className="control-schedule-nav" aria-label="Shift schedule">
       <span className="control-schedule-range" aria-live="polite">
@@ -547,6 +605,15 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
   const selectedSchedulePath = `${schedulePath}?start=${scheduleStart}`;
   const schedule = useControlQuery(api, selectedSchedulePath, activePage === "attendance" && scheduleOffset !== 0);
   const current = member?.attendance.find((entry) => !entry.checked_out_at);
+  const gpsAttendanceId = current?.shift !== NIGHT_SHIFT ? current?.id : null;
+  const locationIssue = useControlAttendanceLocation(api, gpsAttendanceId, (attendanceId, exited) => {
+    void profile.refetch();
+    if (scheduleOffset !== 0) void schedule.refetch();
+    setCapture((open) => open?.action === "check_out" && open.shift.id === attendanceId ? null : open);
+    if (exited) window.dispatchEvent(new CustomEvent("rota:toast", {
+      detail: { type: "warning", message: "Outside the office radius. Checked out at your last verified office GPS time." },
+    }));
+  });
   const assignedShifts = member?.assigned_shifts || [];
   const availableShifts = assignedShifts.filter((shift) => shift.status === "Available");
   const locationShifts = availableShifts.length ? availableShifts : assignedShifts;
@@ -586,6 +653,11 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
       client.setQueryData(queryKey(profilePath), updated);
       if (scheduleOffset !== 0) void client.invalidateQueries({ queryKey: queryKey(selectedSchedulePath), exact: true });
       setCapture(null);
+      if (capture.action === "check_out" && updated.attendance?.find((entry) => entry.id === capture.shift.id)?.geofence_checked_out) {
+        window.dispatchEvent(new CustomEvent("rota:toast", {
+          detail: { type: "warning", message: "Outside the office radius. Checked out at your last verified office GPS time." },
+        }));
+      }
     } catch (err) {
       if (err.status === 409) profile.refetch();
       throw err;
@@ -616,6 +688,9 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
               <ShiftDetails entry={current} />
               <WorkedStartNote entry={current} />
               {current?.auto_checkout_at && <small className="table-subtext">Auto checkout at {formatUkDateTime(current.auto_checkout_at)}</small>}
+              {gpsAttendanceId && <small className="table-subtext">
+                {locationIssue ? "Location checks paused. Allow precise GPS and check your connection." : "Office GPS checks run while this portal is open and visible."}
+              </small>}
             </div></div>
             {current && <button type="button" className="primary-button" disabled={current.shift !== NIGHT_SHIFT && !officePin}
               onClick={() => setCapture({ action: "check_out", shift: current })}>
@@ -679,15 +754,88 @@ function AddMemberForm({ api, onClose }) {
   </section>;
 }
 
+const correctionTimeFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: UK_TIME_ZONE, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+function correctionInputTime(value) {
+  if (!value) return "";
+  const instant = new Date(value);
+  return `${ukDate(instant)}T${correctionTimeFormat.format(instant)}`;
+}
+
+function AttendanceCorrection({ member, entry, api, onClose, onSaved, onConflict }) {
+  const dialog = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [error, setError] = useState("");
+  const checkIn = correctionInputTime(entry.checked_in_at);
+  const checkOut = correctionInputTime(entry.checked_out_at);
+  useEffect(() => {
+    const element = dialog.current;
+    element.showModal();
+    return () => element.close();
+  }, []);
+
+  async function submit(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const start = form.get("checked_in_at");
+    const end = form.get("checked_out_at");
+    const changes = {
+      original_check_in: entry.checked_in_at,
+      original_check_out: entry.checked_out_at,
+      reason: form.get("reason").trim(),
+    };
+    if (start !== checkIn) changes.checked_in_at = start;
+    if (end !== checkOut) changes.checked_out_at = end;
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await api(`${teamPath}${member.id}/attendance/${entry.id}/`, {
+        ...requestOptions("PATCH", changes), silentError: true,
+      });
+      onSaved(updated);
+    } catch (err) {
+      setError(err.message);
+      if (err.status === 409) {
+        setStale(true);
+        onConflict();
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <dialog ref={dialog} className="modal-card control-capture control-correction" aria-labelledby="control-correction-title"
+    onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    <h3 id="control-correction-title">Correct attendance</h3>
+    <p className="muted">{member.name} · UK time</p>
+    <form className="control-form" onSubmit={submit}>
+      <label>Check-In<input name="checked_in_at" type="datetime-local" defaultValue={checkIn} required disabled={busy || stale} /></label>
+      <label>Check-Out<input name="checked_out_at" type="datetime-local" defaultValue={checkOut} required={Boolean(checkOut)} disabled={busy || stale} />
+        {!checkOut && <small>Leave blank to keep the shift open.</small>}
+      </label>
+      <label>Reason<textarea name="reason" rows={3} maxLength={1000} required disabled={busy || stale} /></label>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="control-actions">
+        <button type="submit" className="primary-button" disabled={busy || stale}>{busy ? "Saving…" : "Save correction"}</button>
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{stale ? "Close" : "Cancel"}</button>
+      </div>
+    </form>
+  </dialog>;
+}
+
 function MemberDetail({ member, api, FilePreview, onClose }) {
   const [busy, setBusy] = useState(false);
+  const [correction, setCorrection] = useState(null);
   const client = useQueryClient();
+  const path = teamPath + member.id + "/";
   async function toggleStatus() {
     if (member.is_active && !window.confirm(member.checked_in_at
       ? "Deactivate this member and close their current attendance entry now?"
       : "Deactivate this member's Control Team access?")) return;
     setBusy(true);
-    const path = teamPath + member.id + "/";
     try {
       const updated = await api(path, requestOptions("PATCH", { is_active: !member.is_active }));
       client.setQueryData(queryKey(path), updated);
@@ -702,7 +850,13 @@ function MemberDetail({ member, api, FilePreview, onClose }) {
         <button type="button" className="secondary-button" onClick={onClose}>Close details</button>
       </div>
     </section>
-    <AttendanceHistory member={member} FilePreview={FilePreview} />
+    <AttendanceHistory member={member} FilePreview={FilePreview} onCorrect={setCorrection} />
+    {correction && <AttendanceCorrection member={member} entry={correction} api={api}
+      onClose={() => setCorrection(null)} onConflict={() => void client.invalidateQueries({ queryKey: queryKey(path) })}
+      onSaved={(updated) => {
+        client.setQueryData(queryKey(path), updated);
+        setCorrection(null);
+      }} />}
   </>;
 }
 

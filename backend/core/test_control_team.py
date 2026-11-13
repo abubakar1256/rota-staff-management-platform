@@ -1,5 +1,5 @@
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO, StringIO
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -12,7 +12,7 @@ from django.test import TestCase
 from PIL import Image
 from rest_framework.test import APIClient
 
-from .models import ControlAttendance, ControlAttendanceSettings, ControlTeamMember, Employee, Notification, UserProfile
+from .models import AuditLog, ControlAttendance, ControlAttendanceSettings, ControlTeamMember, Employee, Notification, UserProfile
 
 
 SETTINGS_URL = "/api/control/attendance/settings/"
@@ -276,16 +276,81 @@ class ControlTeamTests(TestCase):
         }, format="multipart")
         self.assertEqual(incomplete.status_code, 400)
         self.assertIn("latitude", incomplete.data)
-        self.assertEqual(self.mark("check_out", attendance_id=entry["id"], latitude=51.52).status_code, 400)
-        self.assertIsNone(self.member.attendance.get().checked_out_at)
         with patch("core.control_team.haversine_distance_m", return_value=150.004):
             self.assertEqual(self.mark("check_out", attendance_id=entry["id"]).status_code, 400)
+        self.assertIsNone(self.member.attendance.get().checked_out_at)
         with patch("core.control_team.haversine_distance_m", return_value=150):
             checked_out = self.mark("check_out", attendance_id=entry["id"])
         self.assertEqual(checked_out.status_code, 200, checked_out.data)
         self.assertEqual(checked_out.data["attendance"][0]["check_out_location"], {
             **OFFICE_GPS, "distance_m": 150, "radius_m": 150,
         })
+
+    def test_geofence_exit_checks_out_at_last_verified_office_time(self):
+        self.complete_profile()
+        self.assertEqual(self.mark("check_in").status_code, 200)
+        entry = self.member.attendance.get()
+        verified = entry.scheduled_end_at - timedelta(minutes=1)
+        exit_time = verified + timedelta(minutes=2)
+
+        def sample(captured_at, **gps):
+            return self.portal.post("/api/control/attendance/location/", {
+                "attendance_id": entry.pk, "captured_at": captured_at.isoformat(), **OFFICE_GPS, **gps,
+            }, format="json")
+
+        with patch("core.control_team.timezone.now", return_value=verified):
+            self.assertEqual(sample(verified).data["status"], "verified")
+        with patch("core.control_team.timezone.now", return_value=exit_time):
+            self.assertEqual(sample(verified, latitude=51.52).data["status"], "unverified")
+            with patch("core.control_team.haversine_distance_m", return_value=155):
+                self.assertEqual(sample(exit_time).data["status"], "unverified")
+            self.assertEqual(sample(exit_time, latitude=51.52).data["status"], "checked_out")
+            self.assertEqual(sample(exit_time, latitude=51.52).data["status"], "inactive")
+
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_out_at, verified)
+        self.assertTrue(entry.geofence_checked_out)
+        self.assertFalse(entry.check_out_photo)
+        with patch("core.control_team.timezone.now", return_value=exit_time + timedelta(days=1)):
+            response = self.mark("check_out", attendance_id=entry.pk)
+        self.assertEqual(response.data["attendance"][0]["checked_out_at"], "2026-11-11T16:59:00Z")
+        self.assertEqual(response.data["weekly_seconds"], int((verified - entry.checked_in_at).total_seconds()))
+        for recipient in (self.member.user, None):
+            alert = Notification.objects.get(user=recipient, title__endswith="Automatic Check Out")
+            self.assertIn("last verified in-office time", alert.message)
+
+    def test_outside_manual_checkout_falls_back_to_verified_check_in(self):
+        self.complete_profile()
+        self.assertEqual(self.mark("check_in").status_code, 200)
+        entry = self.member.attendance.get()
+        with patch("core.control_team.timezone.now", return_value=entry.scheduled_end_at):
+            response = self.mark("check_out", attendance_id=entry.pk, latitude=51.52)
+        self.assertEqual(response.status_code, 200, response.data)
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_out_at, entry.checked_in_at)
+        self.assertTrue(entry.geofence_checked_out)
+
+    def test_gps_shift_auto_checkout_waits_120_minutes_without_a_confirmed_exit(self):
+        self.complete_profile()
+        response = self.mark("check_in")
+        self.assertEqual(response.status_code, 200, response.data)
+        entry = self.member.attendance.get()
+        deadline = entry.scheduled_end_at + timedelta(minutes=120)
+        self.assertEqual(entry.auto_checkout_at, deadline)
+
+        with patch("core.control_team.timezone.now", return_value=deadline - timedelta(seconds=1)):
+            call_command("check_location_tracking", stdout=StringIO())
+        entry.refresh_from_db()
+        self.assertIsNone(entry.checked_out_at)
+
+        with patch("core.control_team.timezone.now", return_value=deadline):
+            call_command("check_location_tracking", stdout=StringIO())
+            profile = self.portal.get("/api/control/profile/").data
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_out_at, deadline)
+        self.assertTrue(entry.auto_checked_out)
+        self.assertFalse(entry.geofence_checked_out)
+        self.assertEqual(profile["weekly_seconds"], int((deadline - entry.checked_in_at).total_seconds()))
 
     def test_night_attendance_needs_photos_but_does_not_store_location(self):
         self.complete_profile()
@@ -304,6 +369,10 @@ class ControlTeamTests(TestCase):
         entry = checked_in.data["attendance"][0]
         self.assertEqual(entry["shift"], "N")
         self.assertIsNone(entry["check_in_location"])
+        ignored = self.portal.post("/api/control/attendance/location/", {
+            "attendance_id": entry["id"], "captured_at": "2026-11-13T22:01:00Z", **OFFICE_GPS,
+        }, format="json")
+        self.assertEqual(ignored.data["status"], "inactive")
         self.assertTrue(entry["check_in_photo_url"])
 
         check_out = {"action": "check_out", "attendance_id": entry["id"]}
@@ -396,7 +465,7 @@ class ControlTeamTests(TestCase):
         self.assertEqual(checked_in.status_code, 200, checked_in.data)
         self.assertEqual(checked_in.data["attendance"][0]["late_minutes"], 60)
         entry = self.member.attendance.get()
-        self.assertEqual(entry.auto_checkout_at, datetime(2026, 11, 11, 17, 30, tzinfo=timezone.utc))
+        self.assertEqual(entry.auto_checkout_at, datetime(2026, 11, 11, 19, tzinfo=timezone.utc))
         path = f"{ASSIGNMENTS_URL}{self.assignment_id}/"
         self.assertEqual(self.office.delete(path).status_code, 409)
         self.assertEqual(self.office.patch(path, {"member": self.member.pk}, format="json").status_code, 409)
@@ -415,11 +484,13 @@ class ControlTeamTests(TestCase):
     def test_early_check_in_records_arrival_but_counts_hours_from_shift_start(self):
         self.complete_profile()
         day = datetime(2026, 11, 11, tzinfo=timezone.utc)
-        with patch("core.control_team.timezone.now", return_value=day.replace(hour=6, minute=29, second=59)):
+        with patch("core.control_team.timezone.now", return_value=day.replace(hour=5, minute=59, second=59)):
             profile = self.portal.get("/api/control/profile/").data
             self.assertEqual(profile["assigned_shifts"][0]["status"], "Upcoming")
-            self.assertEqual(self.mark("check_in").status_code, 409)
-        with patch("core.control_team.timezone.now", return_value=day.replace(hour=6, minute=30)):
+            response = self.mark("check_in")
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("60 minutes", response.data["detail"])
+        with patch("core.control_team.timezone.now", return_value=day.replace(hour=6)):
             profile = self.portal.get("/api/control/profile/").data
             self.assertEqual(profile["assigned_shifts"][0]["status"], "Available")
             result = self.mark("check_in")
@@ -427,7 +498,7 @@ class ControlTeamTests(TestCase):
             self.assertEqual(result.data["weekly_seconds"], 0)
             self.assertEqual(result.data["monthly_seconds"], 0)
             entry = result.data["attendance"][0]
-            self.assertEqual(entry["checked_in_at"], "2026-11-11T06:30:00Z")
+            self.assertEqual(entry["checked_in_at"], "2026-11-11T06:00:00Z")
             self.assertEqual(entry["worked_start_at"], day.replace(hour=7))
             self.assertEqual(entry["late_minutes"], 0)
         with patch("core.control_team.timezone.now", return_value=day.replace(hour=17, minute=29)):
@@ -474,7 +545,7 @@ class ControlTeamTests(TestCase):
             "member": self.member.pk, "shift": "N", "weekdays": [3],
         }, format="json")
         self.assertEqual(rule.status_code, 201, rule.data)
-        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 11, 23, 40, tzinfo=timezone.utc)):
+        with patch("core.control_team.timezone.now", return_value=datetime(2026, 11, 11, 23, 10, tzinfo=timezone.utc)):
             response = self.mark("check_in", weekly_assignment_id=rule.data["id"], shift_date="2026-11-12")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["weekly_seconds"], 0)
@@ -507,7 +578,7 @@ class ControlTeamTests(TestCase):
             self.assertEqual(result.data["attendance"][0]["late_minutes"], 60)
             entry = self.member.attendance.get()
             self.assertEqual(entry.scheduled_start_at, datetime(2027, 7, 7, 6, tzinfo=timezone.utc))
-            self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 16, 30, tzinfo=timezone.utc))
+            self.assertEqual(entry.auto_checkout_at, datetime(2027, 7, 7, 18, tzinfo=timezone.utc))
         self.assertEqual(self.member.shift_assignments.count(), 2)
 
     def test_weekly_conflicts_across_sunday_and_dated_assignments(self):
@@ -593,3 +664,59 @@ class ControlTeamTests(TestCase):
         self.assertEqual([shift["shift_date"] for shift in response.data["assigned_shifts"]], ["2026-11-18"])
         self.assertEqual(self.office.get(url).status_code, 403)
         self.assertEqual(self.portal.get("/api/control/schedule/?start=invalid").status_code, 400)
+
+    def test_admin_corrects_attendance_in_uk_time_and_audits_the_change(self):
+        self.complete_profile()
+        start = datetime(2026, 7, 8, 6, tzinfo=timezone.utc)
+        with patch("core.control_team.timezone.now", return_value=start):
+            assignment = self.assign("M", "2026-07-08")
+            self.assertEqual(self.mark("check_in", assignment_id=assignment["id"]).status_code, 200)
+        entry = self.member.attendance.get()
+        original_photo = entry.check_in_photo.name
+        path = f"/api/control/team/{self.member.pk}/attendance/{entry.pk}/"
+        payload = {
+            "original_check_in": start.isoformat(), "original_check_out": None,
+            "checked_in_at": "2026-07-08T07:15", "checked_out_at": "2026-07-08T17:00",
+            "reason": "Verified against the office log.",
+        }
+        self.assertEqual(self.portal.patch(path, payload, format="json").status_code, 403)
+        self.assertEqual(self.office.patch(path, {**payload, "reason": "  "}, format="json").status_code, 400)
+        self.assertEqual(self.office.patch(path, {**payload, "checked_out_at": "2026-07-08T06:00"}, format="json").status_code, 400)
+        self.assertEqual(self.office.patch(path, {**payload, "checked_out_at": "2026-11-12T17:00"}, format="json").status_code, 400)
+        with patch("core.control_team.timezone.now", return_value=start.replace(hour=16, minute=5)):
+            response = self.office.patch(path, payload, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["weekly_seconds"], 9 * 3600 + 45 * 60)
+            self.assertEqual(response.data["monthly_seconds"], response.data["weekly_seconds"])
+            self.assertTrue(response.data["attendance"][0]["corrected_by_admin"])
+            self.assertEqual(self.office.patch(path, payload, format="json").status_code, 409)
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_in_at, start.replace(minute=15))
+        self.assertEqual(entry.checked_out_at, start.replace(hour=16))
+        self.assertTrue(entry.closed_by_admin)
+        self.assertEqual(entry.check_in_photo.name, original_photo)
+        self.assertEqual(entry.last_verified_at, start)
+        audit = AuditLog.objects.get(model_name="ControlAttendance", object_id=str(entry.pk))
+        self.assertEqual(audit.user.username, "office")
+        self.assertEqual(audit.before_data["checked_in_at"], start.isoformat())
+        self.assertEqual(audit.after_data["checked_out_at"], entry.checked_out_at.isoformat())
+        self.assertEqual(audit.after_data["reason"], payload["reason"])
+        self.assertTrue(Notification.objects.filter(user=self.member.user, title="Attendance corrected").exists())
+
+    def test_correction_can_shorten_a_legacy_record_but_rejects_overlap(self):
+        start = datetime(2026, 11, 10, 7, tzinfo=timezone.utc)
+        entry = self.member.attendance.create(checked_in_at=start, checked_out_at=start + timedelta(hours=23))
+        self.member.attendance.create(checked_in_at=start + timedelta(hours=13), checked_out_at=start + timedelta(hours=14))
+        path = f"/api/control/team/{self.member.pk}/attendance/{entry.pk}/"
+        payload = {
+            "original_check_in": start.isoformat(), "original_check_out": entry.checked_out_at.isoformat(),
+            "reason": "Employee left at the scheduled end.",
+        }
+        overlap = self.office.patch(path, {**payload, "checked_out_at": "2026-11-10T20:01"}, format="json")
+        self.assertEqual(overlap.status_code, 400)
+        response = self.office.patch(path, {**payload, "checked_out_at": "2026-11-10T17:00"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["weekly_seconds"], 11 * 3600)
+        entry.refresh_from_db()
+        self.assertEqual(entry.checked_in_at, start)
+        self.assertEqual(entry.checked_out_at, start.replace(hour=17))

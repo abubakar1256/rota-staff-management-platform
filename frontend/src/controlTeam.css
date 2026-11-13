@@ -49,6 +49,8 @@
 }
 .control-history-duration { text-align: right; }
 .control-history-duration strong { white-space: nowrap; }
+.control-correct-button { display: block; margin: 7px 0 0 auto; padding: 5px 8px; font-size: 12px; }
+.control-correction { max-height: calc(100dvh - 28px); overflow-y: auto; }
 .control-history-label { display: none; }
 .control-attendance-proof { margin-top: 7px; }
 .control-proof-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
