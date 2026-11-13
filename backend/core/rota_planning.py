@@ -29,6 +29,7 @@ class AssignmentSlotInput(SiteInput):
 
 class EligibleGuardsInput(AssignmentSlotInput):
     work_date = serializers.DateField()
+    include_blocked = serializers.BooleanField(default=False)
 
 
 class MultiDayInput(AssignmentSlotInput):

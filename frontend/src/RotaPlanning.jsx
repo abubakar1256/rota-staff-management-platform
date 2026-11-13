@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronLeft, ChevronRight, Copy, Search, Users, X } from "lucide-react";
 import "./rotaPlanning.css";
 
@@ -18,6 +19,118 @@ function PlanningDialog({ title, onClose, busy, children }) {
     </header>
     {children}
   </dialog>;
+}
+
+export function BulkAssignmentDialog({ api, rota, days, sites, shifts, selectedDate, onClose, onSaved }) {
+  const [form, setForm] = useState({ work_date: selectedDate, shift_type: "", site: "" });
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const hasSlot = Boolean(form.work_date && form.shift_type);
+  const endpoint = `/rota-weeks/${rota.id}`;
+  const guards = useQuery({
+    queryKey: ["rota", "bulk-guards", rota.id, form.site, hasSlot ? form.work_date : "", form.shift_type],
+    enabled: Boolean(form.site),
+    refetchOnMount: "always",
+    queryFn: ({ signal }) => api(`${endpoint}/${hasSlot ? "eligible_guards" : "inducted_guards"}/`, {
+      method: "POST", signal, silentLoading: true, silentError: true, silentToast: true, skipInvalidation: true,
+      body: JSON.stringify(hasSlot ? { ...form, include_blocked: true } : { site: form.site }),
+    }),
+  });
+  const available = guards.data || [];
+  const eligibleIds = new Set(available.filter((guard) => !guard.blocked_reason).map((guard) => guard.id));
+  const selectedIds = selected.filter((id) => eligibleIds.has(id));
+  const term = search.trim().toLowerCase();
+  const visible = available.filter((guard) => `${guard.name} ${guard.employee_id}`.toLowerCase().includes(term));
+  const canSubmit = hasSlot && guards.isSuccess && !guards.isFetching && !saving && selectedIds.length > 0;
+
+  useEffect(() => {
+    if (!guards.data) return;
+    const eligible = new Set(guards.data.filter((guard) => !guard.blocked_reason).map((guard) => guard.id));
+    setSelected((ids) => ids.every((id) => eligible.has(id)) ? ids : ids.filter((id) => eligible.has(id)));
+  }, [guards.data]);
+
+  function change(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+    setError("");
+    if (field === "site") {
+      setSelected([]);
+      setSearch("");
+    }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await api(`${endpoint}/bulk_assign/`, {
+        method: "POST", silentError: true, silentToast: true,
+        body: JSON.stringify({ ...form, employee_ids: selectedIds }),
+      });
+      await onSaved(result);
+    } catch (err) {
+      const details = err.payload?.errors;
+      const issues = Array.isArray(details) ? details.flatMap((item) => Object.values(item.errors || {}).flat()) : [];
+      setError(issues.length ? issues.join(" ") : err.message);
+      await guards.refetch();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <PlanningDialog title="Assign multiple employees" onClose={onClose} busy={saving}>
+    <form className="rota-planning-form" onSubmit={submit}>
+      <div className="form-grid">
+        <label className="full-width">Site<select required disabled={saving} value={form.site} onChange={(event) => change("site", event.target.value)}>
+          <option value="">Select site</option>
+          {sites.filter((site) => site.is_active !== false).map((site) => <option value={site.id} key={site.id}>{site.name}</option>)}
+        </select></label>
+        <label>Date<select required disabled={saving} value={form.work_date} onChange={(event) => change("work_date", event.target.value)}>
+          {days.map((day) => <option value={day} key={day}>{dateLabel(day)}</option>)}
+        </select></label>
+        <label>Shift<select required disabled={saving} value={form.shift_type} onChange={(event) => change("shift_type", event.target.value)}>
+          <option value="">Select shift</option>
+          {shifts.map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}
+        </select></label>
+      </div>
+      {!form.site ? <p className="muted">Select a site to see guards.</p>
+        : guards.isError ? <div className="rota-planning-actions" role="alert">
+          <p className="error">{guards.error.message}</p>
+          <button type="button" className="secondary-button" disabled={saving || guards.isFetching} onClick={() => guards.refetch()}>Try again</button>
+        </div>
+        : guards.isFetching ? <p className="muted" role="status">{hasSlot ? "Checking guard eligibility…" : "Loading inducted guards…"}</p>
+        : !available.length ? <p className="muted">No active guards have completed induction for this site.</p>
+        : <div className="bulk-selector">
+          <div className="bulk-selector-header"><strong>Select guards</strong><span aria-live="polite">{selectedIds.length} selected</span></div>
+          {!hasSlot && <p className="muted">Choose a date and shift to select guards.</p>}
+          <label className="search-box"><Search size={14} aria-hidden="true" />
+            <input aria-label="Search guards" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name or employee ID" />
+          </label>
+          {visible.length ? <div className="bulk-employee-list">
+            {visible.map((guard) => <label key={guard.id} className={guard.blocked_reason ? "rota-guard-blocked" : undefined}>
+              <input type="checkbox" disabled={saving || !hasSlot || Boolean(guard.blocked_reason)} checked={selectedIds.includes(guard.id)}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setSelected((ids) => checked ? [...ids, guard.id] : ids.filter((id) => id !== guard.id));
+                }} />
+              <span><strong>{guard.name}</strong><small>{guard.employee_id}</small>
+                {guard.blocked_reason && <small className="rota-guard-blocked-reason">{guard.blocked_reason}</small>}
+              </span>
+            </label>)}
+          </div> : <p className="muted">No guards match your search.</p>}
+        </div>}
+      {error && <p className="error" role="alert">{error}</p>}
+      <footer className="modal-actions">
+        <button type="button" className="secondary-button" disabled={saving} onClick={onClose}>Cancel</button>
+        <button type="submit" className="primary-button" disabled={!canSubmit}>
+          {saving ? "Assigning…" : selectedIds.length ? `Assign ${selectedIds.length} ${selectedIds.length === 1 ? "guard" : "guards"}` : "Assign guards"}
+        </button>
+      </footer>
+    </form>
+  </PlanningDialog>;
 }
 
 function Pages({ page, count, onChange }) {

@@ -33,6 +33,10 @@
 .rota-planning-pagination button { padding: 5px 8px; min-height: 34px; }
 .rota-planning-dialog .modal-actions { margin-top: 0; padding-top: 12px; border-top: 1px solid #e5ebf5; }
 .rota-planning-dialog .primary-button { display: inline-flex; align-items: center; gap: 6px; }
+.rota-planning-dialog .bulk-employee-list strong { font-size: 13px; }
+.rota-planning-dialog .bulk-employee-list small { color: #546680; font-size: 12px; }
+.rota-planning-dialog .bulk-employee-list label.rota-guard-blocked { align-items: flex-start; background: #f5f6f8; cursor: default; }
+.rota-planning-dialog .bulk-employee-list .rota-guard-blocked-reason { color: #805021; line-height: 1.4; overflow-wrap: anywhere; }
 .rota-site-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #50617a; font-size: 13px; }
 .rota-site-summary strong { color: #24334f; }
 .rota-share-link { text-decoration: none; }

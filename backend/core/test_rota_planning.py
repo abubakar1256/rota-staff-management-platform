@@ -106,6 +106,39 @@ class RotaPlanningTests(APITestCase):
         self.assertIn("already covered", changed.data["rows"][0]["reason"])
         self.assertEqual(RotaAssignment.objects.count(), 1)
 
+    def test_bulk_guard_list_shows_only_active_inducted_guards_with_blockers(self):
+        leave = Employee.objects.create(employee_id="PL-G3", name="On Leave")
+        overlap = Employee.objects.create(employee_id="PL-G4", name="Already Booked")
+        other_site_only = Employee.objects.create(employee_id="PL-G5", name="Other Site Guard")
+        inactive = Employee.objects.create(employee_id="PL-G6", name="Inactive Guard", status=Employee.Status.INACTIVE)
+        for employee, site, induction_status in (
+            (leave, self.site, SiteInduction.Status.COMPLETED),
+            (overlap, self.site, SiteInduction.Status.COMPLETED),
+            (other_site_only, self.other_site, SiteInduction.Status.COMPLETED),
+            (other_site_only, self.site, SiteInduction.Status.PLANNED),
+            (inactive, self.site, SiteInduction.Status.COMPLETED),
+        ):
+            SiteInduction.objects.create(site=site, employee=employee, induction_date=self.monday,
+                status=induction_status, created_by=self.admin)
+        GuardUnavailability.objects.create(employee=self.guard, work_date=self.monday)
+        LeaveRecord.objects.create(employee=leave, status=LeaveRecord.Status.APPROVED,
+                                   start_date=self.monday, end_date=self.monday, created_by=self.admin)
+        self.add_shift(overlap, self.monday, site=self.other_site)
+
+        inducted = self.post("inducted_guards", site=self.site.pk)
+        self.assertEqual(inducted.status_code, 200, inducted.data)
+        self.assertEqual({row["id"] for row in inducted.data}, {self.guard.pk, self.cover.pk, leave.pk, overlap.pk})
+        result = self.post("eligible_guards", site=self.site.pk, shift_type=self.day.pk,
+                           work_date=str(self.monday), include_blocked=True)
+        self.assertEqual(result.status_code, 200, result.data)
+        rows = {row["id"]: row["blocked_reason"] for row in result.data}
+        self.assertEqual(rows.keys(), {row["id"] for row in inducted.data})
+        self.assertIn("unavailable", rows[self.guard.pk])
+        self.assertIn("approved leave", rows[leave.pk])
+        self.assertIn(self.other_site.name, rows[overlap.pk])
+        self.assertEqual(rows[self.cover.pk], "")
+        self.assertEqual(RotaAssignment.objects.count(), 1)
+
     def test_manager_can_copy_only_managed_sites(self):
         manager = get_user_model().objects.create_user(username="planner-manager")
         profile, _ = UserProfile.objects.update_or_create(user=manager, defaults={"role": UserProfile.Role.MANAGER})

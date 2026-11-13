@@ -1269,6 +1269,13 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         return sites
 
     @staticmethod
+    def active_inducted_guards(site):
+        return Employee.objects.filter(
+            status=Employee.Status.ACTIVE, site_inductions__site=site,
+            site_inductions__status=SiteInduction.Status.COMPLETED,
+        ).order_by("name", "pk").distinct()
+
+    @staticmethod
     def check_preview(data, result):
         if data.get("preview_key") and data["preview_key"] != result["preview_key"]:
             return Response(
@@ -1287,19 +1294,21 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             raise ValidationError({"detail": "Choose a date in the selected week."})
         site = get_object_or_404(self.planning_sites(), pk=data["site"], is_active=True)
         shift = get_object_or_404(ShiftType, pk=data["shift_type"], is_active=True)
-        guards = list(Employee.objects.filter(
-            status=Employee.Status.ACTIVE, site_inductions__site=site,
-            site_inductions__status=SiteInduction.Status.COMPLETED,
-        ).distinct().prefetch_related("documents").order_by("name", "pk"))
+        guards = list(self.active_inducted_guards(site).prefetch_related("documents"))
         checks = RotaAssignmentChecks([guard.pk for guard in guards], [site.pk], day, day)
-        return Response([
-            {"id": guard.pk, "name": guard.name, "employee_id": guard.employee_id}
-            for guard in guards
-            if not checks.problem(RotaAssignment(
+        rows = []
+        for guard in guards:
+            problem = checks.problem(RotaAssignment(
                 rota_week=week, site=site, shift_type=shift, employee=guard, work_date=day,
                 scheduled_start=data.get("scheduled_start"), scheduled_end=data.get("scheduled_end"),
             ), employee_compliance_issues)
-        ])
+            if problem and not data["include_blocked"]:
+                continue
+            row = {"id": guard.pk, "name": guard.name, "employee_id": guard.employee_id}
+            if data["include_blocked"]:
+                row["blocked_reason"] = problem[0] if problem else ""
+            rows.append(row)
+        return Response(rows)
 
     @action(detail=True, methods=["post"])
     def inducted_guards(self, request, pk=None):
@@ -1307,11 +1316,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         inputs = SiteInput(data=request.data)
         inputs.is_valid(raise_exception=True)
         site = get_object_or_404(self.planning_sites(), pk=inputs.validated_data["site"], is_active=True)
-        guards = Employee.objects.filter(
-            status=Employee.Status.ACTIVE, site_inductions__site=site,
-            site_inductions__status=SiteInduction.Status.COMPLETED,
-        ).order_by("name", "pk").distinct()
-        return Response(list(guards.values("id", "name", "employee_id")))
+        return Response(list(self.active_inducted_guards(site).values("id", "name", "employee_id")))
 
     @action(detail=True, methods=["post"])
     def assign_days(self, request, pk=None):
