@@ -25,7 +25,7 @@ from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Count, Prefetch, Q, prefetch_related_objects
 from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -53,9 +53,12 @@ from .availability import assignment_availability_conflicts, unavailable_for_shi
 from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
 from .pin_encryption import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
+from .rota_checks import RotaAssignmentChecks
+from .rota_planning import CopyWeekInput, EligibleGuardsInput, MultiDayInput, SiteInput, plan_multi_day, plan_week_copy
 from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
+from .serializers import employee_compliance_issues
 
 
 User = get_user_model()
@@ -1259,6 +1262,90 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
     serializer_class = RotaWeekSerializer
     permission_classes = [IsAdminManagerOrEmployeeRota]
 
+    def planning_sites(self):
+        sites = Site.objects.all()
+        if role_of(self.request.user) == "MANAGER":
+            sites = sites.filter(manager_profiles__user=self.request.user)
+        return sites
+
+    @staticmethod
+    def check_preview(data, result):
+        if data.get("preview_key") and data["preview_key"] != result["preview_key"]:
+            return Response(
+                {**result, "detail": "Assignments or eligibility changed. Review the updated preview before saving."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    @action(detail=True, methods=["post"])
+    def eligible_guards(self, request, pk=None):
+        week = self.get_object()
+        slot_input = EligibleGuardsInput(data=request.data)
+        slot_input.is_valid(raise_exception=True)
+        data = slot_input.validated_data
+        day = data["work_date"]
+        if not week.week_start <= day <= week.week_start + timedelta(days=6):
+            raise ValidationError({"detail": "Choose a date in the selected week."})
+        site = get_object_or_404(self.planning_sites(), pk=data["site"], is_active=True)
+        shift = get_object_or_404(ShiftType, pk=data["shift_type"], is_active=True)
+        guards = list(Employee.objects.filter(
+            status=Employee.Status.ACTIVE, site_inductions__site=site,
+            site_inductions__status=SiteInduction.Status.COMPLETED,
+        ).distinct().prefetch_related("documents").order_by("name", "pk"))
+        checks = RotaAssignmentChecks([guard.pk for guard in guards], [site.pk], day, day)
+        return Response([
+            {"id": guard.pk, "name": guard.name, "employee_id": guard.employee_id}
+            for guard in guards
+            if not checks.problem(RotaAssignment(
+                rota_week=week, site=site, shift_type=shift, employee=guard, work_date=day,
+                scheduled_start=data.get("scheduled_start"), scheduled_end=data.get("scheduled_end"),
+            ), employee_compliance_issues)
+        ])
+
+    @action(detail=True, methods=["post"])
+    def inducted_guards(self, request, pk=None):
+        self.get_object()
+        inputs = SiteInput(data=request.data)
+        inputs.is_valid(raise_exception=True)
+        site = get_object_or_404(self.planning_sites(), pk=inputs.validated_data["site"], is_active=True)
+        guards = Employee.objects.filter(
+            status=Employee.Status.ACTIVE, site_inductions__site=site,
+            site_inductions__status=SiteInduction.Status.COMPLETED,
+        ).order_by("name", "pk").distinct()
+        return Response(list(guards.values("id", "name", "employee_id")))
+
+    @action(detail=True, methods=["post"])
+    def assign_days(self, request, pk=None):
+        week = self.get_object()
+        inputs = MultiDayInput(data=request.data)
+        inputs.is_valid(raise_exception=True)
+        data = inputs.validated_data
+        if not all(week.week_start <= day <= week.week_start + timedelta(days=6) for day in data["dates"]):
+            raise ValidationError({"detail": "All dates must be within the selected week."})
+        site = get_object_or_404(self.planning_sites(), pk=data["site"], is_active=True)
+        shift = get_object_or_404(ShiftType, pk=data["shift_type"], is_active=True)
+        with transaction.atomic():
+            if not data["preview"]:
+                week = RotaWeek.objects.select_for_update().get(pk=week.pk)
+            if week.status == RotaWeek.Status.PUBLISHED:
+                raise ValidationError({"detail": "Reopen the rota before assigning shifts."})
+            guards = Employee.objects.prefetch_related("documents")
+            if not data["preview"]:
+                guards = guards.select_for_update()
+            employee = get_object_or_404(guards, pk=data["employee"])
+            result, ready = plan_multi_day(week, data, employee, site, shift)
+            if data["preview"]:
+                return Response(result)
+            if changed := self.check_preview(data, result):
+                return changed
+            for assignment in ready:
+                assignment.created_by = request.user
+                assignment.save()
+            for day in {assignment.work_date for assignment in ready}:
+                sync_rota_date_operations(week, day, request.user)
+        for day in {assignment.work_date for assignment in ready}:
+            generate_daily_arrival_reports(day, request.user)
+        return Response({**result, "created": len(ready)})
+
     def get_queryset(self):
         queryset = RotaWeek.objects.select_related("created_by")
         week_start = self.request.query_params.get("week_start")
@@ -1294,15 +1381,21 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def publish(self, request, pk=None):
         rota_week = self.get_object()
+        rota_week = RotaWeek.objects.select_for_update().get(pk=rota_week.pk)
         assignments = list(rota_week.assignments.select_related("employee", "shift_type"))
+        conflicts = assignment_availability_conflicts(assignments)
+        expiry_conflicts = assignment_document_expiry_conflicts(assignments)
+        if request.data.get("preview") is True:
+            return Response({"conflicts": conflicts + expiry_conflicts})
+        if rota_week.status == RotaWeek.Status.PUBLISHED:
+            return Response(self.get_serializer(rota_week).data)
         if not assignments and not rota_week.whatsapp_shares.exists():
             return Response({"detail": "Add at least one assignment before publishing this rota."}, status=status.HTTP_400_BAD_REQUEST)
-        conflicts = assignment_availability_conflicts(assignments)
         if conflicts:
             raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before publishing."})
-        expiry_conflicts = assignment_document_expiry_conflicts(assignments)
         if expiry_conflicts:
             raise ValidationError({"detail": " ".join(expiry_conflicts[:6]) + " Update the documents or reassign the affected shifts before publishing."})
         confirmation_count = reset_rota_confirmations(rota_week)
@@ -1317,8 +1410,10 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         return Response(response)
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def reopen(self, request, pk=None):
         rota_week = self.get_object()
+        rota_week = RotaWeek.objects.select_for_update().get(pk=rota_week.pk)
         if rota_week.status == RotaWeek.Status.DRAFT:
             return Response(self.get_serializer(rota_week).data)
         reset_rota_confirmations(rota_week)
@@ -1435,50 +1530,68 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def copy_to(self, request, pk=None):
         source = self.get_object()
-        target_start = request.data.get("week_start")
-        if not target_start:
-            return Response({"detail": "week_start is required."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            target_date = date.fromisoformat(target_start)
-        except ValueError:
-            return Response({"detail": "week_start must be YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
-        if target_date == source.week_start:
-            raise ValidationError({"detail": "Choose a different week for the copy."})
+        inputs = CopyWeekInput(data=request.data)
+        inputs.is_valid(raise_exception=True)
+        data = inputs.validated_data
+        target_date = data["week_start"]
+        if target_date.weekday() != 0 or target_date == source.week_start:
+            raise ValidationError({"detail": "Choose a different Monday for the copy."})
 
-        offset = target_date - source.week_start
-        eligible = []
-        for assignment in source.assignments.select_related("employee", "site", "shift_type"):
-            if assignment.employee_id and not SiteInduction.objects.filter(
-                site=assignment.site,
-                employee=assignment.employee,
-                status=SiteInduction.Status.COMPLETED,
-            ).exists():
-                continue
-            eligible.append(assignment)
-        conflicts = assignment_availability_conflicts(eligible, offset)
-        if conflicts:
-            raise ValidationError({"detail": " ".join(conflicts[:6]) + " Resolve the availability conflicts before copying."})
-        expiry_conflicts = assignment_document_expiry_conflicts(eligible, offset)
-        if expiry_conflicts:
-            raise ValidationError({"detail": " ".join(expiry_conflicts[:6]) + " Update the documents or reassign the affected shifts before copying."})
+        sites = self.planning_sites()
+        if "site_ids" in data:
+            requested_sites = set(data["site_ids"])
+            sites = sites.filter(pk__in=requested_sites)
+            if sites.count() != len(requested_sites):
+                raise PermissionDenied("One or more selected sites are unavailable to this account.")
+        rows = list(source.assignments.filter(site__in=sites)
+                    .select_related("rota_week", "employee", "site", "shift_type").order_by("work_date", "pk"))
 
-        target, _ = RotaWeek.objects.get_or_create(week_start=target_date, defaults={"created_by": request.user})
-        if target.status == RotaWeek.Status.PUBLISHED:
-            return Response({"detail": "The target rota is already published."}, status=status.HTTP_400_BAD_REQUEST)
-        target.assignments.all().delete()
-        for assignment in eligible:
-            RotaAssignment.objects.create(
-                rota_week=target,
-                work_date=assignment.work_date + offset,
-                shift_type=assignment.shift_type,
-                scheduled_start=assignment.scheduled_start,
-                scheduled_end=assignment.scheduled_end,
-                employee=assignment.employee,
-                site=assignment.site,
-                notes=assignment.notes,
-                created_by=request.user,
+        targets = RotaWeek.objects.filter(week_start=target_date)
+        if not data["preview"]:
+            targets = targets.select_for_update()
+        target = targets.first()
+        if target and target.status == RotaWeek.Status.PUBLISHED:
+            raise ValidationError({"detail": "The target rota is already published."})
+        if not target:
+            target = RotaWeek(week_start=target_date, created_by=request.user)
+        if not data["preview"] and not data.get("preview_key"):
+            conflicts = assignment_availability_conflicts(rows, target_date - source.week_start)
+            conflicts += assignment_document_expiry_conflicts(rows, target_date - source.week_start)
+            if conflicts:
+                raise ValidationError({"detail": " ".join(conflicts[:6]) + " Preview the copy to continue with eligible assignments."})
+        if not data["preview"]:
+            list(Employee.objects.select_for_update().filter(
+                pk__in={row.employee_id for row in rows if row.employee_id},
+            ).order_by("pk").values_list("pk", flat=True))
+        prefetch_related_objects([row.employee for row in rows if row.employee_id], "documents")
+        result, ready = plan_week_copy(rows, target)
+        if data["preview"]:
+            return Response(result)
+        if changed := self.check_preview(data, result):
+            return changed
+        if not data.get("preview_key") and result["skipped"]:
+            skipped = [row["reason"] for row in result["rows"] if row["status"] == "skipped"]
+            raise ValidationError({"detail": " ".join(skipped[:6]) + " Preview the copy to continue with eligible assignments."})
+        if ready and not target.pk:
+            target, created = RotaWeek.objects.select_for_update().get_or_create(
+                week_start=target_date, defaults={"created_by": request.user},
             )
-        return Response(self.get_serializer(target).data)
+            if not created:
+                if target.status == RotaWeek.Status.PUBLISHED:
+                    raise ValidationError({"detail": "The target rota is already published."})
+                updated, _ = plan_week_copy(rows, target)
+                return Response(
+                    {**updated, "detail": "The target week was created. Review the updated preview."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+        for assignment in ready:
+            assignment.rota_week = target
+            assignment.created_by = request.user
+            assignment.save()
+        return Response({
+            **(self.get_serializer(target).data if target.pk else {}),
+            **result, "week_start": target_date.isoformat(), "created": len(ready),
+        })
 
     @action(detail=True, methods=["post"])
     def bulk_assign(self, request, pk=None):

@@ -257,7 +257,10 @@ export function RotaWhatsAppPanel({ api, rota }) {
         : queue.isError ? <p className="error" role="alert">{queue.error.message}</p>
           : <>
             {error && <p className="error" role="alert">{error}</p>}
-            <RecipientQueue rows={queue.data.recipients} onMarkSent={markSent} busyId={busyId} title="Guards this week" />
+            <RecipientQueue rows={[
+              ...queue.data.recipients.filter((guard) => guard.status === "UPDATE_PENDING" || guard.status === "PENDING"),
+              ...queue.data.recipients.filter((guard) => guard.status !== "UPDATE_PENDING" && guard.status !== "PENDING"),
+            ]} onMarkSent={markSent} busyId={busyId} title="Guards this week" />
           </>}
   </section>;
 }

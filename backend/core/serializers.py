@@ -13,8 +13,7 @@ from .cortex_itime import save_cortex_access
 from .permissions import is_admin, is_guard
 from .pin_encryption import pin_cipher
 from .document_requirements import documents_completion, is_british
-from .availability import shift_dates, unavailable_for_shift, unavailable_message
-from .rota_document_expiry import document_expiry_conflict
+from .rota_checks import RotaAssignmentChecks
 from .whatsapp import normalise_whatsapp_number
 
 from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
@@ -545,7 +544,6 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at"]
 
     def validate(self, attrs):
-        request = self.context.get("request")
         rota_week = attrs.get("rota_week", getattr(self.instance, "rota_week", None))
         work_date = attrs.get("work_date", getattr(self.instance, "work_date", None))
         shift_type = attrs.get("shift_type", getattr(self.instance, "shift_type", None))
@@ -558,49 +556,17 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
             week_end = rota_week.week_start + __import__("datetime").timedelta(days=6)
             if not rota_week.week_start <= work_date <= week_end:
                 raise serializers.ValidationError({"work_date": "Assignment date must fall inside the selected rota week."})
-        if employee and employee.status != Employee.Status.ACTIVE:
-            raise serializers.ValidationError({"employee": "Only active employees can be assigned to a new rota."})
-        if employee and work_date and shift_type:
-            unavailable_day = unavailable_for_shift(employee.pk, work_date, scheduled_start, scheduled_end)
-            if unavailable_day:
-                raise serializers.ValidationError({"employee": unavailable_message(employee.name, unavailable_day)}, code="guard_unavailable")
-        if employee and site and not SiteInduction.objects.filter(site=site, employee=employee, status=SiteInduction.Status.COMPLETED).exists():
-            raise serializers.ValidationError({"employee": f"{employee.name} must have a completed site induction for {site.name} before assignment."})
-        if employee:
-            documents = list(employee.documents.all())
-            through_date = shift_dates(work_date, scheduled_start, scheduled_end)[-1]
-            expired = document_expiry_conflict(employee, through_date, documents=documents)
-            if expired:
-                raise serializers.ValidationError({"employee": expired}, code="critical_document_expired")
-            compliance_issues = employee_compliance_issues(employee, documents)
-            if compliance_issues:
-                raise serializers.ValidationError({"employee": f"{employee.name} cannot be assigned until critical documents are verified: {'; '.join(compliance_issues[:4])}."})
         if rota_week and rota_week.status == RotaWeek.Status.PUBLISHED:
             raise serializers.ValidationError("Published rotas cannot be changed. Create a new draft week or unpublish it first.")
-        if employee and work_date and shift_type:
-            if LeaveRecord.objects.filter(employee=employee, status=LeaveRecord.Status.APPROVED, start_date__lte=work_date, end_date__gte=work_date).exists():
-                raise serializers.ValidationError({"employee": f"{employee.name} is on approved leave on this date."})
-            assignments = RotaAssignment.objects.filter(employee=employee, work_date=work_date).select_related("shift_type", "site")
-            if self.instance:
-                assignments = assignments.exclude(pk=self.instance.pk)
-            duplicate_slot = RotaAssignment.objects.filter(
-                rota_week=rota_week,
-                work_date=work_date,
-                shift_type=shift_type,
-                site=attrs.get("site", getattr(self.instance, "site", None)),
-                employee=employee,
+        if employee and work_date and site and shift_type:
+            candidate = RotaAssignment(
+                rota_week=rota_week, employee=employee, site=site, shift_type=shift_type,
+                work_date=work_date, scheduled_start=scheduled_start, scheduled_end=scheduled_end,
             )
-            if self.instance:
-                duplicate_slot = duplicate_slot.exclude(pk=self.instance.pk)
-            if duplicate_slot.exists():
-                raise serializers.ValidationError({"employee": f"{employee.name} is already assigned to this site and shift."})
-            for assignment in assignments:
-                existing_start = assignment.scheduled_start or assignment.shift_type.start_time
-                existing_end = assignment.scheduled_end or assignment.shift_type.end_time
-                if shift_type.id != assignment.shift_type_id and (self._crosses_midnight(scheduled_start, scheduled_end) or self._crosses_midnight(existing_start, existing_end)):
-                    raise serializers.ValidationError({"employee": f"{employee.name} cannot work a day and night shift on the same date."})
-                if self._times_overlap(scheduled_start, scheduled_end, existing_start, existing_end):
-                    raise serializers.ValidationError({"employee": f"{employee.name} is already assigned at {assignment.site.name} during this time."})
+            checks = RotaAssignmentChecks([employee.pk], [site.pk], work_date, work_date)
+            if problem := checks.problem(candidate, employee_compliance_issues, exclude_id=getattr(self.instance, "pk", None)):
+                message, code = problem
+                raise serializers.ValidationError({"employee": message}, code=code)
         return attrs
 
     @staticmethod

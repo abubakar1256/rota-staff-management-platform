@@ -1,0 +1,42 @@
+.rota-planning-dialog {
+  width: min(640px, calc(100% - 28px));
+  max-height: calc(100dvh - 32px);
+  padding: clamp(16px, 4vw, 26px);
+  border: 1px solid #dce5f4;
+  border-radius: 16px;
+  background: #fff;
+  color: #24334f;
+  box-shadow: 0 22px 65px #11214438;
+}
+.rota-planning-dialog::backdrop { background: #15223d70; }
+.rota-planning-dialog .modal-header { align-items: center; margin-bottom: 14px; }
+.rota-planning-dialog h3 { margin: 0; font-size: 21px; }
+.rota-planning-form { display: grid; gap: 14px; }
+.rota-planning-form p { margin: 0; }
+.rota-planning-slot { display: flex; align-items: center; gap: 8px; color: #284fae; font-weight: 650; }
+.rota-planning-days, .rota-planning-site-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px; border: 1px solid #dce5f4; border-radius: 10px; }
+.rota-planning-days legend, .rota-planning-site-picker legend { padding: 0 5px; font-size: 13px; font-weight: 650; }
+.rota-planning-site-picker { max-height: 200px; overflow-y: auto; }
+.rota-planning-site-picker label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 7px; background: #f3f6fb; font-size: 13px; }
+.rota-planning-site-picker input { accent-color: #496fd1; }
+.rota-planning-days .secondary-button, .rota-planning-filters .secondary-button { min-height: 37px; padding: 6px 10px; }
+.rota-planning-filters, .rota-planning-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rota-planning-days button[aria-pressed="true"], .rota-planning-filters button[aria-pressed="true"] { color: #284fae; background: #edf2ff; border-color: #a8baf0; }
+.rota-planning-preview, .rota-cover-queue, .rota-planning-rows { display: grid; gap: 8px; }
+.rota-cover-queue { margin-top: 12px; }
+.rota-cover-queue .search-box { max-width: 440px; }
+.rota-planning-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 12px; border: 1px solid #e1e8f3; border-radius: 9px; background: #f8faff; }
+.rota-planning-row > div:first-child { min-width: 0; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.rota-planning-row > div:first-child span { font-size: 13px; color: #50617a; }
+.rota-planning-row .status-pill { flex-shrink: 0; text-transform: capitalize; }
+.rota-planning-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 9px; color: #50617a; font-size: 13px; }
+.rota-planning-pagination button { padding: 5px 8px; min-height: 34px; }
+.rota-planning-dialog .modal-actions { margin-top: 0; padding-top: 12px; border-top: 1px solid #e5ebf5; }
+.rota-planning-dialog .primary-button { display: inline-flex; align-items: center; gap: 6px; }
+.rota-site-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #50617a; font-size: 13px; }
+.rota-site-summary strong { color: #24334f; }
+.rota-share-link { text-decoration: none; }
+@media (max-width: 550px) {
+  .rota-planning-dialog .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .rota-cover-queue .rota-planning-row { flex-wrap: wrap; }
+}

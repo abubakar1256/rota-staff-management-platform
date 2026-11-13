@@ -16,7 +16,8 @@ import CompleteShiftReview from "./CompleteShiftReview";
 import ReachedReport from "./ReachedReport";
 import DailyOperationsPage from "./DailyOperationsPage";
 import { ControlPortal, ControlTeamAdmin } from "./ControlTeam";
-import { siteWeekStaffing } from "./rotaStaffing.js";
+import { siteWeekSlots } from "./rotaStaffing.js";
+import { NeedsCover, PublishRotaDialog, RotaBatchDialog } from "./RotaPlanning";
 import { ukDate, formatUkAttendanceTime, formatUkDateTime } from "./ukTime.js";
 import { clearAuth, endAdminSession, getToken, isControlPortal, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
@@ -494,13 +495,11 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [coverage, setCoverage] = useState({ sites: [], slots: [] });
-  const [coverageFilter, setCoverageFilter] = useState("ALL");
-  const [coverageSearch, setCoverageSearch] = useState("");
-  const [coveragePage, setCoveragePage] = useState(1);
   const [siteRosterSearch, setSiteRosterSearch] = useState("");
+  const [siteView, setSiteView] = useState("all");
+  const [batch, setBatch] = useState(null);
+  const [publishReview, setPublishReview] = useState(null);
   const [selectedRosterSite, setSelectedRosterSite] = useState(target.site_id ? String(target.site_id) : "");
-  const [expandedSite, setExpandedSite] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkSearch, setBulkSearch] = useState("");
   const [bulkEmployeeIds, setBulkEmployeeIds] = useState([]);
@@ -529,9 +528,6 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
-  const loadCoverage = async (rotaId, dateValue) => {
-    try { setCoverage(await api(`/rota-weeks/${rotaId}/coverage/?date=${dateValue}`)); } catch (err) { setError(err.message); }
-  };
 
   useEffect(() => {
     api("/employees/?status=ACTIVE").then(setEmployees).catch(() => {});
@@ -547,17 +543,21 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   }, []);
   useEffect(() => {
     if (!selectedRosterSite) return;
+    let active = true;
+    setSiteInductions([]);
+    setSiteRequirements([]);
+    setRequirementDraft({});
     Promise.all([api(`/site-requirements/?site=${selectedRosterSite}`), api(`/site-inductions/?site=${selectedRosterSite}`)]).then(([requirements, inductions]) => {
+      if (!active) return;
       setSiteRequirements(requirements);
       setAllSiteRequirements((current) => [...current.filter((item) => String(item.site) !== String(selectedRosterSite)), ...requirements]);
       setRequirementDraft(Object.fromEntries(requirements.map((item) => [`${item.weekday}-${item.shift_type}`, item.required_guards])));
       setSiteInductions(inductions);
-    }).catch((err) => setError(err.message));
+    }).catch((err) => { if (active) setError(err.message); });
+    return () => { active = false; };
   }, [selectedRosterSite]);
 
   useEffect(() => { setSelectedDate(weekStart); setBulkForm((current) => ({ ...current, work_date: weekStart })); loadWeek(); }, [weekStart]);
-  useEffect(() => { if (rota?.id) loadCoverage(rota.id, selectedDate); }, [rota?.id, selectedDate, assignments.length]);
-  useEffect(() => { setCoveragePage(1); }, [coverageFilter, coverageSearch, selectedDate]);
 
   const updateForm = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const selectRosterSite = (siteId) => {
@@ -697,22 +697,36 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     try { await api("/site-inductions/", { method: "POST", body: JSON.stringify({ site: selectedRoster.site.id, ...inductionForm, employee: Number(inductionForm.employee) }) }); setSiteInductions(await api(`/site-inductions/?site=${selectedRoster.site.id}`)); setInductionForm({ employee: "", induction_date: selectedDate, status: "PLANNED", notes: "" }); setNotice("Guard induction added to this site."); }
     catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  const publish = async () => {
-    if (!rota || availabilityConflicts.length) return;
-    setSaving(true);
-    setError("");
-    setNotice("");
+  const reviewPublish = async () => {
+    if (!staffingReady || saving) return;
+    setSaving(true); setError(""); setNotice("");
     try {
-      const weeklyCoverage = await Promise.all(days.map((day) => api(`/rota-weeks/${rota.id}/coverage/?date=${day}`)));
-      const gaps = weeklyCoverage.flatMap((dayCoverage, dayIndex) => dayCoverage.slots.filter((slot) => slot.unfilled > 0).map((slot) => ({ ...slot, work_date: days[dayIndex] })));
-      if (gaps.length) {
-        const preview = gaps.slice(0, 8).map((gap) => `${formatDay(gap.work_date, { weekday: "short", day: "numeric", month: "short" })}: ${gap.site_name} · ${gap.shift_name} (${gap.unfilled} unfilled)`).join("\n");
-        const remaining = gaps.length > 8 ? `\n…and ${gaps.length - 8} more gaps.` : "";
-        const proceed = confirm(`This rota has ${gaps.length} unfilled site-shift gaps.\n\n${preview}${remaining}\n\nPublish anyway?`);
-        if (!proceed) { setSaving(false); return; }
-      }
-      const result = await api(`/rota-weeks/${rota.id}/publish/`, { method: "POST", body: "{}" }); await loadWeek(); setNotice(`Rota successfully published. Confirmation requested from ${result.confirmation_count || 0} employees.`);
+      const [review, ...coverageDays] = await Promise.all([
+        api(`/rota-weeks/${rota.id}/publish/`, {
+          method: "POST", body: JSON.stringify({ preview: true }), silentLoading: true, silentToast: true, skipInvalidation: true,
+        }),
+        ...days.map((day) => api(`/rota-weeks/${rota.id}/coverage/?date=${day}`, { silentLoading: true })),
+      ]);
+      const gaps = coverageDays.flatMap((coverageDay, index) => coverageDay.slots
+        .filter((slot) => slot.unfilled > 0)
+        .map((slot) => ({
+          site: { id: slot.site, name: slot.site_name }, shift: { id: slot.shift_type, name: slot.shift_name },
+          day: days[index], unfilled: slot.unfilled,
+        })));
+      setPublishReview({ gaps, conflicts: review.conflicts, error: "" });
     } catch (err) { setError(err.message); } finally { setSaving(false); }
+  };
+  const publish = async () => {
+    if (!publishReview || publishReview.conflicts.length || saving) return;
+    setSaving(true);
+    try {
+      const result = await api(`/rota-weeks/${rota.id}/publish/`, { method: "POST", body: "{}", silentError: true, silentLoading: true, silentToast: true });
+      setPublishReview(null);
+      await loadWeek();
+      setNotice(`Rota published. Confirmation requested from ${result.confirmation_count || 0} employees.`);
+    } catch (err) {
+      setPublishReview((current) => ({ ...current, error: err.message }));
+    } finally { setSaving(false); }
   };
   const reopen = async () => {
     if (!rota) return;
@@ -721,22 +735,40 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     setNotice("");
     try { await api(`/rota-weeks/${rota.id}/reopen/`, { method: "POST", body: "{}" }); await loadWeek(); setNotice("Rota reopened. You can add or edit assignments now."); } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  const copyWeek = async () => {
-    const target = prompt("Copy this rota to which Monday? (YYYY-MM-DD)", addDays(weekStart, 7));
-    if (!target || !rota) return;
-    setSaving(true); setError("");
-    try { await api(`/rota-weeks/${rota.id}/copy_to/`, { method: "POST", body: JSON.stringify({ week_start: toMonday(target) }) }); setWeekStart(toMonday(target)); setNotice("Rota copied to the new week."); }
-    catch (err) { setError(err.message); } finally { setSaving(false); }
+  const copyWeek = () => setBatch({
+    mode: "copy", initial: { week_start: addDays(weekStart, 7), scope: "all", site_ids: [] },
+  });
+  const openMultiDay = () => setBatch({
+    mode: "days", initial: {
+      site: String(selectedRoster?.site.id || ""), shift_type: form.shift_type, employee: form.employee,
+      dates: [selectedDate], scheduled_start: form.scheduled_start, scheduled_end: form.scheduled_end,
+    },
+  });
+  const openCover = (slot) => {
+    const initial = {
+      site: String(slot.site.id), shift_type: String(slot.shift.id), employee: "", dates: [slot.day],
+      scheduled_start: slot.shift.start_time.slice(0, 5), scheduled_end: slot.shift.end_time.slice(0, 5),
+    };
+    if (rota.status === "PUBLISHED") {
+      selectRosterSite(slot.site.id);
+      setSelectedDate(slot.day);
+      setForm((current) => ({ ...current, ...initial, notes: "" }));
+      requestAnimationFrame(() => document.getElementById("rota-add-assignment")?.scrollIntoView({ block: "center" }));
+      return;
+    }
+    setBatch({ mode: "cover", initial });
+  };
+  const batchSaved = async (result) => {
+    const copied = batch.mode === "copy";
+    setBatch(null);
+    if (copied) setWeekStart(result.week_start);
+    else await loadWeek();
+    const skipped = result.skipped ? ` ${result.skipped} skipped. Check Needs cover for open positions.` : "";
+    setNotice(`${result.created} ${result.created === 1 ? "assignment" : "assignments"} ${copied ? "copied" : "saved"}.${skipped}`);
   };
   const removeAssignment = async (id) => {
     if (!confirm("Remove this assignment?")) return;
     try { await api(`/assignments/${id}/`, { method: "DELETE" }); await loadWeek(); } catch (err) { setError(err.message); }
-  };
-  const generateOperations = async () => {
-    if (!rota) return;
-    setSaving(true); setError("");
-    try { const result = await api(`/rota-weeks/${rota.id}/generate_operations/`, { method: "POST", body: JSON.stringify({ date: selectedDate }) }); setNotice(`${result.total} daily operation records synced. ${result.reports?.length || 0} shift PDFs saved.`); }
-    catch (err) { setError(err.message); } finally { setSaving(false); }
   };
   const toggleBulkEmployee = (id) => setBulkEmployeeIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const openBulk = () => {
@@ -756,18 +788,9 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
       await loadWeek();
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
-  const visibleSites = coverage.sites.filter((site) => coverageFilter === "ALL" || (coverageFilter === "GAPS" ? site.unfilled > 0 : site.unfilled === 0));
-  const normalizedCoverageSearch = coverageSearch.trim().toLowerCase();
-  const filteredCoverageSites = visibleSites.filter((site) => !normalizedCoverageSearch || `${site.site_name} ${site.site_code || site.site}`.toLowerCase().includes(normalizedCoverageSearch));
-  const coveragePageSize = 20;
-  const coveragePageCount = Math.max(1, Math.ceil(filteredCoverageSites.length / coveragePageSize));
-  const coveragePageSites = filteredCoverageSites.slice((coveragePage - 1) * coveragePageSize, coveragePage * coveragePageSize);
-  const selectedSite = coverage.sites.find((site) => site.site === expandedSite);
-  const selectedSiteSlots = coverage.slots.filter((slot) => slot.site === expandedSite);
-  const filteredAssignments = assignments;
-  const assignedCount = assignments.filter((assignment) => assignment.employee).length;
-  const coverageUnfilled = coverage.sites.reduce((total, site) => total + site.unfilled, 0);
-  const assignedEmployees = new Set(assignments.filter((assignment) => assignment.employee).map((assignment) => assignment.employee)).size;
+  const filteredAssignments = selectedRosterSite
+    ? assignments.filter((assignment) => String(assignment.site) === selectedRosterSite)
+    : assignments;
   const filteredEmployees = employees.filter((employee) => {
     const searchable = `${employee.name} ${employee.employee_id}`.toLowerCase();
     return !bulkSearch.trim() || searchable.includes(bulkSearch.trim().toLowerCase());
@@ -782,21 +805,25 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     return minutes / 60;
   };
   const staffingReady = requirementsReady && shiftTypes.length > 0 && !loading && rota?.week_start === weekStart;
-  const rosterSiteRows = sites.filter((site) => !siteRosterSearch.trim() || `${site.name} ${site.site_id}`.toLowerCase().includes(siteRosterSearch.trim().toLowerCase())).map((site) => {
+  const rosterSiteRows = sites.map((site) => {
     const siteAssignments = assignments.filter((assignment) => assignment.site === site.id && assignment.employee);
-    const weeklyHours = siteAssignments.reduce((total, assignment) => {
-      return total + assignmentHours(assignment);
-    }, 0);
-    const dayCount = siteAssignments.filter((assignment) => { const shift = shiftTypes.find((item) => item.id === assignment.shift_type); return shift && !shift.name.toLowerCase().includes("night"); }).length;
-    const nightCount = siteAssignments.length - dayCount;
-    const { requiredSlots, unfilled } = siteWeekStaffing({ site, days, shifts: shiftTypes, requirements: allSiteRequirements, assignments });
-    return { site, assignments: siteAssignments, assigned: siteAssignments.length, requiredSlots, unfilled, weeklyHours, dayCount, nightCount };
+    const weeklyHours = siteAssignments.reduce((total, assignment) => total + assignmentHours(assignment), 0);
+    const slots = siteWeekSlots({ site, days, shifts: shiftTypes, requirements: allSiteRequirements, assignments: siteAssignments });
+    return { site, assignments: siteAssignments, assigned: siteAssignments.length, slots, weeklyHours,
+      unfilled: slots.reduce((total, slot) => total + slot.unfilled, 0) };
   });
+  const activeRosterSites = rosterSiteRows.filter(({ site }) => site.is_active !== false);
+  const gapSites = activeRosterSites.filter((row) => row.unfilled > 0).length;
+  const weekGaps = rosterSiteRows.flatMap((row) => row.slots.filter((slot) => slot.unfilled > 0))
+    .sort((left, right) => left.day.localeCompare(right.day) || left.site.name.localeCompare(right.site.name));
+  const listedRosterSites = rosterSiteRows.filter(({ site, unfilled }) =>
+    (siteView !== "ready" || (site.is_active !== false && unfilled === 0)) &&
+    `${site.name} ${site.site_id}`.toLowerCase().includes(siteRosterSearch.trim().toLowerCase()),
+  );
   const selectedRoster = rosterSiteRows.find((row) => String(row.site.id) === String(selectedRosterSite));
   const inductedEmployeeIds = new Set(siteInductions.filter((induction) => induction.status === "COMPLETED").map((induction) => induction.employee));
   const selectedSiteEmployees = employees.filter((employee) => inductedEmployeeIds.has(employee.id));
   const selectedRosterEmployees = selectedRoster ? selectedSiteEmployees.map((employee) => ({ id: employee.id, name: employee.name, assignments: selectedRoster.assignments.filter((assignment) => assignment.employee === employee.id) })) : [];
-  const totalWeeklyHours = assignments.filter((assignment) => assignment.employee).reduce((total, assignment) => total + assignmentHours(assignment), 0);
   const rosterCell = (employeeAssignments, day) => employeeAssignments.filter((assignment) => assignment.work_date === day).map((assignment) => { const shift = shiftTypes.find((item) => item.id === assignment.shift_type); return { assignment, shift }; }).filter((item) => item.shift);
   const requirementRows = selectedRoster ? days.flatMap((day, weekday) => shiftTypes.map((shift) => {
     const key = `${weekday}-${shift.id}`;
@@ -806,9 +833,8 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   })) : [];
 
   return <>
-    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><label className="week-picker">Week starting<input type="date" value={weekStart} onChange={(event) => setWeekStart(toMonday(event.target.value))} /></label><button className="secondary-button" onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={!rota || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!rota || saving} onClick={openBulk}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || Boolean(availabilityConflicts.length)} onClick={publish}>{rota?.status === "PUBLISHED" ? "Published" : "Publish rota"}</button></div></div>
+    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><label className="week-picker">Week starting<input type="date" value={weekStart} onChange={(event) => setWeekStart(toMonday(event.target.value))} /></label><button className="secondary-button" onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || !assignments.length || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={openMultiDay}><CalendarDays size={14} /> Assign multiple days</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!rota || saving} onClick={openBulk}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || !staffingReady} onClick={reviewPublish}>{rota?.status === "PUBLISHED" ? "Published" : "Review & publish"}</button></div></div>
     {error && <p className="error page-error">{error}</p>}{shiftLoadError && <p className="error page-error">Shift list could not be loaded: {shiftLoadError}</p>}{!shiftLoadError && !shiftTypes.length && !loading && <p className="error page-error">No active shifts are configured. Ask an Admin to run the latest deployment/migrations.</p>}{notice && <p className="success page-success">{notice}</p>}
-    {canShareWhatsApp && rota?.week_start === weekStart && !loading && !saving && <RotaWhatsAppPanel key={rota.id} api={api} rota={rota} />}
     {availability.error && <p className="rota-availability-warning" role="status">Availability could not be loaded. The server checks availability when you save or publish.</p>}
     {availabilityConflicts.length > 0 && <div className="rota-availability-warning" role="status">
       <strong>Guard availability conflicts</strong>
@@ -816,12 +842,38 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
       {availabilityConflicts.length > 6 && <p>See the rota cards for the remaining conflicts.</p>}
       <p>{rota?.status === "PUBLISHED" ? "Reopen the rota to reassign these shifts, or update Guard Availability." : "Reassign these shifts or update Guard Availability before publishing."}</p>
     </div>}
-    <section className="panel site-roster-panel"><div className="panel-header"><div><h3>Sites</h3><p className="muted">Select a site to open its Monday–Sunday weekly rota. Gaps count unfilled guard positions across this whole week.</p></div><span className="muted">{rosterSiteRows.length} sites</span></div><div className="site-roster-toolbar"><div className="search-box"><Search size={16} /><input value={siteRosterSearch} onChange={(event) => setSiteRosterSearch(event.target.value)} placeholder="Search site name or ID" /></div></div><div className="site-name-buttons">{rosterSiteRows.length ? rosterSiteRows.map((row) => <button type="button" className={`site-name-button ${String(row.site.id) === String(selectedRoster?.site.id) ? "selected" : ""}`} key={row.site.id} onClick={() => selectRosterSite(row.site.id)} onDragOver={(event) => { if (rota?.status !== "PUBLISHED" && draggedAssignment) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveAssignmentToSite(draggedAssignment, row.site.id); }}><span><strong>{row.site.name}</strong><small>{row.site.site_id} · {row.assigned} assigned · {row.weeklyHours.toFixed(0)}h</small></span><span className={`status-pill ${!staffingReady || row.site.is_active === false ? "neutral" : row.unfilled ? "pending" : "active"}`}>{!staffingReady ? (error || shiftLoadError ? "Count unavailable" : "Loading requirements…") : row.site.is_active === false ? "Inactive" : row.unfilled ? `${row.unfilled} unfilled this week` : "Week covered"}</span></button>) : <div className="empty-state compact-empty">No sites match your search.</div>}</div>{selectedRoster && <div className="site-roster-detail"><div className="site-roster-detail-header"><div><p className="eyebrow">SITE WEEKLY ROSTER</p><h3>{selectedRoster.site.name}</h3><span>{selectedRoster.site.site_id} · Week commencing {formatDay(weekStart, { day: "numeric", month: "short", year: "numeric" })}</span><small className="table-subtext">Completed-induction guards are added automatically.</small></div><div className="site-roster-metrics"><span><strong>{selectedRoster.assigned}</strong> assigned</span><span><strong>{selectedRoster.weeklyHours.toFixed(0)}h</strong> total</span><span><strong>{staffingReady ? selectedRoster.unfilled : "—"}</strong> unfilled this week</span></div></div><div className="table-wrap"><table className="site-roster-matrix"><thead><tr><th>Guard</th>{days.map((day) => <th key={day}>{formatDay(day, { weekday: "short" })}<small>{formatDay(day, { day: "numeric", month: "short" })}</small></th>)}<th>Total</th></tr></thead><tbody>{selectedRosterEmployees.length ? selectedRosterEmployees.map((employee) => { const totalHours = employee.assignments.reduce((total, assignment) => total + assignmentHours(assignment), 0); return <tr key={employee.id}><td><strong>{employee.name}</strong><small>{employees.find((item) => item.id === employee.id)?.employee_id || ""}</small></td>{days.map((day) => <td key={day}><div className="roster-day-cell">{rosterCell(employee.assignments, day).length ? rosterCell(employee.assignments, day).map(({ assignment, shift }) => <span className={`roster-shift-badge ${shift.name.toLowerCase().includes("night") ? "night" : "day"}`} key={assignment.id}>{shift.name.replace(" Shift", "")}<small>{(assignment.scheduled_start || shift.start_time).slice(0, 5)}–{(assignment.scheduled_end || shift.end_time).slice(0, 5)}</small></span>) : <span className="roster-off">—</span>}</div></td>)}<td><strong>{totalHours.toFixed(0)}h</strong></td></tr>; }) : <tr><td colSpan={9}><div className="empty-state compact-empty">No completed-induction guards for this site yet.</div></td></tr>}</tbody></table></div></div>}</section>
+    <section className="panel site-roster-panel">
+      <div className="panel-header"><h3>Sites</h3>
+        {canShareWhatsApp && rota?.status === "PUBLISHED" && rota.week_start === weekStart &&
+          <a className="secondary-button rota-share-link" href="#rota-sharing">Rota Sharing</a>}
+      </div>
+      <p className="rota-site-summary" role="status"><span><strong>{activeRosterSites.length}</strong> active sites</span>
+        {staffingReady && <><span><strong>{activeRosterSites.length - gapSites}</strong> ready</span><span><strong>{gapSites}</strong> need cover</span></>}
+      </p>
+      <div className="rota-planning-filters" aria-label="Site views">
+        {[["all", "All sites"], ["cover", "Needs cover"], ["ready", "Ready"]].map(([id, label]) =>
+          <button type="button" className="secondary-button" key={id} aria-pressed={siteView === id} onClick={() => setSiteView(id)}>{label}</button>)}
+      </div>
+      {siteView === "cover" ? staffingReady
+        ? <NeedsCover gaps={weekGaps} onSelect={openCover} published={rota.status === "PUBLISHED"} />
+        : <p className="muted">{loading ? "Loading coverage…" : "Coverage is unavailable. Check staffing requirements and shift types."}</p>
+        : <>
+          <div className="site-roster-toolbar"><label className="search-box"><Search size={16} /><input aria-label="Search sites" value={siteRosterSearch} onChange={(event) => setSiteRosterSearch(event.target.value)} placeholder="Search site name or ID" /></label></div>
+          <div className="site-name-buttons">{listedRosterSites.length ? listedRosterSites.map((row) => <button type="button" className={`site-name-button ${String(row.site.id) === String(selectedRoster?.site.id) ? "selected" : ""}`} key={row.site.id} onClick={() => selectRosterSite(row.site.id)} onDragOver={(event) => { if (rota?.status !== "PUBLISHED" && draggedAssignment) event.preventDefault(); }} onDrop={(event) => { event.preventDefault(); moveAssignmentToSite(draggedAssignment, row.site.id); }}><span><strong>{row.site.name}</strong><small>{row.site.site_id} · {row.assigned} assigned · {row.weeklyHours.toFixed(0)}h</small></span><span className={`status-pill ${!staffingReady || row.site.is_active === false ? "neutral" : row.unfilled ? "pending" : "active"}`}>{!staffingReady ? (error || shiftLoadError ? "Count unavailable" : "Loading requirements…") : row.site.is_active === false ? "Inactive" : row.unfilled ? `${row.unfilled} unfilled this week` : "Week covered"}</span></button>) : <div className="empty-state compact-empty">No sites match your search.</div>}</div>
+        </>}
+      {selectedRoster && <div className="site-roster-detail"><div className="site-roster-detail-header"><div><p className="eyebrow">SITE WEEKLY ROSTER</p><h3>{selectedRoster.site.name}</h3><span>{selectedRoster.site.site_id} · Week commencing {formatDay(weekStart, { day: "numeric", month: "short", year: "numeric" })}</span><small className="table-subtext">Completed-induction guards are added automatically.</small></div><div className="site-roster-metrics"><span><strong>{selectedRoster.assigned}</strong> assigned</span><span><strong>{selectedRoster.weeklyHours.toFixed(0)}h</strong> total</span><span><strong>{staffingReady ? selectedRoster.unfilled : "—"}</strong> unfilled this week</span></div></div><div className="table-wrap"><table className="site-roster-matrix"><thead><tr><th>Guard</th>{days.map((day) => <th key={day}>{formatDay(day, { weekday: "short" })}<small>{formatDay(day, { day: "numeric", month: "short" })}</small></th>)}<th>Total</th></tr></thead><tbody>{selectedRosterEmployees.length ? selectedRosterEmployees.map((employee) => { const totalHours = employee.assignments.reduce((total, assignment) => total + assignmentHours(assignment), 0); return <tr key={employee.id}><td><strong>{employee.name}</strong><small>{employees.find((item) => item.id === employee.id)?.employee_id || ""}</small></td>{days.map((day) => <td key={day}><div className="roster-day-cell">{rosterCell(employee.assignments, day).length ? rosterCell(employee.assignments, day).map(({ assignment, shift }) => <span className={`roster-shift-badge ${shift.name.toLowerCase().includes("night") ? "night" : "day"}`} key={assignment.id}>{shift.name.replace(" Shift", "")}<small>{(assignment.scheduled_start || shift.start_time).slice(0, 5)}–{(assignment.scheduled_end || shift.end_time).slice(0, 5)}</small></span>) : <span className="roster-off">—</span>}</div></td>)}<td><strong>{totalHours.toFixed(0)}h</strong></td></tr>; }) : <tr><td colSpan={9}><div className="empty-state compact-empty">No completed-induction guards for this site yet.</div></td></tr>}</tbody></table></div></div>}</section>
     {selectedRoster && <section className="site-rota-tools"><section className="panel"><div className="panel-header"><div><h3>{selectedRoster.site.name} · staffing requirements</h3><p className="muted">Set required guards for every day and shift. Completion is checked against assigned guards.</p></div><button className="primary-button" type="button" onClick={saveRequirements} disabled={saving}>Save requirements</button></div><div className="table-wrap"><table className="requirements-table"><thead><tr><th>Day</th><th>Shift</th><th>Required guards</th><th>Assigned</th><th>Status</th></tr></thead><tbody>{requirementRows.map((row) => <tr key={row.key}><td>{formatDay(row.day, { weekday: "long", day: "numeric", month: "short" })}</td><td><strong>{row.shift.name}</strong><small className="table-subtext">{row.shift.start_time.slice(0, 5)}–{row.shift.end_time.slice(0, 5)}</small></td><td><input className="requirement-input" type="number" min="0" value={requirementDraft[row.key] ?? selectedRoster.site.required_guards} onChange={(event) => setRequirementDraft((current) => ({ ...current, [row.key]: event.target.value }))} /></td><td>{row.assigned}/{row.required}</td><td><span className={`status-pill ${row.complete ? "active" : "pending"}`}>{row.complete ? "Complete" : "Incomplete"}</span></td></tr>)}</tbody></table></div></section></section>}
-    <section className="panel rota-builder"><div className="panel-header"><div><h3>Add assignment</h3><p className="muted">{rota?.status === "PUBLISHED" ? "Click the button to reopen this rota for editing." : selectedRoster ? `Adding to ${selectedRoster.site.name}. Only inducted guards are available.` : "Select a site above, then choose a guard and shift."}</p>{copiedAssignment && <small className="table-subtext">Copied: {copiedAssignment.employee_name || "Unfilled shift"} · {copiedAssignment.shift_name}</small>}</div><div className="panel-header-actions"><span className={`status-pill ${rota?.status === "PUBLISHED" ? "active" : "neutral"}`}>{rota?.status || "Loading"}</span>{copiedAssignment && <button type="button" className="secondary-button" onClick={pasteAssignment} disabled={rota?.status === "PUBLISHED" || saving}><Copy size={14} /> Paste assignment</button>}</div></div><form className="rota-form" onSubmit={addAssignment}><label>Date<select value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)}>{days.map((day) => <option value={day} key={day}>{formatDay(day, { weekday: "long", day: "numeric", month: "short" })}</option>)}</select></label><label>Shift<select required value={form.shift_type} onChange={(event) => setShiftOnForm(setForm, form, event.target.value)}><option value="">Select shift</option>{shiftTypes.map((shift) => <option value={shift.id} key={shift.id}>{shift.name} · {shift.start_time.slice(0, 5)}-{shift.end_time.slice(0, 5)}</option>)}</select></label><label>Guard<select value={form.employee} onChange={(event) => updateForm("employee", event.target.value)}><option value="">Unfilled shift</option>{selectedSiteEmployees.map((employee) => <option value={employee.id} key={employee.id}>{guardOptionLabel(employee, addSelection)}</option>)}</select></label><label>Start time<input type="time" value={form.scheduled_start} onChange={(event) => updateForm("scheduled_start", event.target.value)} /></label><label>End time<input type="time" value={form.scheduled_end} onChange={(event) => updateForm("scheduled_end", event.target.value)} /></label><button type={rota?.status === "PUBLISHED" ? "button" : "submit"} className="primary-button" onClick={rota?.status === "PUBLISHED" ? reopen : undefined} disabled={!rota || saving || Boolean(addConflict && rota.status !== "PUBLISHED")}>{rota?.status === "PUBLISHED" ? "Reopen to add assignment" : saving ? "Saving..." : "Add assignment"}</button>{addConflict && <p className="rota-availability-warning" role="alert">{addConflict}</p>}</form></section>
+    <section className="panel rota-builder" id="rota-add-assignment"><div className="panel-header"><div><h3>Add assignment</h3><p className="muted">{rota?.status === "PUBLISHED" ? "Click the button to reopen this rota for editing." : selectedRoster ? `Adding to ${selectedRoster.site.name}. Only inducted guards are available.` : "Select a site above, then choose a guard and shift."}</p>{copiedAssignment && <small className="table-subtext">Copied: {copiedAssignment.employee_name || "Unfilled shift"} · {copiedAssignment.shift_name}</small>}</div><div className="panel-header-actions"><span className={`status-pill ${rota?.status === "PUBLISHED" ? "active" : "neutral"}`}>{rota?.status || "Loading"}</span>{copiedAssignment && <button type="button" className="secondary-button" onClick={pasteAssignment} disabled={rota?.status === "PUBLISHED" || saving}><Copy size={14} /> Paste assignment</button>}</div></div><form className="rota-form" onSubmit={addAssignment}><label>Date<select value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)}>{days.map((day) => <option value={day} key={day}>{formatDay(day, { weekday: "long", day: "numeric", month: "short" })}</option>)}</select></label><label>Shift<select required value={form.shift_type} onChange={(event) => setShiftOnForm(setForm, form, event.target.value)}><option value="">Select shift</option>{shiftTypes.map((shift) => <option value={shift.id} key={shift.id}>{shift.name} · {shift.start_time.slice(0, 5)}-{shift.end_time.slice(0, 5)}</option>)}</select></label><label>Guard<select value={form.employee} onChange={(event) => updateForm("employee", event.target.value)}><option value="">Unfilled shift</option>{selectedSiteEmployees.map((employee) => <option value={employee.id} key={employee.id}>{guardOptionLabel(employee, addSelection)}</option>)}</select></label><label>Start time<input type="time" value={form.scheduled_start} onChange={(event) => updateForm("scheduled_start", event.target.value)} /></label><label>End time<input type="time" value={form.scheduled_end} onChange={(event) => updateForm("scheduled_end", event.target.value)} /></label><button type={rota?.status === "PUBLISHED" ? "button" : "submit"} className="primary-button" onClick={rota?.status === "PUBLISHED" ? reopen : undefined} disabled={!rota || saving || Boolean(addConflict && rota.status !== "PUBLISHED")}>{rota?.status === "PUBLISHED" ? "Reopen to add assignment" : saving ? "Saving..." : "Add assignment"}</button>{addConflict && <p className="rota-availability-warning" role="alert">{addConflict}</p>}</form></section>
     <section className="rota-board">{days.map((day) => { const dayAssignments = filteredAssignments.filter((assignment) => assignment.work_date === day); return <article className="day-column" key={day} onDragOver={(event) => event.preventDefault()} onDrop={() => moveAssignment(draggedAssignment, day)}><div className="day-heading"><div><strong>{formatDay(day, { weekday: "short" })}</strong><span>{formatDay(day, { day: "numeric", month: "short" })}</span></div><b>{dayAssignments.length}</b></div>{dayAssignments.length ? dayAssignments.map((assignment) => <div className={`assignment-card ${assignment.employee ? "assigned" : "unfilled"}`} key={assignment.id} draggable={rota?.status !== "PUBLISHED"} onDragStart={() => setDraggedAssignment(assignment.id)} onDragEnd={() => setDraggedAssignment(null)} onDoubleClick={() => rota?.status !== "PUBLISHED" && openAssignmentEditor(assignment)}><div className="assignment-top"><strong>{assignment.shift_name}</strong><span>{assignment.employee ? "Assigned" : "Unfilled"}</span></div><p>{assignment.site_name}</p><small>{assignment.employee_name ? `${assignment.employee_name} · ${assignment.employee_code || ""}` : "Needs a staff assignment"}</small>{blockedDate(assignment) && <small className="assignment-unavailable">{conflictMessage(assignment, assignment.employee_name)}</small>}<small>{(assignment.scheduled_start || shiftById(assignment.shift_type)?.start_time || "").slice(0, 5)}–{(assignment.scheduled_end || shiftById(assignment.shift_type)?.end_time || "").slice(0, 5)}</small>{rota?.status !== "PUBLISHED" && <div className="assignment-actions"><button type="button" className="mini-button" onClick={() => copyAssignment(assignment)}><Copy size={13} /> Copy</button><button type="button" className="mini-button" onClick={() => openAssignmentEditor(assignment)}><Pencil size={13} /> Edit</button><button type="button" className="mini-button reject" onClick={() => removeAssignment(assignment.id)}><Trash2 size={13} /> Remove</button></div>}</div>) : <div className="day-empty">Drop a shift here or add a new assignment</div>}</article>; })}</section>
     {bulkOpen && <div className="modal-backdrop"><form className="modal-card bulk-assignment-modal" onSubmit={bulkAssign}><div className="modal-header"><div><p className="eyebrow">BULK PLANNING</p><h3>Assign multiple employees</h3><p className="muted">Use this for one site, one shift and one date.</p></div><button type="button" className="icon-button" onClick={() => setBulkOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Date<select required value={bulkForm.work_date} onChange={(event) => setBulkForm({ ...bulkForm, work_date: event.target.value })}>{days.map((day) => <option value={day} key={day}>{formatDay(day, { weekday: "long", day: "numeric", month: "short" })}</option>)}</select></label><label>Shift<select required value={bulkForm.shift_type} onChange={(event) => setBulkForm({ ...bulkForm, shift_type: event.target.value })}><option value="">Select shift</option>{shiftTypes.map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}</select></label><label className="full-width">Site<select required value={bulkForm.site} onChange={(event) => setBulkForm({ ...bulkForm, site: event.target.value })}><option value="">Select site</option>{sites.map((site) => <option value={site.id} key={site.id}>{site.name}</option>)}</select></label></div><div className="bulk-selector"><div className="bulk-selector-header"><strong>Select employees</strong><span>{bulkEmployeeIds.length} selected</span></div><div className="search-box"><Search size={14} /><input value={bulkSearch} onChange={(event) => setBulkSearch(event.target.value)} placeholder="Search name or employee ID" /></div><div className="bulk-employee-list">{filteredEmployees.map((employee) => <label key={employee.id}><input type="checkbox" checked={bulkEmployeeIds.includes(employee.id)} onChange={() => toggleBulkEmployee(employee.id)} /><span><strong>{employee.name}{blockedDate({ ...bulkForm, employee: employee.id }) ? " — Unavailable" : ""}</strong><small>{employee.employee_id}</small></span></label>)}</div></div>{error && <p className="error">{error}</p>}{bulkConflicts.length > 0 && <div className="rota-availability-warning" role="alert">{bulkConflicts.join(" ")}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setBulkOpen(false)}>Cancel</button><button className="primary-button" disabled={saving || !bulkEmployeeIds.length || Boolean(bulkConflicts.length)}>{saving ? "Assigning..." : `Assign ${bulkEmployeeIds.length} employees`}</button></div></form></div>}
     {editingAssignment && <div className="modal-backdrop"><form className="modal-card" onSubmit={saveAssignmentEdit}><div className="modal-header"><div><p className="eyebrow">EDIT SHIFT</p><h3>Update assignment</h3><p className="muted">Change the day, site, guard or manual timing.</p></div><button type="button" className="icon-button" onClick={() => setEditingAssignment(null)}><X size={19} /></button></div><div className="form-grid"><label>Date<select required value={editForm.work_date} onChange={(event) => setEditForm({ ...editForm, work_date: event.target.value })}>{days.map((day) => <option value={day} key={day}>{formatDay(day, { weekday: "long", day: "numeric", month: "short" })}</option>)}</select></label><label>Shift<select required value={editForm.shift_type} onChange={(event) => setShiftOnForm(setEditForm, editForm, event.target.value)}>{shiftTypes.map((shift) => <option value={shift.id} key={shift.id}>{shift.name}</option>)}</select></label><label>Site<select required value={editForm.site} onChange={(event) => setEditForm({ ...editForm, site: event.target.value })}>{sites.map((site) => <option value={site.id} key={site.id}>{site.name}</option>)}</select></label><label>Guard<select value={editForm.employee} onChange={(event) => setEditForm({ ...editForm, employee: event.target.value })}><option value="">Unfilled shift</option>{employees.map((employee) => <option value={employee.id} key={employee.id}>{guardOptionLabel(employee, editForm)}</option>)}</select></label><label>Start time<input required type="time" value={editForm.scheduled_start} onChange={(event) => setEditForm({ ...editForm, scheduled_start: event.target.value })} /></label><label>End time<input required type="time" value={editForm.scheduled_end} onChange={(event) => setEditForm({ ...editForm, scheduled_end: event.target.value })} /></label><label className="full-width">Notes<input value={editForm.notes} onChange={(event) => setEditForm({ ...editForm, notes: event.target.value })} /></label></div>{error && <p className="error">{error}</p>}{editConflict && <p className="rota-availability-warning" role="alert">{editConflict}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setEditingAssignment(null)}>Cancel</button><button className="primary-button" disabled={saving || Boolean(editConflict)}>{saving ? "Saving..." : "Save changes"}</button></div></form></div>}
+    {canShareWhatsApp && rota?.status === "PUBLISHED" && rota.week_start === weekStart && !loading &&
+      <RotaWhatsAppPanel key={rota.id} api={api} rota={rota} />}
+    {batch && <RotaBatchDialog mode={batch.mode} api={api} rota={rota} days={days} shifts={shiftTypes}
+      sites={batch.mode === "copy" ? sites.filter((site) => assignments.some((assignment) => assignment.site === site.id)) : sites.filter((site) => site.is_active !== false)}
+      initial={batch.initial} onClose={() => setBatch(null)} onSaved={batchSaved} />}
+    {publishReview && <PublishRotaDialog {...publishReview} busy={saving}
+      onClose={() => setPublishReview(null)} onPublish={publish} />}
     {loading && <div className="loading-strip">Loading rota...</div>}
   </>;
 }
