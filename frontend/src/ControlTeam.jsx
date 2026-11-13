@@ -82,10 +82,10 @@ function MemberStatus({ member }) {
   return <span className="status-pill neutral">Checked out</span>;
 }
 
-function Metric({ icon: Icon, label, value, detail }) {
+function Metric({ icon: Icon, label, value }) {
   return <article className="stat-card blue">
     <div className="stat-icon"><Icon size={17} aria-hidden="true" /></div>
-    <p>{label}</p><strong>{value}</strong>{detail && <small>{detail}</small>}
+    <p>{label}</p><strong>{value}</strong>
   </article>;
 }
 
@@ -565,6 +565,39 @@ function scheduleDate(day, offset = 0) {
   return date;
 }
 
+function WorkedHours({ today, weeklySeconds, monthlySeconds }) {
+  const date = scheduleDate(today);
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  const weekStart = scheduleDate(today, -daysSinceMonday);
+  const weekEnd = scheduleDate(today, 6 - daysSinceMonday);
+  const monthStart = scheduleDate(today, 1 - date.getUTCDate());
+  const monthEnd = new Date(monthStart);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1, 0);
+
+  return <section className="panel control-worked-hours" aria-labelledby="control-worked-hours-title">
+    <header className="control-worked-hours-heading">
+      <h3 id="control-worked-hours-title">Worked hours</h3>
+      <span>UK time</span>
+    </header>
+    <dl className="control-worked-hours-grid">
+      <div className="control-worked-hours-period">
+        <dt><Clock3 size={16} aria-hidden="true" /> This week</dt>
+        <dd>
+          <strong>{duration(weeklySeconds)}</strong>
+          <small>{scheduleRangeFormat.formatRange(weekStart, weekEnd)}</small>
+        </dd>
+      </div>
+      <div className="control-worked-hours-period">
+        <dt><CalendarDays size={16} aria-hidden="true" /> This month</dt>
+        <dd>
+          <strong>{duration(monthlySeconds)}</strong>
+          <small>{scheduleRangeFormat.formatRange(monthStart, monthEnd)}</small>
+        </dd>
+      </div>
+    </dl>
+  </section>;
+}
+
 function ShiftCard({ shift, canCheckIn, hasOfficePin, onCheckIn }) {
   const available = shift.status === "Available";
   return <article className={`control-shift-card${available ? " has-check-in" : ""}`} data-shift={shift.shift}>
@@ -752,10 +785,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
             scheduleQuery={schedule} offset={scheduleOffset} onNavigate={setScheduleOffset}
             canCheckIn={!current} hasOfficePin={Boolean(officePin)}
             onCheckIn={(shift) => setCapture({ action: "check_in", shift })} />
-          <div className="control-metrics">
-            <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
-            <Metric icon={CalendarDays} label="This month" value={duration(member.monthly_seconds)} detail="Calendar month · UK time" />
-          </div>
+          <WorkedHours today={today} weeklySeconds={member.weekly_seconds} monthlySeconds={member.monthly_seconds} />
           <AttendanceHistory member={member} FilePreview={FilePreview} />
           {capture && <AttendanceCapture action={capture.action} requiresLocation={captureRequiresLocation}
             onClose={() => setCapture(null)} onSubmit={markAttendance} />}

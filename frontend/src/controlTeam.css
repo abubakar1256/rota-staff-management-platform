@@ -15,6 +15,30 @@
   border-color: #9cb2f4; background: #eef3ff; color: #284fae;
 }
 .control-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.control-worked-hours-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.control-worked-hours-heading h3 { margin: 0; font-size: 17px; }
+.control-worked-hours-heading span { color: #5c6c85; font-size: 12px; white-space: nowrap; }
+.control-worked-hours-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.control-worked-hours-period {
+  min-width: 0;
+  padding: 10px clamp(9px, 2vw, 16px);
+  border: 1px solid #dce6fa;
+  border-radius: 10px;
+  background: #f3f7ff;
+}
+.control-worked-hours-period + .control-worked-hours-period { border-color: #e5dff6; background: #f8f5fd; }
+.control-worked-hours-period dt {
+  display: flex; align-items: center; gap: 6px;
+  color: #2d51a4; font-size: 13px; font-weight: 650; line-height: 1.4;
+}
+.control-worked-hours-period + .control-worked-hours-period dt { color: #64449c; }
+.control-worked-hours-period dt svg { flex-shrink: 0; }
+.control-worked-hours-period dd { display: grid; gap: 3px; margin: 4px 0 0; }
+.control-worked-hours-period strong {
+  color: #182c4f; font-size: clamp(20px, 4vw, 28px); font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em; line-height: 1.2;
+}
+.control-worked-hours-period small { color: #546680; font-size: 12px; line-height: 1.35; }
 .control-between, .control-attendance-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .control-attendance-card .primary-button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-width: 128px; min-height: 42px; }
 .modal-card.control-capture { width: min(560px, calc(100% - 28px)); border: 0; border-radius: 14px; margin: auto; }
