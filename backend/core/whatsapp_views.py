@@ -164,8 +164,12 @@ def rota_shifts(assignments):
 
 
 def rota_recipient(week, employee, shifts, previous):
-    version = message_version(week.pk, week.week_start.isoformat(), employee.pk, employee.name, employee.whatsapp_number, list(map(shift_key, shifts)))
+    version_fields = (week.pk, week.week_start.isoformat(), employee.pk, employee.name, employee.whatsapp_number)
+    version = message_version(*version_fields, list(map(shift_key, shifts)))
     already_sent = previous is not None and previous.version == version
+    if previous and any("shift_name" not in shift for shift in previous.shifts):
+        legacy_keys = [shift_key(shift, include_name=False) for shift in shifts]
+        already_sent = previous.version == message_version(*version_fields, legacy_keys)
     state = "SENT" if already_sent else pending_status(employee, "UPDATE_PENDING" if previous else "PENDING")
     ready = state in {"PENDING", "UPDATE_PENDING"}
     message = rota_message(week.week_start, employee.name, shifts, previous.shifts if previous else None) if ready else None

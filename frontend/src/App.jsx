@@ -463,21 +463,18 @@ function Dashboard({ stats, onCreateRota }) {
 }
 
 function toMonday(value) {
-  const date = new Date(`${value}T12:00:00`);
-  const day = date.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  date.setDate(date.getDate() + diff);
-  return date.toISOString().slice(0, 10);
+  const weekday = new Date(`${value}T12:00:00Z`).getUTCDay();
+  return addDays(value, -((weekday + 6) % 7));
 }
 
 function addDays(value, amount) {
-  const date = new Date(`${value}T12:00:00`);
-  date.setDate(date.getDate() + amount);
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
   return date.toISOString().slice(0, 10);
 }
 
 function formatDay(value, options = {}) {
-  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Karachi", ...options }).format(new Date(`${value}T12:00:00`));
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", ...options }).format(new Date(`${value}T12:00:00Z`));
 }
 
 function Rota({ target = {}, canShareWhatsApp = false }) {
@@ -1579,12 +1576,103 @@ function GuardHomePage({ onNavigate, unreadNotifications }) {
 }
 
 function GuardRotaPage({ initialDate } = {}) {
-  const [weekStart, setWeekStart] = useState(toMonday(initialDate || todayIso())); const [schedule, setSchedule] = useState(null); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
-  const load = async () => { setLoading(true); setError(""); try { const result = await api(`/rota-weeks/my/?week_start=${weekStart}`); setSchedule(result[0] || null); } catch (err) { setError(err.message); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, [weekStart]);
-  const confirm = async () => { if (!schedule) return; setSaving(true); setError(""); setNotice(""); try { await api(`/rota-weeks/${schedule.rota_week.id}/confirm/`, { method: "POST", body: "{}" }); setNotice("Rota confirmed successfully."); await load(); } catch (err) { setError(err.message); } finally { setSaving(false); } };
-  const assignments = schedule?.assignments || []; const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
-  return <><div className="page-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2>My weekly rota</h2><p className="muted">Only your published assignments are shown here.</p></div><label className="guard-week-picker">Week starting<input type="date" value={weekStart} onChange={(e) => setWeekStart(toMonday(e.target.value))} /></label></div>{error && <p className="error page-error">{error}</p>}{notice && <p className="success page-success">{notice}</p>}{loading ? <div className="empty-view"><h2>Loading rota...</h2></div> : !schedule ? <section className="panel empty-state"><CalendarDays size={30} /><strong>No published rota for this week</strong><span>The office will publish your assignments here.</span></section> : <><section className="guard-rota-status panel"><div><strong>Week of {formatDay(weekStart, { day: "numeric", month: "short", year: "numeric" })}</strong><span>{assignments.length} assignment{assignments.length === 1 ? "" : "s"} · {schedule.confirmation?.status === "CONFIRMED" ? `Confirmed ${new Date(schedule.confirmation.confirmed_at).toLocaleString()}` : "Confirmation pending"}</span></div>{schedule.confirmation?.status === "CONFIRMED" ? <span className="status-pill active">Rota confirmed</span> : <button className="primary-button" disabled={saving} onClick={confirm}>{saving ? "Confirming..." : "Confirm rota"}</button>}</section><section className="guard-rota-board">{days.map((day) => { const dayAssignments = assignments.filter((item) => item.work_date === day); return <article className="panel guard-day-card" key={day}><div className="day-heading"><div><strong>{formatDay(day, { weekday: "short" })}</strong><span>{formatDay(day, { day: "numeric", month: "short" })}</span></div><b>{dayAssignments.length}</b></div>{dayAssignments.length ? dayAssignments.map((item) => <div className="guard-rota-assignment" key={item.id}><strong>{item.site_name}</strong><span>{item.shift_name}</span><small>{String(item.scheduled_start || "").slice(0, 5)}–{String(item.scheduled_end || "").slice(0, 5)}</small><SiteLocationLinks item={item} /></div>) : <div className="day-empty">No assignment</div>}</article>; })}</section></>}</>;
+  const thisWeek = toMonday(ukDate());
+  const nextWeek = addDays(thisWeek, 7);
+  const [weekStart, setWeekStart] = useState(() => {
+    const linkedWeek = new URLSearchParams(window.location.search).get("week_start");
+    if (initialDate) return toMonday(initialDate);
+    const linkedDate = new Date(`${linkedWeek}T00:00:00Z`);
+    if (linkedDate.getUTCDay() === 1 && linkedDate.toISOString().slice(0, 10) === linkedWeek) return linkedWeek;
+    return thisWeek;
+  });
+  const [schedule, setSchedule] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const url = new URL(window.location.href);
+    url.searchParams.set("week_start", weekStart);
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
+
+    api(`/rota-weeks/my/?week_start=${weekStart}`, { silentLoading: true, silentError: true })
+      .then((result) => { if (active) setSchedule(result[0] || null); })
+      .catch((err) => { if (active) setError(err.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [weekStart]);
+
+  const selectWeek = (date) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || saving) return;
+    const monday = toMonday(date);
+    if (monday === weekStart) return;
+    setSchedule(null);
+    setLoading(true);
+    setError("");
+    setNotice("");
+    setWeekStart(monday);
+  };
+  const confirm = async () => {
+    if (!schedule || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const confirmation = await api(`/rota-weeks/${schedule.rota_week.id}/confirm/`, {
+        method: "POST", body: "{}", silentToast: true, silentError: true,
+      });
+      setSchedule({ ...schedule, confirmation });
+      setNotice("Rota confirmed successfully.");
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  };
+  const assignments = schedule?.assignments || [];
+  const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const confirmed = schedule?.confirmation?.status === "CONFIRMED";
+  const shortDate = (date) => formatDay(date, { day: "numeric", month: "short" });
+  return <>
+    <div className="page-heading guard-rota-heading">
+      <div><p className="eyebrow">GUARD PORTAL</p><h2>My weekly rota</h2><p className="muted">Only your published assignments are shown here.</p></div>
+      <div className="guard-week-controls">
+        <div className="guard-week-shortcuts" role="group" aria-label="Rota week">
+          {[["This week", thisWeek], ["Next week", nextWeek]].map(([label, date]) => (
+            <button type="button" key={label} className="guard-week-shortcut" aria-pressed={weekStart === date} disabled={saving} onClick={() => selectWeek(date)}>
+              <strong>{label}</strong>
+              <span>{shortDate(date)} – {shortDate(addDays(date, 6))}</span>
+            </button>
+          ))}
+        </div>
+        <label className="guard-week-picker">Week starting
+          <input type="date" value={weekStart} disabled={saving} onChange={(event) => selectWeek(event.target.value)} />
+        </label>
+      </div>
+    </div>
+    {error && <p role="alert" className="error page-error">{error}</p>}
+    {notice && <p role="status" className="success page-success">{notice}</p>}
+    {loading ? <div className="empty-view" role="status"><h2>Loading rota...</h2></div> : schedule ? <>
+      <section className="guard-rota-status panel">
+        <div>
+          <strong>Week of {formatDay(weekStart, { day: "numeric", month: "short", year: "numeric" })}</strong>
+          <span>{assignments.length} assignment{assignments.length === 1 ? "" : "s"} · {confirmed ? `Confirmed ${new Date(schedule.confirmation.confirmed_at).toLocaleString()}` : "Confirmation pending"}</span>
+        </div>
+        {confirmed ? <span className="status-pill active">Rota confirmed</span> : <button className="primary-button" disabled={saving} onClick={confirm}>{saving ? "Confirming..." : "Confirm rota"}</button>}
+      </section>
+      <section className="guard-rota-board">
+        {days.map((day) => {
+          const dayAssignments = assignments.filter((item) => item.work_date === day);
+          return <article className="panel guard-day-card" key={day}>
+            <div className="day-heading"><div><strong>{formatDay(day, { weekday: "short" })}</strong><span>{shortDate(day)}</span></div><b>{dayAssignments.length}</b></div>
+            {dayAssignments.length ? dayAssignments.map((item) => <div className="guard-rota-assignment" key={item.id}>
+              <strong>{item.site_name}</strong><span>{item.shift_name}</span>
+              <small>{String(item.scheduled_start || "").slice(0, 5)}–{String(item.scheduled_end || "").slice(0, 5)}</small>
+              <SiteLocationLinks item={item} />
+            </div>) : <div className="day-empty">No assignment</div>}
+          </article>;
+        })}
+      </section>
+    </> : !error && <section className="panel empty-state"><CalendarDays size={30} /><strong>{weekStart === nextWeek ? "No published rota for next week" : "No published rota for the selected week"}</strong><span>The office will publish your assignments here.</span></section>}
+  </>;
 }
 
 function GuardLeavePage() {
@@ -1733,14 +1821,17 @@ function ComplianceRegistrationPage() {
   </>;
 }
 
+const guardLinkedPages = ["profile", "documents", "notifications", "induction", "cortex-itime", "timegate", "rota"];
+
 function GuardPortal({ user, onSignOut, unreadNotifications, initialPage = "home" }) {
-  const [page, setPage] = useState(() => { const requested = new URLSearchParams(window.location.search).get("page"); return ["profile", "documents", "notifications", "induction", "cortex-itime", "timegate"].includes(requested) ? requested : initialPage; }); const [mobileNav, setMobileNav] = useState(false);
+  const [page, setPage] = useState(() => { const requested = new URLSearchParams(window.location.search).get("page"); return guardLinkedPages.includes(requested) ? requested : initialPage; }); const [mobileNav, setMobileNav] = useState(false);
   const [notificationTarget, setNotificationTarget] = useState({});
   const openNotification = (target, context) => { setNotificationTarget((current) => ({ ...context, page: target, visit: (current.visit || 0) + 1 })); setPage(target); };
   useEffect(() => {
     const url = new URL(window.location.href);
-    if (["profile", "documents", "notifications", "induction", "cortex-itime", "timegate"].includes(page)) url.searchParams.set("page", page);
+    if (guardLinkedPages.includes(page)) url.searchParams.set("page", page);
     else url.searchParams.delete("page");
+    if (page !== "rota") url.searchParams.delete("week_start");
     if (url.href !== window.location.href) window.history.replaceState(window.history.state, "", url.href);
   }, [page]);
   const [complianceEnabled, setComplianceEnabled] = useState(Boolean(user.compliance_registration_enabled));

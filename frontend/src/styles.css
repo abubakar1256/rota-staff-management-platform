@@ -317,8 +317,26 @@ button { cursor: pointer; }
 .guard-quick-action span { display: grid; flex: 1; gap: 4px; }
 .guard-quick-action strong { color: #526079; font-size: 11px; }
 .guard-quick-action small { color: #9aa6b8; font-size: 10px; }
-.guard-week-picker { display: grid; gap: 6px; color: #738097; font-size: 10px; font-weight: 700; }
-.guard-week-picker input { border: 1px solid #dfe5ee; border-radius: 8px; padding: 10px; color: #34435d; outline: 0; }
+.guard-rota-heading { flex-wrap: wrap; }
+.guard-week-controls, .guard-week-shortcuts { display: flex; align-items: flex-end; gap: 8px; }
+.guard-week-shortcut {
+  display: grid;
+  gap: 3px;
+  min-height: 48px;
+  padding: 8px 14px;
+  border: 1px solid #d7e0ef;
+  border-radius: 9px;
+  background: #fff;
+  color: #34435d;
+  text-align: left;
+  font-size: 13px;
+}
+.guard-week-shortcut span { color: #586b87; font-size: 11px; }
+.guard-week-shortcut:hover:not(:disabled) { border-color: #7594e4; }
+.guard-week-shortcut[aria-pressed="true"] { border-color: #7594e4; background: #eef3ff; color: #254a9d; }
+.guard-week-shortcut:focus-visible, .guard-week-picker input:focus-visible { outline: 2px solid #446cca; outline-offset: 2px; }
+.guard-week-picker { display: grid; gap: 6px; color: #586b87; font-size: 11px; font-weight: 700; }
+.guard-week-picker input { min-width: 0; min-height: 48px; border: 1px solid #d7e0ef; border-radius: 8px; padding: 10px; color: #34435d; background: #fff; }
 .guard-rota-status { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 18px; border-color: #dce6fa; background: #f7f9ff; }
 .guard-rota-status div { display: grid; gap: 5px; }
 .guard-rota-status strong { color: #3d4f70; font-size: 13px; }
@@ -329,6 +347,11 @@ button { cursor: pointer; }
 .guard-rota-assignment small { color: #697890; }
 
 @media (max-width: 900px) { .guard-home-grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .guard-week-controls { width: 100%; display: grid; gap: 12px; }
+  .guard-week-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .guard-week-picker input { font-size: 16px; }
+}
 @media (max-width: 680px) { .guard-heading { align-items: flex-start; }.guard-hero { align-items: flex-start; flex-direction: column; padding: 19px; }.guard-hero-actions { width: 100%; justify-content: stretch; }.guard-hero-actions button { flex: 1; }.guard-rota-status { align-items: flex-start; flex-direction: column; }.guard-rota-status button { width: 100%; }.guard-week-picker { width: 100%; }.guard-week-picker input { width: 100%; }.guard-rota-board { margin-right: -17px; padding-right: 17px; }.attendance-timeline { grid-template-columns: 1fr; } }
 
 /* Final responsive pass: keep every workspace usable from phone to large desktop. */

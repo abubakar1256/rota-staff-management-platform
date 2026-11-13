@@ -1,10 +1,12 @@
 from datetime import date, time
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from .models import AuditLog, Employee, RotaAssignment, RotaWeek, ShiftType, Site, UserProfile
+from .whatsapp import message_version, shift_key
 
 
 class WhatsAppMessagingTests(APITestCase):
@@ -120,29 +122,42 @@ class WhatsAppMessagingTests(APITestCase):
                 self.assertEqual(self.client.get(path).status_code, 403)
             self.assertEqual(self.client.post("/api/whatsapp/announcements/", {}, format="json").status_code, 403)
 
+    @patch.dict("os.environ", {"FRONTEND_URL": "https://rota.example.com/"})
     def test_weekly_rota_message_matches_the_template_in_preview_and_whatsapp(self):
-        week, shift, site = self.make_week()
-        shift.start_time, shift.end_time = time(7), time(19)
-        shift.save(update_fields=["start_time", "end_time"])
+        week, _, site = self.make_week()
+        shift, _ = ShiftType.objects.get_or_create(
+            name="Day Shift", defaults={"start_time": time(7), "end_time": time(19)},
+        )
         for day in (13, 9, 10):
-            self.assign(week, shift, site, self.guard, date(2026, 11, day))
+            assignment = self.assign(week, shift, site, self.guard, date(2026, 11, day))
+            assignment.scheduled_start, assignment.scheduled_end = time(6, 30), time(18, 30)
+            assignment.save(update_fields=["scheduled_start", "scheduled_end"])
         self.publish(week)
 
         row = self.rota_queue(week)[self.guard.pk]
         expected = (
             "Hi A Guard,\n\n"
-            "Please find your weekly rota below.\n\n"
-            "Week: 09/11/2026 – 15/11/2026\n\n"
-            "Monday: 07:00 – 19:00\nSite: Test Site\n\n"
-            "Tuesday: 07:00 – 19:00\nSite: Test Site\n\n"
-            "Friday: 07:00 – 19:00\nSite: Test Site\n\n"
+            "*Rota for the Week*\n*Week Commencing: 9th November 2026*\n\n"
+            "*Site:* Test Site\n*Shift Hour:* 0630-1830 Day Shift\n*Days:* Monday, Tuesday, Friday\n\n"
             "Total Shifts: 3\nTotal Hours: 36\n\n"
-            "Please confirm receipt of your rota.\n\n"
-            "Kind regards,\nControl Room"
+            "Please open the Guard Portal and select *Confirm rota*.\n"
+            "https://rota.example.com/guard?page=rota&week_start=2026-11-09\n\n"
+            "Thank you.\nControl Room"
         )
         self.assertEqual(row["message"], expected)
         self.assertEqual(parse_qs(urlsplit(row["whatsapp_url"]).query), {"text": [expected]})
+        confirm_url = urlsplit(next(line for line in row["message"].splitlines() if line.startswith("https://")))
+        linked_week = parse_qs(confirm_url.query)["week_start"][0]
+        guard_user = self.user("rota-link-guard", UserProfile.Role.EMPLOYEE)
+        self.guard.user = guard_user
+        self.guard.save(update_fields=["user"])
+        self.client.force_authenticate(guard_user)
+        schedule = self.client.get("/api/rota-weeks/my/", {"week_start": linked_week}).data
+        self.assertEqual([result["rota_week"]["id"] for result in schedule], [week.pk])
+        confirmation = self.client.post(f"/api/rota-weeks/{week.pk}/confirm/", {}, format="json")
+        self.assertEqual(confirmation.data["status"], "CONFIRMED")
 
+    @patch.dict("os.environ", {"FRONTEND_URL": "https://rota.example.com"})
     def test_rota_changes_only_flag_affected_guards_and_cancelled_shifts(self):
         week, shift, site = self.make_week()
         mon, tue = date(2026, 11, 9), date(2026, 11, 10)
@@ -151,11 +166,20 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertEqual(self.rota_queue(week), {})
         self.publish(week)
         rows = self.rota_queue(week)
-        self.assertIn("Monday: 22:00 – 06:00 (next day)", rows[self.guard.pk]["message"])
-        self.assertNotIn("Tuesday:", rows[self.guard.pk]["message"])
+        self.assertIn("*Shift Hour:* 2200-0600 Night shift (next day)\n*Days:* Monday", rows[self.guard.pk]["message"])
+        self.assertNotIn("Tuesday", rows[self.guard.pk]["message"])
         base = f"/api/whatsapp/rota-weeks/{week.pk}/"
         for row in rows.values():
             self.mark(base, row)
+        legacy_share = week.whatsapp_shares.get(employee=self.other_guard)
+        for shift_record in legacy_share.shifts:
+            shift_record.pop("shift_name")
+        legacy_share.version = message_version(
+            week.pk, week.week_start.isoformat(), self.other_guard.pk, self.other_guard.name,
+            self.other_guard.whatsapp_number,
+            [shift_key(record, include_name=False) for record in legacy_share.shifts],
+        )
+        legacy_share.save(update_fields=["shifts", "version"])
         self.assertEqual(self.client.post(f"/api/rota-weeks/{week.pk}/reopen/").status_code, 200)
         self.assertEqual(self.rota_queue(week), {})
         self.mark(base, rows[self.guard.pk], expected=409)
@@ -166,8 +190,10 @@ class WhatsAppMessagingTests(APITestCase):
         updated = refreshed[self.guard.pk]
         self.assertEqual(refreshed[self.other_guard.pk]["status"], "SENT")
         self.assertEqual(updated["status"], "UPDATE_PENDING")
+        self.assertIn("*Updated Rota for the Week*", updated["message"])
         self.assertIn("Changed: Mon 09 Nov | 22:00", updated["message"])
-        self.assertIn("Monday: 21:30 – 06:00 (next day)", updated["message"])
+        self.assertIn("*Shift Hour:* 2130-0600 Night shift (next day)\n*Days:* Monday", updated["message"])
+        self.assertIn("/guard?page=rota&week_start=2026-11-09", updated["message"])
         self.assertIn("Total Shifts: 1\nTotal Hours: 8.5", updated["message"])
         self.mark(base, rows[self.guard.pk], expected=409)
         self.mark(base, updated)
@@ -179,6 +205,7 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertIn("Cancelled:", cancelled["message"])
         self.assertIn("You have no assigned shifts for this week.", cancelled["message"])
         self.assertIn("Total Shifts: 0\nTotal Hours: 0", cancelled["message"])
+        self.assertNotIn("Confirm rota", cancelled["message"])
 
     def test_last_shift_can_be_published_as_a_cancellation_after_sharing(self):
         week, shift, site = self.make_week()

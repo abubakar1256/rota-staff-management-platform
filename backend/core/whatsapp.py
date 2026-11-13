@@ -1,9 +1,10 @@
 import hashlib
 import json
+import os
 import re
 from collections import Counter
-from datetime import date, time, timedelta
-from urllib.parse import quote
+from datetime import date, time
+from urllib.parse import quote, urlencode
 
 
 def normalise_whatsapp_number(value):
@@ -33,11 +34,13 @@ def shift_snapshot(assignment):
         "end": end.strftime("%H:%M"),
         "overnight": end <= start,
         "site": assignment.site.name,
+        "shift_name": assignment.shift_type.name,
     }
 
 
-def shift_key(shift):
-    return (shift["date"], shift["start"], shift["end"], shift["overnight"], shift["site"])
+def shift_key(shift, *, include_name=True):
+    key = (shift["date"], shift["start"], shift["end"], shift["overnight"], shift["site"])
+    return (*key, shift["shift_name"]) if include_name else key
 
 
 def shift_time_range(shift, separator=" – "):
@@ -47,7 +50,8 @@ def shift_time_range(shift, separator=" – "):
 
 def shift_line(shift):
     day = date.fromisoformat(shift["date"])
-    return f"{day:%a %d %b} | {shift_time_range(shift, '–')} | {shift['site']}"
+    name = f" ({shift['shift_name']})" if shift.get("shift_name") else ""
+    return f"{day:%a %d %b} | {shift_time_range(shift, '–')} | {shift['site']}{name}"
 
 
 def shift_minutes(shift):
@@ -57,10 +61,10 @@ def shift_minutes(shift):
     return minutes + (24 * 60 if shift["overnight"] else 0)
 
 
-def unmatched_shifts(source, other):
-    counts = Counter(map(shift_key, other))
+def unmatched_shifts(source, other, *, include_name):
+    counts = Counter(shift_key(shift, include_name=include_name) for shift in other)
     for shift in source:
-        key = shift_key(shift)
+        key = shift_key(shift, include_name=include_name)
         if counts[key]:
             counts[key] -= 1
         else:
@@ -68,9 +72,10 @@ def unmatched_shifts(source, other):
 
 
 def shift_changes(previous, current):
-    added = {shift["id"]: shift for shift in unmatched_shifts(current, previous)}
+    include_name = all("shift_name" in shift for shift in previous)
+    added = {shift["id"]: shift for shift in unmatched_shifts(current, previous, include_name=include_name)}
     changes = []
-    for shift in unmatched_shifts(previous, current):
+    for shift in unmatched_shifts(previous, current, include_name=include_name):
         replacement = added.pop(shift["id"], None)
         if replacement:
             changes.append(f"Changed: {shift_line(shift)} → {shift_line(replacement)}")
@@ -81,23 +86,36 @@ def shift_changes(previous, current):
 
 
 def rota_message(week_start, employee_name, shifts, previous_shifts=None):
-    week_end = week_start + timedelta(days=6)
     updated = previous_shifts is not None
-    intro = "Please find your updated weekly rota below." if updated else "Please find your weekly rota below."
-    lines = [f"Hi {employee_name},", "", intro, "", f"Week: {week_start:%d/%m/%Y} – {week_end:%d/%m/%Y}"]
+    title = "Updated Rota for the Week" if updated else "Rota for the Week"
+    day = week_start.day
+    suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    lines = [f"Hi {employee_name},", "", f"*{title}*", f"*Week Commencing: {day}{suffix} {week_start:%B %Y}*"]
     if updated:
         changes = shift_changes(previous_shifts, shifts)
         if changes:
             lines.extend(["", "What changed:", *changes])
         lines.extend(["", "Please use this rota in place of the previous message."])
+
+    days_by_shift = {}
     for shift in shifts:
-        day = date.fromisoformat(shift["date"])
-        lines.extend(["", f"{day:%A}: {shift_time_range(shift)}", f"Site: {shift['site']}"])
+        key = (shift["site"], shift["start"], shift["end"], shift["shift_name"], shift["overnight"])
+        weekday = date.fromisoformat(shift["date"]).strftime("%A")
+        days_by_shift.setdefault(key, []).append(weekday)
+    for (site, start, end, name, overnight), weekdays in days_by_shift.items():
+        hours = f"{start.replace(':', '')}-{end.replace(':', '')} {name}"
+        if overnight:
+            hours += " (next day)"
+        lines.extend(["", f"*Site:* {site}", f"*Shift Hour:* {hours}", f"*Days:* {', '.join(weekdays)}"])
     if not shifts:
         lines.extend(["", "You have no assigned shifts for this week."])
     total_hours = f"{sum(map(shift_minutes, shifts)) / 60:.2f}".rstrip("0").rstrip(".")
-    lines.extend([
-        "", f"Total Shifts: {len(shifts)}", f"Total Hours: {total_hours}",
-        "", "Please confirm receipt of your rota.", "", "Kind regards,", "Control Room",
-    ])
+    lines.extend(["", f"Total Shifts: {len(shifts)}", f"Total Hours: {total_hours}"])
+    if shifts:
+        lines.extend(["", "Please open the Guard Portal and select *Confirm rota*."])
+        frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+        if frontend_url:
+            query = urlencode({"page": "rota", "week_start": week_start.isoformat()})
+            lines.append(f"{frontend_url}/guard?{query}")
+    lines.extend(["", "Thank you.", "Control Room"])
     return "\n".join(lines)
