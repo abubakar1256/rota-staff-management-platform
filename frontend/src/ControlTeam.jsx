@@ -500,7 +500,7 @@ function AssignedShifts({ today, start, schedule, scheduleQuery, offset, onNavig
         </button>
       </div>
     </nav>
-    {!schedule ? <QueryStatus query={scheduleQuery} label="your shifts" /> : <div className="control-schedule-days">
+    {!schedule ? <QueryStatus query={scheduleQuery} label="your shifts" /> : <div className="control-member-list">
       {days.map((day, index) => {
         const date = day.toISOString().slice(0, 10);
         const startingShifts = shifts.filter((shift) => shift.shift_date === date);
@@ -510,25 +510,24 @@ function AssignedShifts({ today, start, schedule, scheduleQuery, offset, onNavig
         const dayShifts = index === 0 ? [...overnightShifts, ...startingShifts] : startingShifts;
         const dayOff = !startingShifts.length && !overnightShifts.length;
         const approvedLeave = leaveDates.has(date);
-        return <section className="control-schedule-day" key={date} aria-labelledby={`control-day-${date}`}>
-          <h4 id={`control-day-${date}`}><time dateTime={date}>{scheduleDayFormat.format(day)}</time>
-            {date === today && <span>Today</span>}
-          </h4>
-          <div className="control-member-list">
-            {(approvedLeave || dayOff) && <div className="control-day-off">
-              <Sun size={20} aria-hidden="true" />
-              <div><strong>{approvedLeave ? "Approved leave" : "Day off"}</strong>
-                {dayOff && date >= today && <small>Enjoy your day off!</small>}
+        return <Fragment key={date}>
+          {(approvedLeave || dayOff) && <div className="control-day-off">
+            <Sun size={20} aria-hidden="true" />
+            <div>
+              <div className="control-day-off-heading">
+                <strong>{approvedLeave ? "Approved leave" : "Day off"}</strong>
+                <time dateTime={date}>{scheduleDayFormat.format(day)}</time>
               </div>
-            </div>}
-            {index > 0 && !startingShifts.length && overnightShifts.map((shift) =>
-              <p className="control-overnight-note" key={shift.id}>
-                {shift.shift_name} shift ends <time dateTime={shift.scheduled_end_at}>{formatUkAttendanceTime(shift.scheduled_end_at)}</time>
-              </p>,
-            )}
-            {dayShifts.map((shift) => <ShiftCard key={shift.id} shift={shift} {...shiftActions} />)}
-          </div>
-        </section>;
+              {dayOff && date >= today && <small>Enjoy your day off!</small>}
+            </div>
+          </div>}
+          {index > 0 && !startingShifts.length && overnightShifts.map((shift) =>
+            <p className="control-overnight-note" key={shift.id}>
+              {shift.shift_name} shift ends <time dateTime={shift.scheduled_end_at}>{formatUkShortDateTime(shift.scheduled_end_at)}</time>
+            </p>,
+          )}
+          {dayShifts.map((shift) => <ShiftCard key={shift.id} shift={shift} {...shiftActions} />)}
+        </Fragment>;
       })}
     </div>}
   </section>;

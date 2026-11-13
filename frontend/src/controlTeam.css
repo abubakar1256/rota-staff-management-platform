@@ -160,17 +160,15 @@
 }
 .control-schedule-range { display: inline-flex; align-items: center; gap: 8px; color: #294373; font-size: 14px; font-weight: 700; }
 .control-schedule-nav .secondary-button { min-width: 44px; min-height: 44px; justify-content: center; }
-.control-schedule-days { display: grid; gap: 14px; }
-.control-schedule-day h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 7px; color: #334563; font-size: 13px; }
-.control-schedule-day h4 span { color: #3155ae; background: #edf2ff; padding: 2px 7px; border-radius: 10px; font-size: 11px; }
 .control-day-off {
   display: flex; align-items: center; gap: 11px; padding: 12px 15px;
   border: 1px solid #cfe7d9; border-inline-start: 4px solid #3b9470; border-radius: 10px;
   background: #edf8f2; color: #216145;
 }
 .control-day-off svg { flex-shrink: 0; }
-.control-day-off strong, .control-day-off small { display: block; }
-.control-day-off small { margin-top: 2px; }
+.control-day-off-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.control-day-off-heading time { font-size: 13px; }
+.control-day-off small { display: block; margin-top: 2px; }
 .control-overnight-note { margin: 0; padding: 10px 13px; border-radius: 10px; color: #344978; background: #edf2ff; font-size: 13px; }
 .control-shift-card {
   display: grid; grid-template-columns: minmax(105px, .7fr) minmax(0, 1.6fr) auto;
