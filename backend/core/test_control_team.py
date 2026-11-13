@@ -568,3 +568,28 @@ class ControlTeamTests(TestCase):
             "Leave request submitted", "Leave request approved", "Replacement request submitted", "Replacement request rejected",
         })
         self.assertTrue(all(item["context"]["control_tab"] == "requests" for item in alerts))
+
+    def test_personal_schedule_includes_approved_leave_and_overnight_shifts(self):
+        self.assign("N", "2026-11-18")
+        for kind, status, start, end in [
+            ("LEAVE", "APPROVED", "2026-11-18", "2026-11-20"),
+            ("LEAVE", "PENDING", "2026-11-21", "2026-11-21"),
+            ("LEAVE", "REJECTED", "2026-11-22", "2026-11-22"),
+            ("REPLACEMENT", "APPROVED", "2026-11-23", "2026-11-23"),
+        ]:
+            self.member.requests.create(kind=kind, status=status, start_date=start, end_date=end)
+        user = get_user_model().objects.create_user("other-schedule")
+        UserProfile.objects.create(user=user, role=UserProfile.Role.CONTROL_TEAM)
+        other = ControlTeamMember.objects.create(user=user, name="Other")
+        self.assign("M", "2026-11-21", other)
+        other.requests.create(kind="LEAVE", status="APPROVED", start_date="2026-11-22", end_date="2026-11-22")
+
+        self.assertEqual(self.portal.get("/api/control/profile/").data["schedule_start"], "2026-11-11")
+        url = "/api/control/schedule/?start=2026-11-19"
+        response = self.portal.get(url)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["schedule_start"], "2026-11-19")
+        self.assertEqual(response.data["approved_leave_dates"], ["2026-11-19", "2026-11-20"])
+        self.assertEqual([shift["shift_date"] for shift in response.data["assigned_shifts"]], ["2026-11-18"])
+        self.assertEqual(self.office.get(url).status_code, 403)
+        self.assertEqual(self.portal.get("/api/control/schedule/?start=invalid").status_code, 400)

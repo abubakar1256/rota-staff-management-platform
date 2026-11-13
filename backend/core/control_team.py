@@ -1,4 +1,4 @@
-from datetime import datetime, time, timedelta, timezone as utc_timezone
+from datetime import date, datetime, time, timedelta, timezone as utc_timezone
 from io import BytesIO
 from math import ceil
 from uuid import uuid4
@@ -393,14 +393,23 @@ def schedule_rows(dated, rules, first, last, now, *, after=None):
     return data
 
 
-def member_assignments(member, now):
-    today = now.astimezone(LONDON).date()
-    first, last = today - timedelta(days=1), today + timedelta(days=6)
-    midnight = datetime.combine(today, time.min, LONDON)
+def member_schedule(member, now, start):
+    first, last = start - timedelta(days=1), start + timedelta(days=6)
+    midnight = datetime.combine(start, time.min, LONDON)
     dated = member.shift_assignments.filter(
         shift_date__range=(first, last), scheduled_end_at__gt=midnight,
     ).select_related("member", "attendance")
-    return schedule_rows(dated, weekly_rules(member.pk, first), first, last, now, after=midnight)
+    approved_leave = member.requests.filter(
+        kind=ControlLeaveRequest.Kind.LEAVE, status=ControlLeaveRequest.Status.APPROVED,
+        start_date__lte=last, end_date__gte=start,
+    ).values_list("start_date", "end_date")
+    days = [start + timedelta(days=offset) for offset in range(7)]
+    leave_dates = {day.isoformat() for leave_start, leave_end in approved_leave for day in days if leave_start <= day <= leave_end}
+    return {
+        "schedule_start": start.isoformat(),
+        "assigned_shifts": schedule_rows(dated, weekly_rules(member.pk, first), first, last, now, after=midnight),
+        "approved_leave_dates": sorted(leave_dates),
+    }
 
 
 def check_in_assignment(member, data, now):
@@ -508,7 +517,7 @@ def member_data(member, now, *, history=False, include_assignments=False):
     if history:
         data["attendance"] = AttendanceSerializer(member.attendance.all()[:50], many=True).data
     if include_assignments:
-        data["assigned_shifts"] = member_assignments(member, now)
+        data.update(member_schedule(member, now, now.astimezone(LONDON).date()))
     return data
 
 
@@ -555,6 +564,17 @@ def profile(request):
     now = timezone.now()
     close_expired_attendance(now, member_id=member.pk)
     return Response(member_data(member, now, history=True, include_assignments=True))
+
+
+@api_view(["GET"])
+@permission_classes([IsControlMember])
+def schedule(request):
+    member = member_for(request.user)
+    now = timezone.now()
+    start = serializers.DateField().run_validation(request.query_params.get("start", now.astimezone(LONDON).date().isoformat()))
+    if start <= date.min or start > date.max - timedelta(days=7):
+        raise serializers.ValidationError({"start": "Choose a valid schedule start date."})
+    return Response(member_schedule(member, now, start))
 
 
 @api_view(["GET", "PUT"])
@@ -885,6 +905,7 @@ urlpatterns = [
     path("login/", login, name="login"),
     path("logout/", logout, name="logout"),
     path("profile/", profile, name="profile"),
+    path("schedule/", schedule, name="schedule"),
     path("attendance/", attendance, name="attendance"),
     path("attendance/settings/", team_attendance_settings, name="attendance-settings"),
     path("attendance/<int:pk>/photos/<str:action>/", attendance_photo, name="attendance-photo"),

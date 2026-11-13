@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, CalendarDays, Camera, Clock3, LogOut, MapPin, UserPlus, Users } from "lucide-react";
+import { Bell, CalendarDays, Camera, ChevronLeft, ChevronRight, Clock3, LogOut, MapPin, Sun, UserPlus, Users } from "lucide-react";
 import AdminNotifications from "./AdminNotifications";
 import CheckUpdatesButton from "./CheckUpdatesButton";
 import { readCurrentLocation } from "./attendanceGeofence";
@@ -10,6 +10,7 @@ import "./controlTeam.css";
 
 const root = "/control";
 const profilePath = root + "/profile/";
+const schedulePath = root + "/schedule/";
 const settingsPath = root + "/attendance/settings/";
 const teamPath = root + "/team/";
 const assignmentsPath = teamPath + "assignments/";
@@ -448,35 +449,104 @@ function AttendanceCapture({ action, requiresLocation, onClose, onSubmit }) {
   </dialog>;
 }
 
-function AssignedShifts({ shifts, canCheckIn, hasOfficePin, onCheckIn }) {
+const scheduleDayFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC", weekday: "short", day: "numeric", month: "short",
+});
+const scheduleRangeFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC", day: "numeric", month: "short", year: "numeric",
+});
+
+function scheduleDate(day, offset = 0) {
+  const date = new Date(day + "T12:00:00Z");
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date;
+}
+
+function ShiftCard({ shift, canCheckIn, hasOfficePin, onCheckIn }) {
+  const available = shift.status === "Available";
+  return <article className={`control-shift-card${available ? " has-check-in" : ""}`} data-shift={shift.shift}>
+    <strong className="control-shift-name">{shift.shift_name}</strong>
+    <div className="control-shift-times">
+      <time dateTime={shift.scheduled_start_at}>{formatUkShortDateTime(shift.scheduled_start_at)}</time>
+      {" "}<span className="control-shift-end">– <time dateTime={shift.scheduled_end_at}>{formatUkShortDateTime(shift.scheduled_end_at)}</time></span>
+    </div>
+    <span className={`status-pill control-shift-status ${available || shift.started ? "active" : "neutral"}`}>{shift.status}</span>
+    {available && <button type="button" className="primary-button control-shift-check-in"
+      disabled={!canCheckIn || (shift.shift !== NIGHT_SHIFT && !hasOfficePin)} onClick={() => onCheckIn(shift)}>
+      <Camera size={15} aria-hidden="true" /> Check In
+    </button>}
+  </article>;
+}
+
+function AssignedShifts({ today, start, schedule, scheduleQuery, offset, onNavigate, ...shiftActions }) {
+  const shifts = schedule?.assigned_shifts || [];
+  const leaveDates = new Set(schedule?.approved_leave_dates);
+  const days = Array.from({ length: 7 }, (_, index) => scheduleDate(start, index));
   return <section className="panel control-shifts">
-    <div className="panel-header"><div><h3>My shifts</h3><p className="muted">Next 7 days · UK time. Check In opens 30 minutes before each shift.</p></div></div>
-    {shifts.length ? <div className="control-member-list">{shifts.map((shift) => {
-      const available = shift.status === "Available";
-      return <article className={`control-shift-card${available ? " has-check-in" : ""}`} data-shift={shift.shift} key={shift.id}>
-        <strong className="control-shift-name">{shift.shift_name}</strong>
-        <div className="control-shift-times">
-          <time dateTime={shift.scheduled_start_at}>{formatUkShortDateTime(shift.scheduled_start_at)}</time>
-          {" "}<span className="control-shift-end">– <time dateTime={shift.scheduled_end_at}>{formatUkShortDateTime(shift.scheduled_end_at)}</time></span>
-        </div>
-        <span className={`status-pill control-shift-status ${available || shift.started ? "active" : "neutral"}`}>{shift.status}</span>
-        {available && <button type="button" className="primary-button control-shift-check-in"
-          disabled={!canCheckIn || (shift.shift !== NIGHT_SHIFT && !hasOfficePin)} onClick={() => onCheckIn(shift)}>
-          <Camera size={15} aria-hidden="true" /> Check In
-        </button>}
-      </article>;
-    })}</div> : <p className="muted control-empty">No shifts assigned for the next 7 days.</p>}
+    <div className="panel-header">
+      <div><h3>My shifts</h3><p className="muted">UK time · Check In opens 30 minutes before each shift.</p></div>
+    </div>
+    <nav className="control-schedule-nav" aria-label="Shift schedule">
+      <span className="control-schedule-range" aria-live="polite">
+        <CalendarDays size={17} aria-hidden="true" /> {scheduleRangeFormat.formatRange(days[0], days[6])}
+      </span>
+      <div className="control-actions">
+        <button type="button" className="secondary-button" aria-label="Previous 7 days" onClick={() => onNavigate(offset - 7)}>
+          <ChevronLeft size={17} aria-hidden="true" />
+        </button>
+        <button type="button" className="secondary-button" disabled={offset === 0} onClick={() => onNavigate(0)}>Today</button>
+        <button type="button" className="secondary-button" aria-label="Next 7 days" onClick={() => onNavigate(offset + 7)}>
+          <ChevronRight size={17} aria-hidden="true" />
+        </button>
+      </div>
+    </nav>
+    {!schedule ? <QueryStatus query={scheduleQuery} label="your shifts" /> : <div className="control-schedule-days">
+      {days.map((day, index) => {
+        const date = day.toISOString().slice(0, 10);
+        const startingShifts = shifts.filter((shift) => shift.shift_date === date);
+        const overnightShifts = shifts.filter((shift) =>
+          shift.shift_date < date && ukDate(new Date(Date.parse(shift.scheduled_end_at) - 1)) === date,
+        );
+        const dayShifts = index === 0 ? [...overnightShifts, ...startingShifts] : startingShifts;
+        const dayOff = !startingShifts.length && !overnightShifts.length;
+        const approvedLeave = leaveDates.has(date);
+        return <section className="control-schedule-day" key={date} aria-labelledby={`control-day-${date}`}>
+          <h4 id={`control-day-${date}`}><time dateTime={date}>{scheduleDayFormat.format(day)}</time>
+            {date === today && <span>Today</span>}
+          </h4>
+          <div className="control-member-list">
+            {(approvedLeave || dayOff) && <div className="control-day-off">
+              <Sun size={20} aria-hidden="true" />
+              <div><strong>{approvedLeave ? "Approved leave" : "Day off"}</strong>
+                {dayOff && date >= today && <small>Enjoy your day off!</small>}
+              </div>
+            </div>}
+            {index > 0 && !startingShifts.length && overnightShifts.map((shift) =>
+              <p className="control-overnight-note" key={shift.id}>
+                {shift.shift_name} shift ends <time dateTime={shift.scheduled_end_at}>{formatUkAttendanceTime(shift.scheduled_end_at)}</time>
+              </p>,
+            )}
+            {dayShifts.map((shift) => <ShiftCard key={shift.id} shift={shift} {...shiftActions} />)}
+          </div>
+        </section>;
+      })}
+    </div>}
   </section>;
 }
 
 export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }) {
   const [page, setPage] = useState("attendance");
   const [capture, setCapture] = useState(null);
+  const [scheduleOffset, setScheduleOffset] = useState(0);
   const client = useQueryClient();
   const profile = useControlQuery(api, profilePath);
   const member = profile.data;
   const requests = useControlQuery(api, requestsPath, Boolean(member?.profile_complete && page === "requests"));
   const activePage = member?.profile_complete || page === "notifications" ? page : "profile";
+  const today = member?.schedule_start || ukDate();
+  const scheduleStart = scheduleDate(today, scheduleOffset).toISOString().slice(0, 10);
+  const selectedSchedulePath = `${schedulePath}?start=${scheduleStart}`;
+  const schedule = useControlQuery(api, selectedSchedulePath, activePage === "attendance" && scheduleOffset !== 0);
   const current = member?.attendance.find((entry) => !entry.checked_out_at);
   const assignedShifts = member?.assigned_shifts || [];
   const availableShifts = assignedShifts.filter((shift) => shift.status === "Available");
@@ -488,6 +558,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
   const office = settings.data;
   const officePin = sitePoint(office?.latitude, office?.longitude);
   const updatePaths = [profilePath];
+  if (activePage === "attendance" && scheduleOffset !== 0) updatePaths.push(selectedSchedulePath);
   if (activePage === "attendance" && showOfficeLocation) updatePaths.push(settingsPath);
   if (activePage === "requests") updatePaths.push(requestsPath);
   const saveProfile = (data) => {
@@ -514,6 +585,7 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
       });
       await client.cancelQueries({ queryKey: queryKey(profilePath), exact: true });
       client.setQueryData(queryKey(profilePath), updated);
+      if (scheduleOffset !== 0) void client.invalidateQueries({ queryKey: queryKey(selectedSchedulePath), exact: true });
       setCapture(null);
     } catch (err) {
       if (err.status === 409) profile.refetch();
@@ -557,7 +629,9 @@ export function ControlPortal({ api, Photo, FilePreview, onSignOut, unread = 0 }
                 <p className="muted">The office needs to set the attendance location.</p>}
             </div>}
           </section>
-          <AssignedShifts shifts={assignedShifts} canCheckIn={!current} hasOfficePin={Boolean(officePin)}
+          <AssignedShifts today={today} start={scheduleStart} schedule={scheduleOffset === 0 ? member : schedule.data}
+            scheduleQuery={schedule} offset={scheduleOffset} onNavigate={setScheduleOffset}
+            canCheckIn={!current} hasOfficePin={Boolean(officePin)}
             onCheckIn={(shift) => setCapture({ action: "check_in", shift })} />
           <div className="control-metrics">
             <Metric icon={Clock3} label="This week" value={duration(member.weekly_seconds)} detail="Monday to Sunday · UK time" />
