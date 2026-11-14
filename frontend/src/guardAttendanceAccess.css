@@ -1,0 +1,64 @@
+.guard-access-heading { margin-bottom: 18px; }
+
+.guard-access-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 14px;
+  max-width: 1000px;
+  align-items: start;
+}
+
+.guard-access-layout > .panel { display: grid; min-width: 0; gap: 12px; padding: 16px 18px; }
+.guard-access-layout :is(h3, p, ul) { margin: 0; }
+.guard-access-layout :is(p, li) { color: #465a77; font-size: 14px; line-height: 1.55; }
+.guard-access-layout strong { color: #233858; }
+.guard-access-card-title { display: flex; align-items: center; gap: 10px; }
+.guard-access-card-title h3 { color: #172944; font-size: 16px; }
+.guard-access-icon {
+  display: grid;
+  flex: 0 0 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 9px;
+  background: #e7efff;
+  color: #315bad;
+}
+
+.guard-access-layout .guard-access-pin { background: #f3f7ff; border-color: #d6e2fa; }
+.guard-access-pin .guard-pin-value { color: #254a9d; font-size: clamp(23px, 3.2vw, 34px); letter-spacing: .07em; }
+.guard-access-sites ul { display: grid; gap: 6px; padding: 0; list-style: none; }
+.guard-access-sites li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid #e7edf6;
+  overflow-wrap: anywhere;
+}
+.guard-access-sites li:last-child { border-bottom: 0; }
+.guard-access-sites li span { color: #566b87; font-size: 12px; }
+
+.guard-access-instructions p, .guard-access-instructions ul { max-width: 76ch; }
+.guard-access-layout .cortex-attendance-notice {
+  grid-column: 1 / -1;
+  border-color: #f1dba8;
+  border-inline-start: 4px solid #b88027;
+  background: #fffbf2;
+}
+.cortex-attendance-notice .guard-access-icon { background: #ffedc6; color: #865913; }
+.timegate-app-instructions ul { display: grid; gap: 6px; padding-inline-start: 20px; }
+.timegate-app-instructions .timegate-install-link {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  text-decoration: none;
+}
+.timegate-install-link:focus-visible { outline: 2px solid #5279d5; outline-offset: 2px; }
+
+@media (max-width: 720px) {
+  .guard-access-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .guard-access-layout > .panel { padding: 14px; }
+}

@@ -1,4 +1,8 @@
 import { useEffect, useState } from "react";
+import { ExternalLink, KeyRound, Smartphone } from "lucide-react";
+import "./guardAttendanceAccess.css";
+
+const employeeAppUrl = "https://play.google.com/store/apps/details?id=com.innovise.timegate.employee&pcampaignid=web_share";
 
 export function EmployeeTimeGateFields({ form, setForm }) {
   const [editing, setEditing] = useState(false);
@@ -31,16 +35,36 @@ export function GuardTimeGate({ api }) {
   }, [api, attempt]);
 
   return <>
-    <header className="page-heading"><div>
+    <header className="page-heading guard-access-heading"><div>
       <p className="eyebrow">GUARD PORTAL</p><h2>TimeGate</h2>
       <p className="muted">Your TimeGate PIN for use at TimeGate sites.</p>
     </div></header>
     {error ? <section className="panel">
       <p className="error" role="alert">{error}</p>
       <button type="button" className="secondary-button" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
-    </section> : pin ? <section className="panel">
-      <h3>Your TimeGate PIN</h3>
-      <strong className="guard-pin-value">{pin}</strong>
-    </section> : <section className="panel" role="status">Loading your PIN…</section>}
+    </section> : pin ? <div className="guard-access-layout">
+      <section className="panel guard-access-pin" aria-labelledby="timegate-pin-title">
+        <div className="guard-access-card-title">
+          <span className="guard-access-icon"><KeyRound size={19} aria-hidden="true" /></span>
+          <h3 id="timegate-pin-title">Your TimeGate PIN</h3>
+        </div>
+        <strong className="guard-pin-value">{pin}</strong>
+      </section>
+      <section className="panel guard-access-instructions timegate-app-instructions" aria-labelledby="timegate-app-title">
+        <div className="guard-access-card-title">
+          <span className="guard-access-icon"><Smartphone size={19} aria-hidden="true" /></span>
+          <h3 id="timegate-app-title">Timegate Employee app</h3>
+        </div>
+        <p>Install the <strong>Timegate Employee app</strong> from Google Play and make sure it works before your shift.</p>
+        <a className="primary-button timegate-install-link" href={employeeAppUrl} target="_blank" rel="noopener noreferrer">
+          Install from Google Play <ExternalLink size={15} aria-hidden="true" />
+        </a>
+        <ul>
+          <li><strong>Book On and Book Off</strong> in the app at the start and end of your TimeGate shifts.</li>
+          <li>Check the app regularly and complete the required <strong>hourly check calls</strong> during your shift.</li>
+        </ul>
+        <p>Thank you for your cooperation.</p>
+      </section>
+    </div> : <section className="panel" role="status">Loading your PIN…</section>}
   </>;
 }

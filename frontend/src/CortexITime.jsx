@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { KeyRound, MapPin, ShieldAlert } from "lucide-react";
+import "./guardAttendanceAccess.css";
 
 export function EmployeeCortexITimeFields({ form, setForm, api }) {
   const [editingPin, setEditingPin] = useState(false);
@@ -77,7 +79,7 @@ export function GuardCortexITime({ api }) {
   }, [api, attempt]);
 
   return <>
-    <header className="page-heading"><div>
+    <header className="page-heading guard-access-heading"><div>
       <p className="eyebrow">GUARD PORTAL</p><h2>Cortex iTime</h2>
       <p className="muted">Use your PIN at any of the active sites listed below.</p>
     </div></header>
@@ -86,11 +88,32 @@ export function GuardCortexITime({ api }) {
       <button type="button" className="secondary-button" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
     </section> : !access ? <section className="panel" role="status">Loading your PIN…</section>
       : !access.pin ? <section className="panel">The office has yet to activate your PIN for a site.</section>
-      : <section className="panel">
-        <h3>Your Cortex iTime PIN</h3>
-        <strong className="guard-pin-value">{access.pin}</strong>
-        <h3>Active sites</h3>
-        <ul>{access.sites.map(({ name, site_id }) => <li key={site_id}>{name} · {site_id}</li>)}</ul>
-      </section>}
+      : <div className="guard-access-layout">
+        <section className="panel guard-access-pin" aria-labelledby="cortex-pin-title">
+          <div className="guard-access-card-title">
+            <span className="guard-access-icon"><KeyRound size={19} aria-hidden="true" /></span>
+            <h3 id="cortex-pin-title">Your Cortex iTime PIN</h3>
+          </div>
+          <strong className="guard-pin-value">{access.pin}</strong>
+          <p>Keep your code safe and use it to record your attendance.</p>
+        </section>
+        <section className="panel guard-access-sites" aria-labelledby="cortex-sites-title">
+          <div className="guard-access-card-title">
+            <span className="guard-access-icon"><MapPin size={19} aria-hidden="true" /></span>
+            <h3 id="cortex-sites-title">Active sites</h3>
+          </div>
+          <ul>{access.sites.map(({ name, site_id }) => <li key={site_id}><strong>{name}</strong><span>{site_id}</span></li>)}</ul>
+        </section>
+        <section className="panel guard-access-instructions cortex-attendance-notice" aria-labelledby="cortex-notice-title">
+          <div className="guard-access-card-title">
+            <span className="guard-access-icon"><ShieldAlert size={19} aria-hidden="true" /></span>
+            <h3 id="cortex-notice-title">Attendance &amp; salary deductions</h3>
+          </div>
+          <p>At the start and end of every shift at a Cortex-enabled Clipfine site, you must <strong>Book On and Book Off</strong> on the site phone or tablet using the Cortex app. Use Cortex for all attendance at these sites. Your PIN works at the active sites listed above.</p>
+          <p>Clipfine uses Cortex to calculate working hours and process timesheets. Booking on or off late, forgetting to sign out, or recording attendance incorrectly may lead to missing payable hours and salary deductions. It is your responsibility to check that every shift is recorded correctly.</p>
+          <p>If you are unsure how to use Cortex or have trouble booking on or off, contact <strong>Control Room</strong> or your site colleague immediately.</p>
+          <p>Thank you for your cooperation.<br /><strong>Control Room</strong></p>
+        </section>
+      </div>}
   </>;
 }
