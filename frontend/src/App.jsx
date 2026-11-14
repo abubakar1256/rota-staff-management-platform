@@ -340,7 +340,7 @@ function formatEmployeeRoles(item) {
   return employeeRoles(item).join(" · ") || "—";
 }
 
-function RoleMultiSelect({ value = [], onChange, customRoles = [], onAddCustomRole, onEditCustomRole, onDeleteCustomRole }) {
+function RoleMultiSelect({ value = [], onChange, customRoles = [], onAddCustomRole, onEditCustomRole, onDeleteCustomRole, compact = false }) {
   const [adding, setAdding] = useState(false);
   const [editingRole, setEditingRole] = useState("");
   const [draft, setDraft] = useState("");
@@ -363,7 +363,33 @@ function RoleMultiSelect({ value = [], onChange, customRoles = [], onAddCustomRo
   const startAddRole = () => { setEditingRole(""); setDraft(""); setAdding(true); };
   const startEditRole = (event, role) => { event.preventDefault(); event.stopPropagation(); setEditingRole(role); setDraft(role); setAdding(true); };
   const deleteRole = (event, role) => { event.preventDefault(); event.stopPropagation(); onDeleteCustomRole?.(role); if (value.includes(role)) onChange(value.filter((item) => item !== role)); };
-  return <div className="full-width role-picker"><div className="role-picker-heading"><div><span className="form-label">Positions / roles</span><small>Select all roles this employee can perform.</small></div><span className="role-count">{value.length} selected</span></div><div className="role-options">{availableRoles.map((role, index) => { const custom = customRoles.includes(role); return <label className={`role-option${value.includes(role) ? " selected" : ""}`} key={role}><input type="checkbox" checked={value.includes(role)} onChange={() => onChange(value.includes(role) ? value.filter((item) => item !== role) : [...value, role])} /><span className="role-option-index">{index + 1}</span><span className="role-option-copy"><strong>{role}</strong>{value[0] === role && <small>Primary role</small>}</span>{custom && <span className="role-option-actions"><button type="button" aria-label={`Edit ${role}`} title="Edit role" onClick={(event) => startEditRole(event, role)}><Pencil size={12} /></button><button type="button" aria-label={`Delete ${role}`} title="Delete role" onClick={(event) => deleteRole(event, role)}><Trash2 size={12} /></button></span>}</label>; })}</div><div className="role-custom-row">{adding ? <div className="role-custom-form" onKeyDown={(event) => event.key === "Enter" && submitRole(event)}><input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="e.g. First Aid Officer" aria-label="Custom role name" /><button type="button" onClick={submitRole}>{editingRole ? "Save role" : "Add role"}</button><button type="button" className="secondary-button" onClick={() => { setAdding(false); setEditingRole(""); setDraft(""); }}>Cancel</button></div> : <button type="button" className="role-add-custom" onClick={startAddRole}>+ Add custom role</button>}</div>{value.length > 0 ? <div className="selected-role-summary"><span>Selected:</span>{value.map((role) => <b key={role}>{role}</b>)}</div> : <p className="role-empty-hint">Choose at least one role to continue.</p>}<small className="form-help">The first selected role becomes the primary position used in rota and reports.</small></div>;
+  return <div className="full-width role-picker">
+    <div className="role-picker-heading">
+      <div><span className="form-label">Positions / roles</span>
+        <small>{compact ? "The first selected role is the primary position." : "Select all roles this employee can perform."}</small></div>
+      <span className="role-count">{value.length} selected</span>
+    </div>
+    <div className="role-options">{availableRoles.map((role, index) => {
+      const custom = customRoles.includes(role);
+      return <label className={`role-option${value.includes(role) ? " selected" : ""}`} key={role}>
+        <input type="checkbox" checked={value.includes(role)} onChange={() => onChange(value.includes(role) ? value.filter((item) => item !== role) : [...value, role])} />
+        {!compact && <span className="role-option-index">{index + 1}</span>}
+        <span className="role-option-copy"><strong>{role}</strong>{value[0] === role && <small>Primary role</small>}</span>
+        {custom && <span className="role-option-actions">
+          <button type="button" aria-label={`Edit ${role}`} title="Edit role" onClick={(event) => startEditRole(event, role)}><Pencil size={12} /></button>
+          <button type="button" aria-label={`Delete ${role}`} title="Delete role" onClick={(event) => deleteRole(event, role)}><Trash2 size={12} /></button>
+        </span>}
+      </label>;
+    })}</div>
+    <div className="role-custom-row">{adding ? <div className="role-custom-form" onKeyDown={(event) => event.key === "Enter" && submitRole(event)}>
+      <input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="e.g. First Aid Officer" aria-label="Custom role name" />
+      <button type="button" onClick={submitRole}>{editingRole ? "Save role" : "Add role"}</button>
+      <button type="button" className="secondary-button" onClick={() => { setAdding(false); setEditingRole(""); setDraft(""); }}>Cancel</button>
+    </div> : <button type="button" className="role-add-custom" onClick={startAddRole}>+ Add custom role</button>}</div>
+    {!value.length && <p className="role-empty-hint">Choose at least one role to continue.</p>}
+    {!compact && value.length > 0 && <div className="selected-role-summary"><span>Selected:</span>{value.map((role) => <b key={role}>{role}</b>)}</div>}
+    {!compact && <small className="form-help">The first selected role becomes the primary position used in rota and reports.</small>}
+  </div>;
 }
 
 function Login({ onLogin, guardMode = false, clientMode = false, controlMode = false }) {
@@ -2370,6 +2396,7 @@ function LegacyEmployeeRecords() {
 function EmployeeRecords({ canManagePins = false }) {
   const empty = { name: "", email: "", position: "Security Guard", roles: ["Security Guard"], status: "ACTIVE", compliance_registration_enabled: false, cortex_itime_enabled: false, cortex_itime_site: "", cortex_itime_pin: "", timegate_pin: "", whatsapp_number: "" };
   const [items, setItems] = useState([]); const [search, setSearch] = useState(""); const [open, setOpen] = useState(false); const [editingId, setEditingId] = useState(null); const [form, setForm] = useState(empty); const [saving, setSaving] = useState(false); const [error, setError] = useState(""); const [invite, setInvite] = useState(null); const [copied, setCopied] = useState(false); const [customRoles, setCustomRoles] = useState(() => readCustomEmployeeRoles());
+  const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const load = async () => { try { setItems(await api(`/employees/?search=${encodeURIComponent(search)}`)); } catch (err) { setError(err.message); } };
   useEffect(() => { load(); }, []);
   const editForm = (item) => { const roles = employeeRoles(item); return { ...empty, timegate_pin_saved: Boolean(item.timegate_pin_saved), cortex_itime_enabled: Boolean(item.cortex_itime_enabled), cortex_itime_sites: item.cortex_itime_sites || [], cortex_itime_pin_saved: Boolean(item.cortex_itime_pin_saved), employee_id: item.employee_id || "", name: item.name || "", email: item.email || "", whatsapp_number: item.whatsapp_number || "", position: roles[0] || item.position || "", roles, status: item.status || "ACTIVE", compliance_registration_enabled: Boolean(item.compliance_registration_enabled), date_of_birth: item.date_of_birth || "", nationality: item.nationality || "", phone: item.phone || "", joining_date: item.joining_date || "", address: item.address || "", emergency_contact_name: item.emergency_contact_name || "", emergency_contact_phone: item.emergency_contact_phone || "", emergency_contact_relationship: item.emergency_contact_relationship || "" }; };
@@ -2393,13 +2420,81 @@ function EmployeeRecords({ canManagePins = false }) {
   const employeeInviteUrl = (employee) => employee.portal_invite_token ? `${PORTAL_ORIGIN}/guard?activate=${employee.portal_invite_token}` : employee.portal_invite_url || "";
   const copyEmployeeInvite = async (employee) => { const url = employeeInviteUrl(employee); if (!url) return; try { await navigator.clipboard.writeText(url); notifyToast(`${employee.name} invite link copied.`); } catch { setInvite({ employee: employee.name, url }); setCopied(false); } };
   const copyInvite = async () => { if (!invite?.url) return; try { await navigator.clipboard.writeText(invite.url); setCopied(true); } catch { setCopied(false); } };
-  return <><div className="page-heading"><div><p className="eyebrow">PEOPLE MANAGEMENT</p><h2>Employees</h2><p className="muted">Create a guard record, then control portal access. The Diligent form appears automatically after activation.</p></div><button className="primary-button" onClick={() => { setEditingId(null); setForm(empty); setError(""); setOpen(true); }}>Add employee</button></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><div className="toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search employees..." value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === "Enter" && load()} /></div><span className="muted">{items.length} records</span></div>{items.length ? <div className="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Position</th><th>Portal access</th><th>Compliance form</th><th>Status</th><th>Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.employee_id}</td><td><strong>{item.name}</strong><small className="table-subtext">{item.email || "Profile details pending"}</small></td><td>{formatEmployeeRoles(item)}</td><td>{item.portal_status === "ACTIVE" ? <span className="status-pill active">Active</span> : <button className="mini-button" onClick={() => createPortalAccount(item)}>{item.portal_status === "INVITE_PENDING" ? "Resend invite" : "Invite guard"}</button>}</td><td><span className="status-pill active">Available after login</span></td><td><span className={`status-pill ${String(item.status || "").toLowerCase()}`}>{item.status === "ON_HOLD" ? "On hold" : String(item.status || "").replace("_", " ")}</span></td><td><div className="row-actions"><button className="mini-button" onClick={() => { setEditingId(item.id); setForm(editForm(item)); setError(""); setOpen(true); }}><Pencil size={13} /> View / edit</button>{employeeInviteUrl(item) && <button className="mini-button" onClick={() => copyEmployeeInvite(item)}>Copy invite</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><Users size={30} /><strong>No employees found</strong><span>Use Add employee to create a guard record.</span></div>}</section>{open && <div className="modal-backdrop"><form className={canManagePins ? "modal-card employee-access-modal" : "modal-card"} onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EMPLOYEE RECORD" : "NEW RECORD"}</p><h3>{editingId ? "View / edit employee" : "Add employee"}</h3><p className="muted">{editingId ? "Update office-controlled access and guard details." : "Only the basic record is needed now."}</p></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee ID<input value={form.employee_id || "System will generate"} disabled /></label><label>Full name (first name + surname)<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="First name Surname" /></label><label>Email (portal login)<input required={!editingId} type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="guard@example.com" /></label><RoleMultiSelect value={form.roles || employeeRoles(form)} customRoles={customRoles} onAddCustomRole={addCustomRole} onEditCustomRole={editCustomRole} onDeleteCustomRole={deleteCustomRole} onChange={(roles) => setForm({ ...form, roles, position: roles[0] || "" })} /><label>Status<select required value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option><option value="ON_HOLD">On hold</option></select></label><label className="full-width checkbox-field"><span className="checkbox-control"><input type="checkbox" checked={Boolean(form.compliance_registration_enabled)} onChange={(event) => setForm({ ...form, compliance_registration_enabled: event.target.checked })} /><span><strong>Enable compliance registration</strong><small>Show the external Compliance registration link in this guard's portal sidebar.</small></span></span></label>
-      {canManagePins && <label>WhatsApp number<input type="tel" value={form.whatsapp_number} maxLength={40} onChange={(event) => setForm({ ...form, whatsapp_number: event.target.value })} placeholder="+44 7700 900123" /><small className="form-help">Include the country code.</small></label>}
-      {canManagePins && <>
-        <EmployeeCortexITimeFields form={form} setForm={setForm} api={api} />
-        <EmployeeTimeGateFields form={form} setForm={setForm} />
-      </>}
-      {editingId && <><label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => setForm({ ...form, date_of_birth: event.target.value })} /></label><label>Nationality<input value={form.nationality} onChange={(event) => setForm({ ...form, nationality: event.target.value })} /></label><label>Phone<input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label><label>Joining date<input type="date" value={form.joining_date} onChange={(event) => setForm({ ...form, joining_date: event.target.value })} /></label><label className="full-width">Address<textarea rows="2" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label><label>Emergency contact name<input value={form.emergency_contact_name} onChange={(event) => setForm({ ...form, emergency_contact_name: event.target.value })} /></label><label>Emergency contact phone<input value={form.emergency_contact_phone} onChange={(event) => setForm({ ...form, emergency_contact_phone: event.target.value })} /></label><label>Relationship<input value={form.emergency_contact_relationship} onChange={(event) => setForm({ ...form, emergency_contact_relationship: event.target.value })} /></label></>}</div>{!editingId && <p className="form-help">Employee ID will be generated automatically after saving.</p>}{error && <p className="error">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save employee"}</button></div></form></div>}{invite && <div className="modal-backdrop"><section className="modal-card invite-modal"><div className="modal-header"><div><p className="eyebrow">GUARD PORTAL INVITE</p><h3>Invite link ready</h3><p className="muted">Send this one-time link to {invite.employee}.</p></div><button type="button" className="icon-button" onClick={() => setInvite(null)}><X size={19} /></button></div><div className="invite-link-box"><input readOnly value={invite.url} /><button className="primary-button" onClick={copyInvite}>{copied ? "Copied" : "Copy link"}</button></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setInvite(null)}>Done</button></div></section></div>}</>;
+  return <><div className="page-heading"><div><p className="eyebrow">PEOPLE MANAGEMENT</p><h2>Employees</h2><p className="muted">Create a guard record, then control portal access. The Diligent form appears automatically after activation.</p></div><button className="primary-button" onClick={() => { setEditingId(null); setForm(empty); setError(""); setOpen(true); }}>Add employee</button></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><div className="toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search employees..." value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === "Enter" && load()} /></div><span className="muted">{items.length} records</span></div>{items.length ? <div className="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Position</th><th>Portal access</th><th>Compliance form</th><th>Status</th><th>Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.employee_id}</td><td><strong>{item.name}</strong><small className="table-subtext">{item.email || "Profile details pending"}</small></td><td>{formatEmployeeRoles(item)}</td><td>{item.portal_status === "ACTIVE" ? <span className="status-pill active">Active</span> : <button className="mini-button" onClick={() => createPortalAccount(item)}>{item.portal_status === "INVITE_PENDING" ? "Resend invite" : "Invite guard"}</button>}</td><td><span className="status-pill active">Available after login</span></td><td><span className={`status-pill ${String(item.status || "").toLowerCase()}`}>{item.status === "ON_HOLD" ? "On hold" : String(item.status || "").replace("_", " ")}</span></td><td><div className="row-actions"><button className="mini-button" onClick={() => { setEditingId(item.id); setForm(editForm(item)); setError(""); setOpen(true); }}><Pencil size={13} /> View / edit</button>{employeeInviteUrl(item) && <button className="mini-button" onClick={() => copyEmployeeInvite(item)}>Copy invite</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><Users size={30} /><strong>No employees found</strong><span>Use Add employee to create a guard record.</span></div>}</section>{open && <div className="modal-backdrop employee-record-backdrop">
+    <form className="modal-card employee-record-modal" role="dialog" aria-modal="true" aria-labelledby="employee-record-title" onSubmit={save}>
+      <header className="modal-header">
+        <div>
+          <p className="eyebrow">{editingId ? "EMPLOYEE RECORD" : "NEW RECORD"}</p>
+          <h3 id="employee-record-title">{editingId ? "View / edit employee" : "Add employee"}</h3>
+        </div>
+        <button type="button" className="icon-button" aria-label="Close employee form" disabled={saving}
+          onClick={() => setOpen(false)}><X size={19} /></button>
+      </header>
+      <div className="employee-record-sections">
+        <section className="employee-record-section" aria-labelledby="employee-details-title">
+          <h4 id="employee-details-title">Employee details</h4>
+          <div className="form-grid">
+            <label>Full name (first name + surname)<input required value={form.name}
+              onChange={(event) => updateField("name", event.target.value)} placeholder="First name Surname" /></label>
+            <label>Email (portal login)<input required={!editingId} type="email" value={form.email}
+              onChange={(event) => updateField("email", event.target.value)} placeholder="guard@example.com" /></label>
+            <label>Employee ID<input value={form.employee_id || "System will generate"} disabled /></label>
+            <label>Status<select required value={form.status} onChange={(event) => updateField("status", event.target.value)}>
+              <option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option><option value="ON_HOLD">On hold</option>
+            </select></label>
+            {editingId && <>
+              <label>Date of birth<input type="date" value={form.date_of_birth} onChange={(event) => updateField("date_of_birth", event.target.value)} /></label>
+              <label>Nationality<input value={form.nationality} onChange={(event) => updateField("nationality", event.target.value)} /></label>
+              <label>Phone<input value={form.phone} onChange={(event) => updateField("phone", event.target.value)} /></label>
+              <label>Joining date<input type="date" value={form.joining_date} onChange={(event) => updateField("joining_date", event.target.value)} /></label>
+              <label className="full-width">Address<textarea rows={2} value={form.address} onChange={(event) => updateField("address", event.target.value)} /></label>
+            </>}
+          </div>
+        </section>
+        <section className="employee-record-section employee-record-access" aria-labelledby="employee-access-title">
+          <h4 id="employee-access-title">Portal access</h4>
+          <div className="form-grid">
+            <label className="full-width checkbox-field"><span className="checkbox-control">
+              <input type="checkbox" checked={Boolean(form.compliance_registration_enabled)}
+                onChange={(event) => updateField("compliance_registration_enabled", event.target.checked)} />
+              <span><strong>Enable compliance registration</strong>
+                <small>Show the external Compliance registration link in this guard's portal sidebar.</small></span>
+            </span></label>
+            {canManagePins && <>
+              <label className="full-width">WhatsApp number<input type="tel" value={form.whatsapp_number} maxLength={40}
+                onChange={(event) => updateField("whatsapp_number", event.target.value)} placeholder="+44 7700 900123" />
+                <small className="form-help">Include the country code.</small>
+              </label>
+              <EmployeeTimeGateFields form={form} setForm={setForm} />
+            </>}
+          </div>
+          {canManagePins && <div className="form-grid">
+            <EmployeeCortexITimeFields form={form} setForm={setForm} api={api} />
+          </div>}
+        </section>
+        <div className="employee-record-secondary">
+          <section className="employee-record-section employee-record-roles">
+            <RoleMultiSelect compact value={form.roles || employeeRoles(form)} customRoles={customRoles}
+              onAddCustomRole={addCustomRole} onEditCustomRole={editCustomRole} onDeleteCustomRole={deleteCustomRole}
+              onChange={(roles) => setForm((current) => ({ ...current, roles, position: roles[0] || "" }))} />
+          </section>
+          {editingId && <section className="employee-record-section employee-record-emergency" aria-labelledby="employee-emergency-title">
+            <h4 id="employee-emergency-title">Emergency contact</h4>
+            <div className="form-grid">
+              <label>Name<input value={form.emergency_contact_name} onChange={(event) => updateField("emergency_contact_name", event.target.value)} /></label>
+              <label>Phone<input type="tel" value={form.emergency_contact_phone} onChange={(event) => updateField("emergency_contact_phone", event.target.value)} /></label>
+              <label>Relationship<input value={form.emergency_contact_relationship} onChange={(event) => updateField("emergency_contact_relationship", event.target.value)} /></label>
+            </div>
+          </section>}
+        </div>
+      </div>
+      {error && <p className="error" role="alert">{error}</p>}
+      <footer className="modal-actions">
+        <button type="button" className="secondary-button" disabled={saving} onClick={() => setOpen(false)}>Cancel</button>
+        <button className="primary-button" disabled={saving}>{saving ? "Saving…" : "Save employee"}</button>
+      </footer>
+    </form>
+  </div>}{invite && <div className="modal-backdrop"><section className="modal-card invite-modal"><div className="modal-header"><div><p className="eyebrow">GUARD PORTAL INVITE</p><h3>Invite link ready</h3><p className="muted">Send this one-time link to {invite.employee}.</p></div><button type="button" className="icon-button" onClick={() => setInvite(null)}><X size={19} /></button></div><div className="invite-link-box"><input readOnly value={invite.url} /><button className="primary-button" onClick={copyInvite}>{copied ? "Copied" : "Copy link"}</button></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setInvite(null)}>Done</button></div></section></div>}</>;
 }
 
 function App() {

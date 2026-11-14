@@ -18,7 +18,6 @@
 .form-grid .cortex-itime-toggle input { width: auto; margin: 2px 0 0; accent-color: #4d76de; }
 .cortex-itime-toggle span { display: grid; gap: 3px; }
 .cortex-itime-toggle small { color: #65738b; font-weight: 400; }
-.modal-card.employee-access-modal:has(.guard-pin-setting) { overflow-y: auto; }
 .cortex-itime-fields { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
 .guard-pin-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cortex-itime-warning { padding: 9px 12px; border: 1px solid #efdbab; border-radius: 8px; background: #fffaee; color: #82520b; font-size: 13px; }
@@ -637,12 +636,12 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
 /* Employee status workflow */
 .status-pill.on_hold { color: #a16c21; background: #fff5df; }
 @media (min-width: 901px) {
-  .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 860px); max-height: none; overflow: visible; padding: 22px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 14px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .form-grid label { gap: 5px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .form-grid input, .modal-card:has(input[placeholder="First name Surname"]) .form-grid select, .modal-card:has(input[placeholder="First name Surname"]) .form-grid textarea { padding: 8px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 16px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) { width: min(100%, 860px); max-height: none; overflow: visible; padding: 22px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 14px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid label { gap: 5px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid input, .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid select, .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid textarea { padding: 8px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 16px; }
 }
 .checkbox-field { display: flex !important; align-items: flex-start; gap: 10px !important; padding: 12px; border: 1px solid #dfe5ee; border-radius: 8px; background: #f8faff; }
 .checkbox-field input { width: auto !important; margin-top: 2px; accent-color: #4d76de; }
@@ -840,22 +839,22 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
 @media (max-width: 560px) { .role-options { grid-template-columns: 1fr; }.role-picker-heading { align-items: flex-start; flex-direction: column; }.role-count { align-self: flex-start; } }
 
 /* Compact employee record modal: keep the full form visible without internal scrolling */
-.modal-card:has(input[placeholder="First name Surname"]) { padding: 18px; }
-.modal-card:has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 10px; }
-.modal-card:has(input[placeholder="First name Surname"]) .modal-header h3 { font-size: 18px; }
-.modal-card:has(input[placeholder="First name Surname"]) .form-grid { gap: 8px; }
-.modal-card:has(input[placeholder="First name Surname"]) .form-grid input, .modal-card:has(input[placeholder="First name Surname"]) .form-grid select, .modal-card:has(input[placeholder="First name Surname"]) .form-grid textarea { padding: 7px 9px; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-picker { gap: 7px; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-options { gap: 6px; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-options .role-option { min-height: 40px; padding: 7px 9px; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-option-index { width: 19px; height: 19px; flex-basis: 19px; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-picker .form-help { font-size: 9px; line-height: 1.2; }
-.modal-card:has(input[placeholder="First name Surname"]) .role-empty-hint { font-size: 9px; }
-.modal-card:has(input[placeholder="First name Surname"]) .checkbox-field { padding: 9px; }
-.modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 10px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) { padding: 18px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 10px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-header h3 { font-size: 18px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid { gap: 8px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid input, .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid select, .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid textarea { padding: 7px 9px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-picker { gap: 7px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-options { gap: 6px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-options .role-option { min-height: 40px; padding: 7px 9px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-option-index { width: 19px; height: 19px; flex-basis: 19px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-picker .form-help { font-size: 9px; line-height: 1.2; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-empty-hint { font-size: 9px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .checkbox-field { padding: 9px; }
+.modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 10px; }
 .checkbox-field > .checkbox-control { display: flex; align-items: flex-start; gap: 9px; width: 100%; }
 .checkbox-field > .checkbox-control > span { display: grid; gap: 3px; }
-@media (min-width: 681px) { .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 760px); max-height: calc(100dvh - 24px); overflow: visible; } }
+@media (min-width: 681px) { .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) { width: min(100%, 760px); max-height: calc(100dvh - 24px); overflow: visible; } }
 
 .role-custom-row { display: flex; align-items: center; gap: 7px; min-height: 24px; }
 .role-add-custom { border: 0; padding: 3px 0; background: transparent; color: #4d70ce; font-size: 10px; font-weight: 800; cursor: pointer; }
@@ -865,7 +864,7 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
 .role-custom-form input:focus { border-color: #7899e8; outline: 0; box-shadow: 0 0 0 2px rgba(77,118,222,.1); }
 .role-custom-form button { border: 1px solid #cddaf8; border-radius: 7px; padding: 7px 9px; background: #f1f5ff; color: #456ac8; font-size: 10px; font-weight: 800; cursor: pointer; white-space: nowrap; }
 .role-custom-form .secondary-button { padding: 7px 9px; font-size: 10px; }
-@media (min-width: 681px) { .modal-card:has(input[placeholder="First name Surname"]) .form-grid label:has(textarea) { grid-column: span 2; } }
+@media (min-width: 681px) { .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid label:has(textarea) { grid-column: span 2; } }
 @media (max-width: 560px) { .role-custom-form { flex-wrap: wrap; }.role-custom-form input { flex: 1 1 100%; } }
 
 .role-option-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; transition: opacity .15s ease; }
@@ -874,21 +873,96 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
 .role-option-actions button:hover { background: #dce6ff; color: #3159bb; }
 .role-option-actions button:last-child:hover { background: #ffe7eb; color: #bd6675; }
 @media (min-width: 681px) {
-  .modal-backdrop:has(.modal-card input[placeholder="First name Surname"]) { padding: 10px 14px; }
-  .modal-card:has(input[placeholder="First name Surname"]) { width: min(100%, 900px); padding: 14px 16px; border-radius: 12px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 7px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .form-grid { gap: 6px 8px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .role-picker { gap: 5px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .role-options { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .role-options .role-option { min-height: 35px; padding: 5px 7px; gap: 6px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .role-option-index { width: 18px; height: 18px; flex-basis: 18px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .role-option-actions button { width: 20px; height: 20px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .selected-role-summary { gap: 4px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .selected-role-summary b { padding: 3px 6px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .checkbox-field { padding: 7px 9px; }
-  .modal-card:has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 7px; }
+  .modal-backdrop:not(.employee-record-backdrop):has(.modal-card input[placeholder="First name Surname"]) { padding: 10px 14px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) { width: min(100%, 900px); padding: 14px 16px; border-radius: 12px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-header { margin-bottom: 7px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .form-grid { gap: 6px 8px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-picker { gap: 5px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-options { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-options .role-option { min-height: 35px; padding: 5px 7px; gap: 6px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-option-index { width: 18px; height: 18px; flex-basis: 18px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .role-option-actions button { width: 20px; height: 20px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .selected-role-summary { gap: 4px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .selected-role-summary b { padding: 3px 6px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .checkbox-field { padding: 7px 9px; }
+  .modal-card:not(.employee-record-modal):has(input[placeholder="First name Surname"]) .modal-actions { margin-top: 7px; }
 }
 
 .saved-report-row > .saved-report-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.modal-backdrop.employee-record-backdrop {
+  align-items: safe center;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(10px, 2vw, 22px);
+}
+.modal-card.employee-record-modal {
+  width: min(100%, 1120px);
+  max-height: none;
+  overflow: visible;
+  padding: clamp(12px, 2vw, 20px);
+  border-radius: 14px;
+}
+.employee-record-modal .modal-header { margin-bottom: 10px; }
+.employee-record-modal .modal-header h3 { margin-top: 3px; }
+.employee-record-sections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.employee-record-secondary { display: grid; min-width: 0; gap: 10px; }
+.employee-record-section {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e2e9f4;
+  border-radius: 10px;
+  background: #fbfcff;
+}
+.employee-record-section h4 { margin: 0 0 8px; font-size: 13px; color: #26344d; }
+.employee-record-access > .form-grid + .form-grid { margin-top: 8px; }
+.employee-record-modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.employee-record-modal .form-grid label { align-content: start; min-width: 0; gap: 4px; }
+.employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) {
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.employee-record-modal .form-grid textarea { resize: vertical; }
+.employee-record-modal .form-help { margin: 0; }
+.employee-record-modal :is(.guard-pin-setting, .checkbox-field) { gap: 5px; padding: 6px 8px; }
+.employee-record-modal .guard-pin-setting p { margin: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.employee-record-modal .cortex-itime-fields { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; }
+.employee-record-modal .role-picker { gap: 7px; }
+.employee-record-modal .role-picker-heading { flex-direction: row; align-items: center; }
+.employee-record-modal .role-options { grid-template-columns: repeat(auto-fit, minmax(min(136px, 100%), 1fr)); gap: 6px; }
+.employee-record-modal .role-options .role-option { min-height: 36px; padding: 5px 7px; gap: 6px; overflow-wrap: anywhere; }
+.employee-record-modal .role-option-actions { opacity: 1; }
+.employee-record-modal .role-option-actions button { width: 20px; height: 22px; }
+.employee-record-modal .modal-actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
+.employee-record-modal .modal-actions button { width: auto; }
+@media (min-width: 960px) {
+  .employee-record-sections { grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr); }
+}
+@media (min-width: 960px) and (max-height: 780px) {
+  .modal-backdrop.employee-record-backdrop { padding-block: 12px; }
+  .modal-card.employee-record-modal { padding-block: 12px; }
+  .employee-record-section { padding-block: 8px; }
+  .employee-record-modal .modal-header { margin-bottom: 8px; }
+  .employee-record-modal .form-grid { gap: 5px 8px; }
+  .employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) { min-height: 31px; padding-block: 4px; }
+  .employee-record-modal .form-grid label { gap: 3px; }
+  .employee-record-modal :is(.guard-pin-setting, .checkbox-field) { padding-block: 5px; }
+  .employee-record-modal .guard-pin-setting p { font-size: 12px; }
+}
+@media (min-width: 701px) and (max-width: 959px) {
+  .employee-record-secondary { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+@media (max-width: 700px) {
+  .employee-record-sections { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) { font-size: 16px; }
+  .employee-record-modal .modal-actions button { flex: 1; }
+}
 .saved-report-actions button { white-space: nowrap; }
 @media (max-width: 680px) { .saved-report-row > .saved-report-actions { width: 100%; } .saved-report-actions button { flex: 1; } }
