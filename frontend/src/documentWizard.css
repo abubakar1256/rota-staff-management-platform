@@ -13,3 +13,19 @@
 .guard-certificates { border: 1px solid #dce6f6; border-radius: 12px; padding: 18px; }.guard-certificates h4 { margin: 0 0 10px; color: #3b5477; }.guard-certificates h4 span { margin-left: 8px; }.guard-certificates .form-grid { gap: 15px; margin: 18px 0; }.guard-certificate-record { display: flex; justify-content: space-between; gap: 15px; padding: 15px 0; border-bottom: 1px solid #e6ecf5; }.guard-certificate-record > div { min-width: 0; }.guard-certificate-record strong, .guard-certificate-record small { display: block; overflow-wrap: anywhere; }.guard-certificate-record small { color: #8192ac; margin-top: 5px; }.guard-certificate-record .document-review-state { margin: 8px 0 0; font-size: 11px; }.guard-certificate-files { font-size: 12px; color: #607a9e; overflow-wrap: anywhere; }
 .guard-documents-summary { color: #2d9475; }.guard-documents-summary p { color: #6e819d; line-height: 1.6; }.guard-document-review-list { display: grid; gap: 9px; margin-top: 22px; }.guard-document-review-list article { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px; border: 1px solid #e0e7f3; border-radius: 9px; }.guard-document-review-list strong { font-size: 13px; color: #3d5678; }.guard-document-review-list span { display: block; font-size: 11px; color: #8193ae; margin-top: 6px; }
 @media (max-width: 560px) { .guard-document-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.guard-document-editor .form-grid, .guard-certificates .form-grid { grid-template-columns: minmax(0, 1fr); }.guard-certificate-record { flex-direction: column; }.guard-document-review-list article { align-items: flex-start; }.guard-document-review-list article > div { min-width: 0; }.guard-document-review-list button { flex-shrink: 0; }.guard-certificates { padding: 13px; }.guard-document-upload { padding: 24px 12px; } }
+.document-options-panel { margin-bottom: 18px; }
+.document-options-panel .panel-header { flex-wrap: wrap; gap: 12px; }
+.document-option-form { margin: 14px 0; }
+.document-option-form fieldset { padding: 14px; margin: 0; min-width: 0; border: 1px solid #dbe5f4; border-radius: 10px; background: #f7f9fd; }
+.document-option-form legend { color: #344660; font-size: 13px; font-weight: 700; padding: 0 6px; }
+.document-option-form textarea { width: 100%; }
+.document-option-form .row-actions { margin-top: 12px; }
+.document-option-list { display: grid; gap: 8px; list-style: none; padding: 0; margin: 12px 0 0; }
+.document-option-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e0e7f0; border-radius: 9px; }
+.document-option-list strong { color: #2d3d55; overflow-wrap: anywhere; }
+.document-option-list p { margin: 3px 0 0; color: #586b87; font-size: 12px; overflow-wrap: anywhere; }
+.guard-document-steps button, .guard-optional-documents summary, .guard-document-review-list strong { overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .document-option-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .document-option-list .row-actions { grid-column: 1 / -1; }
+}

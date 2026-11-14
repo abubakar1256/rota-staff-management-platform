@@ -39,6 +39,49 @@ class GuardDocumentWizardTests(APITestCase):
     def certificate(self, **kwargs):
         return self.client.post("/api/documents/", {"employee": self.employee.pk, "document_type": "Certificates", "certificate_type": "NASDU", "file": self.file(), **kwargs}, format="multipart")
 
+    def test_admin_can_manage_custom_uploads_without_losing_guard_evidence(self):
+        self.required_records()
+        options = "/api/document-options/"
+        new_option = {"name": "Signed handbook", "instructions": "Upload the signed copy.", "required": True}
+        self.assertEqual(self.client.post(options, new_option, format="json").status_code, 403)
+        admin = get_user_model().objects.create_superuser(username="option-admin")
+        self.client.force_authenticate(admin)
+        self.assertEqual(self.client.post(options, {**new_option, "name": "share code"}, format="json").status_code, 400)
+        created = self.client.post(options, new_option, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        option_id = created.data["id"]
+        option_url = f"{options}{option_id}/"
+        self.assertEqual(self.client.post(options, {**new_option, "name": "signed handbook"}, format="json").status_code, 400)
+
+        self.client.force_authenticate(self.guard)
+        self.assertEqual(self.client.get(options).data, [created.data])
+        self.assertEqual(documents_completion(self.employee), {"completed": 7, "required": 8, "percentage": 88})
+        evidence = {"employee": self.employee.pk, "document_option": option_id}
+        self.assertEqual(self.client.post("/api/documents/", evidence, format="multipart").status_code, 400)
+        self.assertEqual(self.client.post("/api/documents/", {**evidence, "file_url": "https://example.com/file.pdf"}, format="json").status_code, 400)
+        uploaded = self.client.post("/api/documents/", {**evidence, "file": self.file()}, format="multipart")
+        self.assertEqual(uploaded.status_code, 201, uploaded.data)
+        document_url = f"/api/documents/{uploaded.data['id']}/"
+        self.assertEqual(self.client.post("/api/documents/", {**evidence, "file": self.file()}, format="multipart").status_code, 400)
+        self.assertEqual(self.client.patch(document_url, {"document_option": None}, format="json").status_code, 400)
+        self.assertEqual(documents_completion(self.employee)["percentage"], 100)
+
+        self.client.force_authenticate(admin)
+        renamed = self.client.patch(option_url, {"name": "Staff handbook", "required": False}, format="json")
+        self.assertEqual(renamed.status_code, 200, renamed.data)
+        self.assertEqual(self.client.get(document_url).data["document_label"], "Staff handbook")
+        self.assertEqual(documents_completion(self.employee)["required"], 7)
+        self.assertEqual(self.client.delete(option_url).status_code, 204)
+        self.assertFalse(self.client.get(options).data[0]["is_active"])
+
+        self.client.force_authenticate(self.guard)
+        self.assertEqual(self.client.get(options).data, [])
+        self.assertEqual(self.client.get(document_url).status_code, 200)
+        self.assertEqual(self.client.patch(document_url, {"file": self.file()}, format="multipart").status_code, 400)
+        self.client.force_authenticate(admin)
+        self.assertEqual(self.client.patch(option_url, {"is_active": True, "required": True}, format="json").status_code, 200)
+        self.assertEqual(documents_completion(self.employee), {"completed": 8, "required": 8, "percentage": 100})
+
     def test_required_documents_reach_100_with_only_one_address_and_no_optional_uploads(self):
         self.assertEqual(documents_completion(self.employee)["percentage"], 0)
         self.required_records()

@@ -30,7 +30,7 @@ def archive_path(document):
     employee = document.employee
     name = safe_name(employee.name, "Guard", 60)
     employee_id = safe_name(employee.employee_id, "Employee", 40)
-    kind = document.document_type
+    kind = document.document_label
     if document.certificate_type:
         kind = f"Certificate - {document.certificate_name or document.get_certificate_type_display()}"
     title = safe_name(kind, "Document", 72)
@@ -57,7 +57,7 @@ def build_document_archive(documents):
                             target.write(chunk)
                 except OSError as exc:
                     raise ValidationError({
-                        "detail": f"Could not include {document.document_type} for {document.employee.name}. "
+                        "detail": f"Could not include {document.document_label} for {document.employee.name}. "
                                   "Check that the uploaded file opens, or remove it from the selection.",
                     }) from exc
         archive_file.seek(0)

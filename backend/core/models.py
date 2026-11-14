@@ -566,6 +566,22 @@ class LeaveRecord(models.Model):
         return f"{self.employee.name} - {self.leave_type} ({self.start_date} to {self.end_date})"
 
 
+class DocumentOption(models.Model):
+    name = models.CharField(max_length=100)
+    instructions = models.CharField(max_length=500, blank=True)
+    required = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name", "pk"]
+        constraints = [
+            models.UniqueConstraint(Lower("name"), name="unique_document_option_name"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class EmployeeDocument(models.Model):
     class CertificateType(models.TextChoices):
         ACT = "ACT", "ACT"
@@ -579,6 +595,7 @@ class EmployeeDocument(models.Model):
         REJECTED = "REJECTED", "Rejected"
 
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="documents")
+    document_option = models.ForeignKey(DocumentOption, null=True, blank=True, on_delete=models.PROTECT)
     document_type = models.CharField(max_length=100)
     document_number = models.CharField(max_length=100, blank=True)
     certificate_type = models.CharField(max_length=20, choices=CertificateType.choices, blank=True)
@@ -603,6 +620,17 @@ class EmployeeDocument(models.Model):
 
     class Meta:
         ordering = ["expiry_date", "employee__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["employee", "document_option"],
+                condition=models.Q(document_option__isnull=False),
+                name="unique_employee_document_option",
+            ),
+        ]
+
+    @property
+    def document_label(self):
+        return self.document_option.name if self.document_option_id else self.document_type
 
     @property
     def status(self):
@@ -618,7 +646,7 @@ class EmployeeDocument(models.Model):
         return "VALID"
 
     def __str__(self):
-        return f"{self.employee.name} - {self.document_type}"
+        return f"{self.employee.name} - {self.document_label}"
 
 
 class Timesheet(models.Model):

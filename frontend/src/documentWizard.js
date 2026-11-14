@@ -6,7 +6,12 @@ const clean = (value) => String(value || "").trim();
 export const hasDocumentFile = (document) => Boolean(document?.file || document?.file_url || document?.secure_file_url);
 export const documentFileUrl = (document) => document?.secure_file_url || document?.file || document?.file_url || "";
 
-export function requiredDocumentItems(profile) {
+const customDocumentItem = (option) => ({
+  key: `custom-${option.id}`, optionId: option.id, label: option.name,
+  hint: option.instructions, required: option.required,
+});
+
+export function requiredDocumentItems(profile, options = []) {
   const items = [
     { key: "passport", label: "Passport (First 2 pages)", hint: "Upload the first two pages together as one file.", expiry: true },
     { key: "sia_front", label: "SIA Card (Front)", hint: "Upload the front of your SIA card and enter its number.", number: true, expiry: true, aliases: ["SIA Card (Front & Back)"] },
@@ -18,7 +23,10 @@ export function requiredDocumentItems(profile) {
     { key: "ni_number", label: "National Insurance Number (NI)", hint: "Enter your NI number or upload supporting evidence.", code: true },
     { key: "photograph", label: "Personal Photograph", hint: "Your saved profile picture is used here. You can replace it in My profile.", photo: true },
   );
-  return items.map((item) => ({ ...item, required: true }));
+  return [
+    ...items.map((item) => ({ ...item, required: true })),
+    ...options.filter((option) => option.is_active && option.required).map(customDocumentItem),
+  ];
 }
 
 export const optionalDocumentItems = [
@@ -29,6 +37,10 @@ export const optionalDocumentItems = [
   { key: "driving_back", label: "Driving License (Back)" },
   { key: "ppac_code", label: "PPAC Code", code: true },
 ];
+
+export function optionalDocumentItemsFor(options = []) {
+  return [...optionalDocumentItems, ...options.filter((option) => option.is_active && !option.required).map(customDocumentItem)];
+}
 
 export function documentFieldRules(type, certificateType) {
   if (type === "ACT certificate" || type === "Certificates") {
@@ -58,11 +70,13 @@ export function documentComplete(item, document, today = localDate()) {
 }
 export function findStepDocument(item, documents, today = localDate()) {
   const names = [item.label, ...(item.aliases || [])].map((name) => name.toLowerCase());
-  const matches = documents.filter((document) => names.includes(document.document_type.toLowerCase()));
+  const matches = documents.filter((document) => item.optionId
+    ? document.document_option === item.optionId
+    : !document.document_option && names.includes(document.document_type.toLowerCase()));
   return matches.find((document) => documentComplete(item, document, today)) || matches[0];
 }
-export function documentsProgress(profile, documents, today = localDate()) {
-  const items = requiredDocumentItems(profile);
+export function documentsProgress(profile, documents, today = localDate(), options = []) {
+  const items = requiredDocumentItems(profile, options);
   const completed = items.filter((item) => documentComplete(item, findStepDocument(item, documents, today), today)).length;
   return { completed, required: items.length, percentage: Math.round(completed / items.length * 100) };
 }
@@ -98,7 +112,9 @@ export async function saveDocument(api, employee, item, existing, draft = {}) {
   if (error) throw new Error(error);
   if (existing?.verification_status === "REJECTED" && !Object.keys(draft).length) throw new Error("Replace or correct this rejected document before continuing.");
   if (existing && !Object.keys(draft).length) return existing;
-  const values = { employee: employee.id, document_type: existing?.document_type || item.label, document_number: clean(merged.document_number), notes: clean(merged.notes), issue_date: merged.issue_date || null, expiry_date: merged.expiry_date || null };
+  const values = { employee: employee.id, document_number: clean(merged.document_number), notes: clean(merged.notes), issue_date: merged.issue_date || null, expiry_date: merged.expiry_date || null };
+  if (item.optionId) values.document_option = item.optionId;
+  else values.document_type = existing?.document_type || item.label;
   if (item.certificate) Object.assign(values, { certificate_type: merged.certificate_type || "", certificate_name: clean(merged.certificate_name) });
   let body;
   if (draft.file) {

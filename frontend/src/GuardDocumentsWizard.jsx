@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Plus, Upload } from "lucide-react";
-import { certificateLabel, certificateTypes, documentComplete, documentFileUrl, documentsProgress, findStepDocument, localDate, optionalDocumentItems, requiredDocumentItems, saveDocument } from "./documentWizard";
+import { certificateLabel, certificateTypes, documentComplete, documentFileUrl, documentsProgress, findStepDocument, localDate, optionalDocumentItemsFor, requiredDocumentItems, saveDocument } from "./documentWizard";
 import "./profileWizard.css";
 import "./documentWizard.css";
 
@@ -63,19 +63,23 @@ function Certificates({ profile, documents, api, onSaved, FilePreview, onDirty }
 
 export default function GuardDocumentsWizard({ api, FilePreview, Image, onProfile, initialDocumentId }) {
   const [profile, setProfile] = useState(null), [documents, setDocuments] = useState([]), [drafts, setDrafts] = useState({});
+  const [options, setOptions] = useState([]);
   const [step, setStep] = useState(0), [loading, setLoading] = useState(true), [saving, setSaving] = useState(false);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [certificateDirty, setCertificateDirty] = useState(false);
   const heading = useRef(null), previousStep = useRef(0);
   const load = async () => {
     setLoading(true); setError("");
     try {
-      const person = await api("/employees/me/", { silentLoading: true });
-      const uploaded = await api(`/documents/?employee=${person.id}`, { silentLoading: true });
-      setProfile(person); setDocuments(uploaded);
-      const required = requiredDocumentItems(person);
+      const [person, uploaded, customOptions] = await Promise.all([
+        api("/employees/me/", { silentLoading: true }),
+        api("/documents/", { silentLoading: true }),
+        api("/document-options/", { silentLoading: true }),
+      ]);
+      setProfile(person); setDocuments(uploaded); setOptions(customOptions);
+      const required = requiredDocumentItems(person, customOptions);
       const missing = required.findIndex((item) => !documentComplete(item, findStepDocument(item, uploaded)));
       const requested = uploaded.find((document) => document.id === initialDocumentId);
-      const requestedStep = requested ? required.findIndex((item) => [item.label, ...(item.aliases || [])].includes(requested.document_type)) : -1;
+      const requestedStep = requested ? required.findIndex((item) => findStepDocument(item, [requested])) : -1;
       setStep(requested ? (requestedStep >= 0 ? requestedStep : required.length) : missing < 0 ? required.length + 1 : missing);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
@@ -96,14 +100,15 @@ export default function GuardDocumentsWizard({ api, FilePreview, Image, onProfil
   };
   if (loading) return <section className="panel" role="status">Loading your documents…</section>;
   if (!profile) return <section className="panel"><p className="error" role="alert">{error || "Your documents could not be loaded."}</p><button type="button" className="secondary-button" onClick={load}>Try again</button></section>;
-  const required = requiredDocumentItems(profile), progress = documentsProgress(profile, documents);
+  const required = requiredDocumentItems(profile, options), progress = documentsProgress(profile, documents, localDate(), options);
+  const optionalItems = optionalDocumentItemsFor(options);
   const optionalStep = required.length, reviewStep = optionalStep + 1;
   const item = required[step];
   const changeStep = (next) => { setStep(next); setError(""); setNotice(""); };
   const next = async (event) => {
     event.preventDefault(); setError(""); setNotice("");
     if (step === optionalStep) {
-      if (certificateDirty || optionalDocumentItems.some((option) => Object.keys(drafts[option.key] || {}).length)) { setError("Save your selected optional documents or cancel the changes before continuing."); return; }
+      if (certificateDirty || optionalItems.some((option) => Object.keys(drafts[option.key] || {}).length)) { setError("Save your selected optional documents or cancel the changes before continuing."); return; }
       changeStep(reviewStep); return;
     }
     setSaving(true);
@@ -119,7 +124,7 @@ export default function GuardDocumentsWizard({ api, FilePreview, Image, onProfil
       {item && <form onSubmit={next}><fieldset disabled={saving}><DocumentEditor item={item} existing={findStepDocument(item, documents)} draft={drafts[item.key] || {}} onChange={(changes) => setDraft(item.key, changes)} disabled={saving} FilePreview={FilePreview} Image={Image} />{item.photo && <button type="button" className="secondary-button" onClick={onProfile}>Open My profile</button>}<div className="profile-wizard-actions">{step > 0 && <button type="button" className="secondary-button" onClick={() => changeStep(step - 1)}><ChevronLeft size={16} />Back</button>}<button type="submit" className="primary-button">{saving ? "Saving…" : "Save & next"}<ChevronRight size={16} /></button></div></fieldset></form>}
       {step === optionalStep && <>
         <p className="muted">Upload these only if you have them. You can continue without adding any optional documents.</p>
-        <div className="guard-optional-documents">{optionalDocumentItems.map((option) => <details key={option.key} open={initialDocumentId && findStepDocument(option, documents)?.id === initialDocumentId ? true : undefined}><summary>{option.label}<span className="status-pill neutral">Optional</span></summary><form onSubmit={(event) => { event.preventDefault(); saveOptional(option); }}><fieldset disabled={saving}><DocumentEditor item={option} existing={findStepDocument(option, documents)} draft={drafts[option.key] || {}} onChange={(changes) => setDraft(option.key, changes)} disabled={saving} FilePreview={FilePreview} Image={Image} /><div className="row-actions"><button className="secondary-button" type="submit">{saving ? "Saving…" : "Save document"}</button>{Object.keys(drafts[option.key] || {}).length > 0 && <button type="button" className="mini-button" onClick={() => setDrafts((current) => ({ ...current, [option.key]: {} }))}>Cancel changes</button>}</div></fieldset></form></details>)}</div>
+        <div className="guard-optional-documents">{optionalItems.map((option) => <details key={option.key} open={initialDocumentId && findStepDocument(option, documents)?.id === initialDocumentId ? true : undefined}><summary>{option.label}<span className="status-pill neutral">Optional</span></summary><form onSubmit={(event) => { event.preventDefault(); saveOptional(option); }}><fieldset disabled={saving}>{option.optionId && option.hint && <p className="muted">{option.hint}</p>}<DocumentEditor item={option} existing={findStepDocument(option, documents)} draft={drafts[option.key] || {}} onChange={(changes) => setDraft(option.key, changes)} disabled={saving} FilePreview={FilePreview} Image={Image} /><div className="row-actions"><button className="secondary-button" type="submit">{saving ? "Saving…" : "Save document"}</button>{Object.keys(drafts[option.key] || {}).length > 0 && <button type="button" className="mini-button" onClick={() => setDrafts((current) => ({ ...current, [option.key]: {} }))}>Cancel changes</button>}</div></fieldset></form></details>)}</div>
         <Certificates profile={profile} documents={documents} api={api} onSaved={onSaved} FilePreview={FilePreview} onDirty={setCertificateDirty} />
         <div className="profile-wizard-actions"><button type="button" className="secondary-button" disabled={saving} onClick={() => { if (certificateDirty) { setError("Save or cancel your certificate changes first."); return; } changeStep(step - 1); }}><ChevronLeft size={16} />Back</button><button type="button" className="primary-button" disabled={saving} onClick={next}>Next<ChevronRight size={16} /></button></div>
       </>}

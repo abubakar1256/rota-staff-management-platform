@@ -12,11 +12,11 @@ from rest_framework.exceptions import PermissionDenied
 from .cortex_itime import save_cortex_access
 from .permissions import is_admin, is_guard
 from .pin_encryption import pin_cipher
-from .document_requirements import documents_completion, is_british
+from .document_requirements import RESERVED_DOCUMENT_NAMES, documents_completion, is_british, required_document_option_ids
 from .rota_checks import RotaAssignmentChecks
 from .whatsapp import normalise_whatsapp_number
 
-from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
+from .models import AuditLog, BookOffNote, Client, ClientArrivalReport, DailyArrivalReport, DailyOperation, DocumentOption, Employee, EmployeeDocument, GuardComplianceRegistration, HourlyCheckinNote, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftAttendanceEvent, ShiftType, Site, SiteInduction, SiteShiftRequirement, TimeGateCredential, Timesheet, UserProfile
 
 
 User = get_user_model()
@@ -397,7 +397,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return PROFILE_DECLARATION
 
     def get_documents_completion(self, obj):
-        return documents_completion(obj)
+        if "required_document_option_ids" not in self.context:
+            self.context["required_document_option_ids"] = required_document_option_ids()
+        return documents_completion(obj, self.context["required_document_option_ids"])
 
     def get_profile_photo_url(self, obj):
         document = obj.documents.filter(document_type__iexact="Personal Photograph").first()
@@ -695,15 +697,35 @@ class LeaveRecordSerializer(serializers.ModelSerializer):
         return obj.approved_by.get_full_name() if obj.approved_by else None
 
 
+class DocumentOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocumentOption
+        fields = ["id", "name", "instructions", "required", "is_active"]
+
+    def validate_name(self, value):
+        if value.casefold() in RESERVED_DOCUMENT_NAMES:
+            raise serializers.ValidationError("This name is already used by a built-in document option.")
+        matches = DocumentOption.objects.filter(name__iexact=value)
+        if self.instance:
+            matches = matches.exclude(pk=self.instance.pk)
+        if matches.exists():
+            raise serializers.ValidationError("A document option with this name already exists. Edit or restore it instead.")
+        return value
+
+
 class EmployeeDocumentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
+    document_option = serializers.PrimaryKeyRelatedField(queryset=DocumentOption.objects.all(), required=False, allow_null=True)
+    document_type = serializers.CharField(max_length=100, required=False)
+    document_label = serializers.CharField(read_only=True)
     status = serializers.ReadOnlyField()
     secure_file_url = serializers.SerializerMethodField()
     reviewed_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = EmployeeDocument
-        fields = ["id", "employee", "employee_name", "document_type", "document_number", "certificate_type", "certificate_name", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
+        validators = []
+        fields = ["id", "employee", "employee_name", "document_type", "document_option", "document_label", "document_number", "certificate_type", "certificate_name", "issue_date", "expiry_date", "file_url", "file", "secure_file_url", "notes", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "created_by", "created_at", "updated_at"]
         read_only_fields = ["created_by", "status", "verification_status", "reviewed_by", "reviewed_by_name", "reviewed_at", "rejection_reason", "drive_file_id", "drive_folder_id", "drive_root_folder_id", "drive_synced_at", "drive_sync_error", "created_at", "updated_at"]
 
     def to_internal_value(self, data):
@@ -752,12 +774,34 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
         document_type = attrs.get("document_type", getattr(self.instance, "document_type", ""))
+        document_option = attrs.get("document_option", getattr(self.instance, "document_option", None))
         uploaded_file = attrs.get("file")
+        if self.instance and getattr(document_option, "pk", None) != self.instance.document_option_id:
+            raise serializers.ValidationError({"document_option": "The document option on an existing upload cannot be changed."})
+        if document_option:
+            request = self.context.get("request")
+            file = attrs.get("file", getattr(self.instance, "file", None))
+            file_url = attrs.get("file_url", getattr(self.instance, "file_url", ""))
+            if not file and (not file_url or (request and is_guard(request.user) and "file_url" in attrs)):
+                raise serializers.ValidationError({"file": "Upload a file for this document option."})
+            issue = attrs.get("issue_date", getattr(self.instance, "issue_date", None))
+            expiry = attrs.get("expiry_date", getattr(self.instance, "expiry_date", None))
+            if issue and issue > timezone.localdate():
+                raise serializers.ValidationError({"issue_date": "Issue date cannot be in the future."})
+            if issue and expiry and expiry < issue:
+                raise serializers.ValidationError({"expiry_date": "Expiry date cannot be before the issue date."})
+            if not self.instance:
+                attrs["document_type"] = document_option.name
+            else:
+                attrs.pop("document_type", None)
+            return attrs
+        if not document_type:
+            raise serializers.ValidationError({"document_type": "Select a document type."})
         if uploaded_file and str(document_type).strip().casefold() == "personal photograph":
             extension = uploaded_file.name.lower().rsplit(".", 1)[-1] if "." in uploaded_file.name else ""
             if extension not in {"jpg", "jpeg", "png", "webp"}:
                 raise serializers.ValidationError({"file": "Profile picture must be a JPG, JPEG, PNG or WEBP image."})
-        existing = EmployeeDocument.objects.filter(employee=employee, document_type__iexact=document_type)
+        existing = EmployeeDocument.objects.filter(employee=employee, document_option__isnull=True, document_type__iexact=document_type)
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
         certificate = document_type == "Certificates"

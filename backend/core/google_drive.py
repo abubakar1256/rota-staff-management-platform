@@ -212,7 +212,7 @@ def sync_verified_document(document):
                     current.root_folder_id = root_id
                     current.save(update_fields=["root_folder_id", "updated_at"])
         guard_folder_id = _find_or_create_folder(service, f"{_safe_name(document.employee.name)} — {document.employee.employee_id}", root_id)
-        filename = _safe_name(document.document_type)
+        filename = _safe_name(document.document_label)
         original_name = document.file.name.rsplit("/", 1)[-1]
         extension = original_name.rsplit(".", 1)[-1] if "." in original_name else ""
         if extension:

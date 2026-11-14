@@ -1,9 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { certificateLabel, certificateTypes, documentComplete, documentDriveStatus, documentFieldRules, documentsProgress, findStepDocument, optionalDocumentItems, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
+import { certificateLabel, certificateTypes, documentComplete, documentDriveStatus, documentFieldRules, documentsProgress, findStepDocument, optionalDocumentItems, optionalDocumentItemsFor, requiredDocumentItems, saveDocument } from "../src/documentWizard.js";
 
 const today = "2026-11-03";
 const complete = (nationality = "Pakistani") => requiredDocumentItems({ nationality }).map((item, index) => ({ id: index + 1, document_type: item.label, file: `/file-${index}.pdf`, document_number: "123456", expiry_date: "2099-01-01", issue_date: today, verification_status: "PENDING" }));
+
+test("custom required steps keep the same upload across edits and leave progress when removed", () => {
+  const profile = { nationality: "Pakistani" };
+  const required = { id: 10, name: "Staff handbook", required: true, is_active: true };
+  const optional = { id: 11, name: "Training evidence", required: false, is_active: true };
+  const evidence = { id: 99, document_option: 10, document_type: "Signed handbook", file: "/handbook.pdf" };
+  const options = [required, optional];
+  const previous = complete();
+  const step = requiredDocumentItems(profile, options).at(-1);
+  assert.equal(step.label, required.name);
+  assert.equal(findStepDocument(step, [evidence]), evidence);
+  assert.equal(optionalDocumentItemsFor(options).at(-1).label, optional.name);
+  assert.equal(documentsProgress(profile, previous, today, options).required, 8);
+  assert.equal(documentsProgress(profile, [...previous, evidence], today, options).percentage, 100);
+  assert.equal(documentsProgress(profile, previous, today, [{ ...required, is_active: false }, optional]).required, 7);
+});
 
 test("British guards have no share code step, including saved country names", () => {
   for (const nationality of ["British", "United Kingdom", "UK", " british "]) {

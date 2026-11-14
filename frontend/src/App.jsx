@@ -28,11 +28,12 @@ import TimesheetReview from "./TimesheetReview";
 import ToastNotifications from "./ToastNotifications";
 import GuardProfileWizard from "./GuardProfileWizard";
 import GuardDocumentsWizard from "./GuardDocumentsWizard";
+import DocumentOptions from "./DocumentOptions";
 import AdminNotifications from "./AdminNotifications";
 import GuardNotifications from "./GuardNotifications";
 import { RotaWhatsAppPanel, StaffAnnouncements } from "./WhatsAppMessaging";
 import { guardNotificationAction, guardNotificationCategories } from "./notificationInbox";
-import { certificateLabel, certificateTypes, documentDriveStatus, documentFieldRules, optionalDocumentItems, requiredDocumentItems } from "./documentWizard";
+import { certificateLabel, certificateTypes, documentDriveStatus, documentFieldRules, optionalDocumentItemsFor, requiredDocumentItems } from "./documentWizard";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api";
 const PORTAL_ORIGIN = import.meta.env.VITE_PORTAL_ORIGIN || ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") ? "http://192.168.1.8:5175" : window.location.origin);
@@ -1202,13 +1203,13 @@ function EmployeeDocumentRow({ employee, expanded, onToggle, onAddDocument, onEd
             checked={allSelected} disabled={archiveSelection.busy || !uploadedIds.length}
             onChange={(event) => archiveSelection.update(uploadedIds, event.target.checked)} />
         </th>}<th>Document</th><th>Number</th><th>Expiry</th><th>Review</th><th>File</th>{showDriveStatus && <th scope="col">Google Drive</th>}<th>Actions</th></tr></thead><tbody>{employee.documents.map((item) => {
-        const label = item.document_type === "Certificates" ? `Certificate · ${certificateLabel(item)}` : item.document_type;
+        const label = item.document_type === "Certificates" ? `Certificate · ${certificateLabel(item)}` : item.document_label || item.document_type;
         return <tr key={item.id} className={archiveSelection?.selected.has(item.id) ? "document-row-selected" : undefined}>{archiveSelection && <td className="document-zip-check">
           <input type="checkbox" aria-label={`Select ${label} for ${employee.employee_name}`}
             title={item.secure_file_url ? "Include in ZIP" : "An uploaded file is required"}
             checked={archiveSelection.selected.has(item.id)} disabled={archiveSelection.busy || !item.secure_file_url}
             onChange={(event) => archiveSelection.update([item.id], event.target.checked)} />
-        </td>}<td className="document-type-cell"><strong>{label}</strong>{item.rejection_reason && <small className="document-review-reason">Reason: {item.rejection_reason}</small>}</td><td>{item.document_number || "—"}</td><td className="document-expiry-cell">{item.expiry_date || "No expiry"}</td><td><div className="document-status-stack"><span className={`status-pill ${(item.verification_status || "PENDING").toLowerCase()}`}>{verificationLabel[item.verification_status] || "Needs review"}</span><span className={`status-pill ${item.status.toLowerCase()}`}>{item.status.replace("_", " ")}</span></div></td><td>{fileHref(item) ? <ProtectedFilePreview value={fileHref(item)} label={`${employee.employee_name} · ${item.document_type}`} buttonLabel="View" /> : "—"}</td>{showDriveStatus && <DocumentDriveCell document={item} activeRootId={driveRootId} documentLabel={label} onRetry={onDriveRetry} />}<td><div className="row-actions compliance-review-actions">{item.verification_status === "PENDING" && <><button className="mini-button approve" onClick={() => onReview(item, "verify")}><CheckCircle2 size={13} /> Verify</button><button className="mini-button reject" onClick={() => onReview(item, "reject")}>Reject</button></>}<button className="mini-button" onClick={() => onEdit(item)}><Pencil size={13} /> Edit</button><button className="mini-button reject" onClick={() => onDelete(item.id)}><Trash2 size={13} /> Delete</button></div></td></tr>; })}</tbody></table></div> : <div className="empty-state compact-empty"><strong>No documents yet</strong><span>Add the first document for this employee.</span></div>}</div></td></tr>}</>;
+        </td>}<td className="document-type-cell"><strong>{label}</strong>{item.rejection_reason && <small className="document-review-reason">Reason: {item.rejection_reason}</small>}</td><td>{item.document_number || "—"}</td><td className="document-expiry-cell">{item.expiry_date || "No expiry"}</td><td><div className="document-status-stack"><span className={`status-pill ${(item.verification_status || "PENDING").toLowerCase()}`}>{verificationLabel[item.verification_status] || "Needs review"}</span><span className={`status-pill ${item.status.toLowerCase()}`}>{item.status.replace("_", " ")}</span></div></td><td>{fileHref(item) ? <ProtectedFilePreview value={fileHref(item)} label={`${employee.employee_name} · ${item.document_label || item.document_type}`} buttonLabel="View" /> : "—"}</td>{showDriveStatus && <DocumentDriveCell document={item} activeRootId={driveRootId} documentLabel={label} onRetry={onDriveRetry} />}<td><div className="row-actions compliance-review-actions">{item.verification_status === "PENDING" && <><button className="mini-button approve" onClick={() => onReview(item, "verify")}><CheckCircle2 size={13} /> Verify</button><button className="mini-button reject" onClick={() => onReview(item, "reject")}>Reject</button></>}<button className="mini-button" onClick={() => onEdit(item)}><Pencil size={13} /> Edit</button><button className="mini-button reject" onClick={() => onDelete(item.id)}><Trash2 size={13} /> Delete</button></div></td></tr>; })}</tbody></table></div> : <div className="empty-state compact-empty"><strong>No documents yet</strong><span>Add the first document for this employee.</span></div>}</div></td></tr>}</>;
 }
 
 const driveConnectionPath = "/integrations/google-drive/connect/";
@@ -1293,6 +1294,9 @@ function GoogleDriveConnection({ connection, setConnection }) {
 
 function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
   const [driveConnection, setDriveConnection] = useState(null);
+  const [documentOptions, setDocumentOptions] = useState(null);
+  const [optionsError, setOptionsError] = useState("");
+  const [managingOptions, setManagingOptions] = useState(false);
   const [selectedDocuments, setSelectedDocuments] = useState(new Set());
   const [zipBusy, setZipBusy] = useState(false);
   const [zipError, setZipError] = useState("");
@@ -1302,11 +1306,15 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
   const missingEmployee = editingDocument && !uniqueEmployees.some((employee) => employee.id === editingDocument.employee);
   const selectedEmployee = uniqueEmployees.find((employee) => String(employee.id) === form.employee);
   const requiredTypes = requiredDocumentItems(selectedEmployee).map((item) => item.label);
-  const optionalTypes = [...optionalDocumentItems.map((item) => item.label), "Certificates"];
+  const optionalTypes = [...optionalDocumentItemsFor().map((item) => item.label), "Certificates"];
   const checklistTypes = [...requiredTypes, ...optionalTypes];
   const savedType = editingDocument?.document_type;
   const extraSavedType = savedType && !checklistTypes.includes(savedType) ? savedType : "";
-  const selectedType = [...checklistTypes, extraSavedType].includes(form.document_type) ? form.document_type : "";
+  const customChoices = (documentOptions || []).filter((option) => option.is_active);
+  const savedOption = editingDocument?.document_option;
+  const selectedType = form.document_option
+    ? `custom-${form.document_option}`
+    : [...checklistTypes, extraSavedType].includes(form.document_type) ? form.document_type : "";
   const fields = documentFieldRules(selectedType, form.certificate_type);
   const newEvidence = !editingDocument || savedType !== selectedType || Boolean(form.file)
     || (form.file_url || "") !== (editingDocument.file_url || "");
@@ -1315,6 +1323,20 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
     || (selectedType === "Certificates" && form.certificate_type !== editingDocument?.certificate_type)));
   const load = async () => { setError(""); try { const data = await api(`/documents/employee-summary/?page=${pagination.page}&page_size=25&q=${encodeURIComponent(searchQuery)}&status=${status}`); setItems(data.results); setPagination(data.pagination); } catch (err) { setError(err.message); } };
   useEffect(() => { load(); api("/employees/?status=ACTIVE").then(setEmployees).catch(() => {}); }, [pagination.page, searchQuery, status]);
+  const loadOptions = async () => {
+    setOptionsError("");
+    try { setDocumentOptions(await api("/document-options/", { silentLoading: true, silentError: true })); }
+    catch (err) { setOptionsError(err.message); }
+  };
+  useEffect(() => { loadOptions(); }, []);
+  const optionChanged = (option) => {
+    setDocumentOptions((current) => [...current.filter((item) => item.id !== option.id), option].sort((a, b) => a.name.localeCompare(b.name)));
+    load();
+  };
+  const selectDocumentType = (value) => {
+    const option = customChoices.find((item) => `custom-${item.id}` === value);
+    setForm({ ...form, document_option: option?.id ?? null, document_type: option ? "" : value });
+  };
   const runSearch = (event) => { event?.preventDefault(); setPagination((current) => ({ ...current, page: 1 })); setSearchQuery(searchInput); };
   const openNewDocument = (employeeId = "") => { setEditingDocument(null); setForm({ ...empty, employee: String(employeeId || "") }); setOpen(true); };
   const save = async (event) => {
@@ -1323,6 +1345,7 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
     setError("");
     const data = new FormData();
     for (const field of Object.keys(empty)) {
+      if (form.document_option && field === "document_type") continue;
       if (selectedType !== "Certificates" && (field === "certificate_type" || field === "certificate_name")) continue;
       const value = form[field] ?? "";
       if (editingDocument && field !== "file") {
@@ -1331,6 +1354,7 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
         data.set(field, value);
       }
     }
+    if (form.document_option && !editingDocument) data.set("document_option", form.document_option);
     try {
       await api(`/documents/${editingId ? `${editingId}/` : ""}`, { method: editingId ? "PATCH" : "POST", body: data });
       setOpen(false);
@@ -1342,7 +1366,7 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
     }
   };
   const remove = async (id) => { if (!confirm("Delete this document record?")) return; try { await api(`/documents/${id}/`, { method: "DELETE" }); setSelectedDocuments((current) => new Set([...current].filter((selectedId) => selectedId !== id))); await load(); } catch (err) { setError(err.message); } };
-  const review = async (item, action) => { let reason = ""; if (action === "reject") { reason = prompt(`Why should ${item.document_type} be rejected?`, "") || ""; if (!reason.trim()) return; } try { await api(`/documents/${item.id}/${action}/`, { method: "POST", body: JSON.stringify(action === "reject" ? { reason } : {}) }); await load(); } catch (err) { setError(err.message); } };
+  const review = async (item, action) => { let reason = ""; if (action === "reject") { reason = prompt(`Why should ${item.document_label || item.document_type} be rejected?`, "") || ""; if (!reason.trim()) return; } try { await api(`/documents/${item.id}/${action}/`, { method: "POST", body: JSON.stringify(action === "reject" ? { reason } : {}) }); await load(); } catch (err) { setError(err.message); } };
   const retryDriveUpload = async (id) => {
     const uploaded = await api(`/documents/${id}/sync-drive/`, {
       method: "POST", silentLoading: true, silentToast: true, silentError: true,
@@ -1386,16 +1410,18 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
     selected: selectedDocuments, busy: zipBusy, error: zipError,
     update: updateSelection, clear: clearSelection, download: downloadZip,
   } : null;
-  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions"><button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}{isOfficeAdmin && <GoogleDriveConnection connection={driveConnection} setConnection={setDriveConnection} />}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap employee-documents-scroll"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => toggleEmployee(employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} showDriveStatus={isOfficeAdmin} driveRootId={driveConnection?.root_folder_id} onDriveRetry={retryDriveUpload} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{missingEmployee && <option value={editingDocument.employee}>{editingDocument.employee_name}</option>}{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
-      <select required value={selectedType} onChange={(event) => setForm({ ...form, document_type: event.target.value })}>
+  return <><div className="page-heading"><div><p className="eyebrow">COMPLIANCE</p><h2>Employee documents</h2><p className="muted">Search 500+ employees quickly and review critical documents before rota assignment.</p></div><div className="page-heading-actions">{isOfficeAdmin && <button className="secondary-button" aria-expanded={managingOptions} onClick={() => { setManagingOptions(!managingOptions); if (!managingOptions && documentOptions === null && optionsError) loadOptions(); }}>Manage document options</button>}<button className="secondary-button" onClick={() => onNavigate("employees")}><UserPlus size={14} /> Add employee</button><button className="primary-button" onClick={() => openNewDocument()}><Upload size={14} /> Add document</button></div></div>{error && <p className="error page-error">{error}</p>}{isOfficeAdmin && managingOptions && (documentOptions ? <DocumentOptions api={api} options={documentOptions} onChange={optionChanged} /> : <section className="panel document-options-panel">{optionsError ? <><p className="error" role="alert">{optionsError}</p><button className="secondary-button" onClick={loadOptions}>Try again</button></> : <p role="status">Loading document options…</p>}</section>)}{isOfficeAdmin && <GoogleDriveConnection connection={driveConnection} setConnection={setDriveConnection} />}<section className="panel"><form className="document-toolbar" onSubmit={runSearch}><div className="search-box"><Search size={17} /><input placeholder="Search name or employee ID..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} /></div><select value={status} onChange={(e) => { setStatus(e.target.value); setPagination((current) => ({ ...current, page: 1 })); }}><option value="ALL">All compliance</option><option value="REVIEW_REQUIRED">Needs review</option><option value="REJECTED">Rejected</option><option value="NO_DOCUMENTS">Missing documents</option><option value="EXPIRED">Expired</option><option value="EXPIRING_SOON">Expiring soon</option><option value="VALID">Fully valid</option></select><button className="secondary-button" type="submit">Search</button><span className="muted">{pagination.total_employees} employees</span></form>{items.length === 0 ? <div className="empty-state"><FileText size={30} /><strong>No employees found</strong><span>Try changing the search or compliance filter.</span></div> : <div className="table-wrap employee-documents-scroll"><table className="employee-document-table"><thead><tr><th>Employee</th><th>Employee status</th><th>Documents</th><th>Compliance</th><th>Nearest expiry</th><th>Overall status</th><th>Action</th></tr></thead><tbody>{items.map((employee) => <EmployeeDocumentRow key={employee.employee} employee={employee} expanded={expandedId === employee.employee} onToggle={() => toggleEmployee(employee.employee)} onAddDocument={openNewDocument} onEdit={(item) => { setEditingDocument(item); setForm({ ...item, employee: String(item.employee), file: null }); setOpen(true); }} onDelete={remove} onReview={review} fileHref={fileHref} archiveSelection={archiveSelection} showDriveStatus={isOfficeAdmin} driveRootId={driveConnection?.root_folder_id} onDriveRetry={retryDriveUpload} />)}</tbody></table></div>}<div className="pagination-bar"><span>Page {pagination.page} of {pagination.total_pages || 1}</span><div><button className="secondary-button" disabled={!pagination.has_previous} onClick={() => setPagination((current) => ({ ...current, page: current.page - 1 }))}>Previous</button><button className="secondary-button" disabled={!pagination.has_next} onClick={() => setPagination((current) => ({ ...current, page: current.page + 1 }))}>Next</button></div></div></section>{open && <div className="modal-backdrop"><form className="modal-card" onSubmit={save}><div className="modal-header"><div><p className="eyebrow">{editingId ? "EDIT RECORD" : "NEW RECORD"}</p><h3>{editingId ? "Edit" : "Add"} document</h3></div><button type="button" className="icon-button" onClick={() => setOpen(false)}><X size={19} /></button></div><div className="form-grid"><label>Employee<select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}><option value="">Select employee</option>{missingEmployee && <option value={editingDocument.employee}>{editingDocument.employee_name}</option>}{uniqueEmployees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select></label><label>Document type
+      <select required value={selectedType} disabled={Boolean(savedOption)} onChange={(event) => selectDocumentType(event.target.value)}>
         <option value="">Select document type</option>
         <optgroup label="Required documents">
           {requiredTypes.map((type) => <option value={type} key={type}>{type}</option>)}
+          {!editingDocument && customChoices.filter((option) => option.required).map((option) => <option value={`custom-${option.id}`} key={option.id}>{option.name}</option>)}
         </optgroup>
         <optgroup label="Optional documents">
           {optionalTypes.map((type) => <option value={type} key={type}>{type}</option>)}
+          {!editingDocument && customChoices.filter((option) => !option.required).map((option) => <option value={`custom-${option.id}`} key={option.id}>{option.name}</option>)}
         </optgroup>
-        {extraSavedType && <optgroup label="Saved document type"><option value={extraSavedType}>{extraSavedType}</option></optgroup>}
+        {savedOption ? <option value={`custom-${savedOption}`}>{editingDocument.document_label}</option> : extraSavedType && <optgroup label="Saved document type"><option value={extraSavedType}>{extraSavedType}</option></optgroup>}
       </select>
     </label>{form.document_type === "Certificates" && <><label>Certificate type<select required value={form.certificate_type || ""} onChange={(event) => setForm({ ...form, certificate_type: event.target.value })}><option value="">Select certificate type</option>{certificateTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{form.certificate_type === "OTHER" && <label>Certificate name<input required maxLength={160} value={form.certificate_name || ""} onChange={(event) => setForm({ ...form, certificate_name: event.target.value })} /></label>}</>}<label>{fields.code ? "Code / number" : fields.number ? "Card number" : "Document number"}<input maxLength={100} value={form.document_number || ""} onChange={(e) => setForm({ ...form, document_number: e.target.value })} /></label><label>{issueRequired ? "Issue date" : "Issue date (optional)"}<input type="date" required={issueRequired} value={form.issue_date || ""} onChange={(e) => setForm({ ...form, issue_date: e.target.value })} /></label><label>{expiryRequired ? "Expiry date" : "Expiry date (optional)"}<input type="date" required={expiryRequired} value={form.expiry_date || ""} onChange={(e) => setForm({ ...form, expiry_date: e.target.value })} /></label><label>Secure file URL<input type="url" value={form.file_url || ""} onChange={(e) => setForm({ ...form, file_url: e.target.value })} placeholder="https://..." /></label><label className="full-width"><span>{editingDocument?.file ? "Replace uploaded file (optional)" : "Upload document"} <Upload size={14} /></span><input type="file" accept={fields.photo ? ".jpg,.jpeg,.png,.webp" : ".pdf,.jpg,.jpeg,.png,.webp"} onChange={(e) => setForm({ ...form, file: e.target.files?.[0] || null })} /></label><label className="full-width">Notes<textarea value={form.notes || ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label></div>{error && <p className="error">{error}</p>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setOpen(false)}>Cancel</button><button className="primary-button">Save document</button></div></form></div>}</>;
 }

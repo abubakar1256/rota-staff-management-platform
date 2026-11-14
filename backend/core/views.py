@@ -24,7 +24,7 @@ from django.core import signing
 from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Prefetch, Q, prefetch_related_objects
 from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
@@ -57,6 +57,8 @@ from .rota_checks import RotaAssignmentChecks
 from .rota_planning import CopyWeekInput, EligibleGuardsInput, MultiDayInput, SiteInput, plan_multi_day, plan_week_copy
 from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
+from .models import DocumentOption
+from .serializers import DocumentOptionSerializer
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
 from .serializers import employee_compliance_issues
 
@@ -721,8 +723,8 @@ def employee_compliance(request, employee_id=None):
             for admin_user in User.objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(profile__role__in=[UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN])):
                 publish_notification(user=admin_user, notification_type=Notification.Type.INFO, title="Diligent registration awaiting approval", message=f"{employee.name} submitted a registration for approval.", link="compliance-approvals", employee=employee, context={"registration_id": registration.pk, "submitted_at": registration.submitted_at.isoformat()})
         return Response({"registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data, "employee": _compliance_employee_data(employee, request)})
-    documents = list(employee.documents.all())
-    document_details = [{"document_type": item.document_type, "document_number": item.document_number, "expiry_date": item.expiry_date, "notes": item.notes, "secure_file_url": f"/api/media/document/{item.pk}/" if item.file else None} for item in documents]
+    documents = employee.documents.select_related("document_option")
+    document_details = [{"document_type": item.document_label, "document_number": item.document_number, "expiry_date": item.expiry_date, "notes": item.notes, "secure_file_url": f"/api/media/document/{item.pk}/" if item.file else None} for item in documents]
     return Response({
         "registration": GuardComplianceRegistrationSerializer(registration, context={"request": request}).data,
         "employee": _compliance_employee_data(employee, request),
@@ -1821,6 +1823,47 @@ class LeaveRecordViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(leave).data)
 
 
+class DocumentOptionViewSet(viewsets.ModelViewSet):
+    serializer_class = DocumentOptionSerializer
+    permission_classes = [IsAdminOrSuperAdmin]
+
+    def get_permissions(self):
+        if self.action == "list":
+            return [IsAdminManagerOrEmployeeDocument()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        options = DocumentOption.objects.all()
+        return options if is_admin(self.request.user) else options.filter(is_active=True)
+
+    def save_option(self, serializer, action):
+        try:
+            with transaction.atomic():
+                if serializer.instance:
+                    serializer.instance = DocumentOption.objects.select_for_update().get(pk=serializer.instance.pk)
+                option = serializer.save()
+                AuditLog.objects.create(
+                    user=self.request.user, action=action, model_name="DocumentOption",
+                    object_id=option.pk, summary=f"{action.title()} document option: {option.name}",
+                )
+        except IntegrityError as exc:
+            raise ValidationError({"name": "A document option with this name already exists."}) from exc
+
+    def perform_create(self, serializer):
+        self.save_option(serializer, "CREATE")
+
+    def perform_update(self, serializer):
+        self.save_option(serializer, "UPDATE")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        if DocumentOption.objects.filter(pk=instance.pk, is_active=True).update(is_active=False):
+            AuditLog.objects.create(
+                user=self.request.user, action="ARCHIVE", model_name="DocumentOption",
+                object_id=instance.pk, summary=f"Removed document option: {instance.name}",
+            )
+
+
 class EmployeeDocumentViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeDocumentSerializer
     permission_classes = [IsAdminManagerOrEmployeeDocument]
@@ -1846,7 +1889,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
         return response
 
     def get_queryset(self):
-        queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by")
+        queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by", "document_option")
         role = role_of(self.request.user)
         if role == "EMPLOYEE":
             queryset = queryset.filter(employee__user=self.request.user)
@@ -1867,6 +1910,21 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(verification_status=EmployeeDocument.VerificationStatus.REJECTED)
         return queryset
 
+    def validate_option_upload(self, serializer):
+        document = serializer.instance
+        option = serializer.validated_data.get("document_option", getattr(document, "document_option", None))
+        if not option:
+            return
+        option = DocumentOption.objects.select_for_update().get(pk=option.pk)
+        if not option.is_active and (not document or role_of(self.request.user) == "EMPLOYEE"):
+            raise ValidationError({"document_option": "This document option has been removed. Refresh your documents list."})
+        employee = serializer.validated_data.get("employee", getattr(document, "employee", None))
+        if EmployeeDocument.objects.filter(employee=employee, document_option=option).exclude(pk=getattr(document, "pk", None)).exists():
+            raise ValidationError({"document_option": "This employee already has this document. Update the existing record instead."})
+        if not document:
+            serializer.validated_data["document_type"] = option.name
+
+    @transaction.atomic
     def perform_update(self, serializer):
         role = getattr(getattr(self.request.user, "profile", None), "role", None)
         if role == "EMPLOYEE":
@@ -1875,6 +1933,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             next_type = serializer.validated_data.get("document_type", serializer.instance.document_type)
             if not own_employee or serializer.instance.employee.user_id != self.request.user.id or next_employee.pk != own_employee.pk or next_type != serializer.instance.document_type:
                 raise PermissionDenied("You can only update the file or notes of your own document.")
+        self.validate_option_upload(serializer)
         evidence_fields = {"employee", "document_type", "file", "file_url", "document_number", "issue_date", "expiry_date", "notes", "certificate_type", "certificate_name"}
         if any(field in serializer.validated_data and (field == "file" or serializer.validated_data[field] != getattr(serializer.instance, field)) for field in evidence_fields):
             document = serializer.save(
@@ -1888,7 +1947,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
                 action="UPDATE",
                 model_name="EmployeeDocument",
                 object_id=document.pk,
-                summary=f"Updated {document.document_type} evidence for {document.employee.name}; review reset to pending",
+                summary=f"Updated {document.document_label} evidence for {document.employee.name}; review reset to pending",
             )
             return
         serializer.save()
@@ -1906,14 +1965,14 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             action="VERIFY",
             model_name="EmployeeDocument",
             object_id=document.pk,
-            summary=f"Verified {document.document_type} for {document.employee.name}",
+            summary=f"Verified {document.document_label} for {document.employee.name}",
         )
         if document.employee.user_id:
             publish_notification(
                 user=document.employee.user,
                 notification_type=Notification.Type.SUCCESS,
                 title="Document verified",
-                message=f"Your {document.document_type} has been verified by the office.",
+                message=f"Your {document.document_label} has been verified by the office.",
                 link="documents", employee=document.employee, context={"document_id": document.pk, "file_revision": document.file.name},
             )
         with transaction.atomic():
@@ -1964,14 +2023,14 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             action="REJECT",
             model_name="EmployeeDocument",
             object_id=document.pk,
-            summary=f"Rejected {document.document_type} for {document.employee.name}: {reason}",
+            summary=f"Rejected {document.document_label} for {document.employee.name}: {reason}",
         )
         if document.employee.user_id:
             publish_notification(
                 user=document.employee.user,
                 notification_type=Notification.Type.WARNING,
                 title="Document needs attention",
-                message=f"Your {document.document_type} was rejected. {reason}",
+                message=f"Your {document.document_label} was rejected. {reason}",
                 link="documents", employee=document.employee, context={"document_id": document.pk, "file_revision": document.file.name},
             )
         return Response(self.get_serializer(document).data)
@@ -1995,7 +2054,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             employees = employees.filter(rota_assignments__site__manager_profiles__user=request.user).distinct()
         if query:
             employees = employees.filter(Q(name__icontains=query) | Q(employee_id__icontains=query))
-        document_queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by").order_by("expiry_date", "document_type")
+        document_queryset = EmployeeDocument.objects.select_related("employee", "reviewed_by", "document_option").order_by("expiry_date", "document_type")
         employees = employees.prefetch_related(Prefetch("documents", queryset=document_queryset, to_attr="summary_documents"))
 
         summaries = []
@@ -2054,6 +2113,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             },
         })
 
+    @transaction.atomic
     def perform_create(self, serializer):
         role = getattr(getattr(self.request.user, "profile", None), "role", None)
         employee = serializer.validated_data.get("employee")
@@ -2061,6 +2121,7 @@ class EmployeeDocumentViewSet(viewsets.ModelViewSet):
             own_employee = Employee.objects.filter(user=self.request.user).first()
             if not own_employee or employee.pk != own_employee.pk:
                 raise PermissionDenied("You can only add documents to your own profile.")
+        self.validate_option_upload(serializer)
         serializer.save(created_by=self.request.user, verification_status=EmployeeDocument.VerificationStatus.PENDING)
 
 
@@ -2715,7 +2776,7 @@ def report_print(request):
 def create_expiry_notifications(user):
     today = timezone.localdate()
     window_end = today + timedelta(days=30)
-    documents = EmployeeDocument.objects.filter(expiry_date__isnull=False, expiry_date__lte=window_end).select_related("employee__user__profile")
+    documents = EmployeeDocument.objects.filter(expiry_date__isnull=False, expiry_date__lte=window_end).select_related("employee__user__profile", "document_option")
     admin_inbox = user is None or role_of(user) in {"SUPER_ADMIN", "ADMIN"}
     if not admin_inbox:
         if role_of(user) != "EMPLOYEE":
@@ -2733,7 +2794,7 @@ def create_expiry_notifications(user):
     for document in documents:
         state = "expired" if document.expiry_date < today else "expires soon"
         title = f"Document {state}"
-        message = f"{document.employee.name}: {document.document_type} expires on {document.expiry_date}."
+        message = f"{document.employee.name}: {document.document_label} expires on {document.expiry_date}."
         recipients = [None] if admin_inbox else []
         if document.employee.user_id and role_of(document.employee.user) == "EMPLOYEE":
             recipients.append(document.employee.user_id)
