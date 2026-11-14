@@ -27,6 +27,17 @@ def document_requirements(nationality):
     return items
 
 
+OPTIONAL_BUILTIN_DOCUMENTS = [
+    ("right_to_work", ("Right to Work", "Right-to-Work"), "file"),
+    ("cscs_front", ("CSCS Card (Front)",), "card"),
+    ("cscs_back", ("CSCS Card (Back)",), "file"),
+    ("driving_front", ("Driving License (Front)",), "file"),
+    ("driving_back", ("Driving License (Back)",), "file"),
+    ("ppac_code", ("PPAC Code",), "code"),
+    ("certificates", ("Certificates", "ACT certificate"), "certificate"),
+]
+
+
 RESERVED_DOCUMENT_NAMES = {
     alias.casefold() for _, aliases, _ in document_requirements("") for alias in aliases
 } | {
@@ -41,6 +52,13 @@ def document_is_complete(document, kind, today):
         return False
     if document.expiry_date and document.expiry_date < today:
         return False
+    if kind == "certificate":
+        if document.document_type.casefold() == "act certificate" or document.certificate_type == "ACT":
+            kind = "expiry"
+        elif document.certificate_type:
+            kind = "file"
+        else:
+            return False
     file_present = bool(document.file or document.file_url)
     if kind in {"code", "code_expiry"}:
         if not (file_present or document.document_number.strip() or document.notes.strip()):
@@ -56,15 +74,19 @@ def document_is_complete(document, kind, today):
     return True
 
 
-def required_document_option_ids():
-    return tuple(DocumentOption.objects.filter(is_active=True, required=True).values_list("pk", flat=True))
+def document_checklist_options():
+    return list(DocumentOption.objects.filter(is_active=True).values_list("pk", "builtin_key", "required"))
 
 
-def documents_completion(employee, custom_ids=None):
+def documents_completion(employee, options=None):
     documents = list(employee.documents.all())
-    requirements = document_requirements(employee.nationality)
-    if custom_ids is None:
-        custom_ids = required_document_option_ids()
+    if options is None:
+        options = document_checklist_options()
+    builtin_rules = {key: required for _, key, required in options if key}
+    custom_ids = {pk for pk, key, required in options if not key and required}
+    defaults = document_requirements(employee.nationality)
+    requirements = [entry for entry in defaults if builtin_rules.get(entry[0], True)]
+    requirements.extend(entry for entry in OPTIONAL_BUILTIN_DOCUMENTS if builtin_rules.get(entry[0], False))
     today = timezone.localdate()
     completed = sum(any(
         not document.document_option_id
@@ -75,4 +97,5 @@ def documents_completion(employee, custom_ids=None):
     completed_options = {document.document_option_id for document in documents if document_is_complete(document, "file", today)}
     completed += len(completed_options.intersection(custom_ids))
     required = len(requirements) + len(custom_ids)
-    return {"completed": completed, "required": required, "percentage": (completed * 100 + required // 2) // required}
+    percentage = (completed * 100 + required // 2) // required if required else 100
+    return {"completed": completed, "required": required, "percentage": percentage}

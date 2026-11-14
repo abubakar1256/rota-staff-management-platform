@@ -567,6 +567,7 @@ class LeaveRecord(models.Model):
 
 
 class DocumentOption(models.Model):
+    builtin_key = models.CharField(max_length=32, blank=True, default="", editable=False)
     name = models.CharField(max_length=100)
     instructions = models.CharField(max_length=500, blank=True)
     required = models.BooleanField(default=False)
@@ -576,6 +577,7 @@ class DocumentOption(models.Model):
         ordering = ["name", "pk"]
         constraints = [
             models.UniqueConstraint(Lower("name"), name="unique_document_option_name"),
+            models.UniqueConstraint(fields=["builtin_key"], condition=~models.Q(builtin_key=""), name="unique_builtin_document_option"),
         ]
 
     def __str__(self):

@@ -12,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 from .cortex_itime import save_cortex_access
 from .permissions import is_admin, is_guard
 from .pin_encryption import pin_cipher
-from .document_requirements import RESERVED_DOCUMENT_NAMES, documents_completion, is_british, required_document_option_ids
+from .document_requirements import RESERVED_DOCUMENT_NAMES, document_checklist_options, documents_completion, is_british
 from .rota_checks import RotaAssignmentChecks
 from .whatsapp import normalise_whatsapp_number
 
@@ -397,9 +397,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return PROFILE_DECLARATION
 
     def get_documents_completion(self, obj):
-        if "required_document_option_ids" not in self.context:
-            self.context["required_document_option_ids"] = required_document_option_ids()
-        return documents_completion(obj, self.context["required_document_option_ids"])
+        if "document_checklist_options" not in self.context:
+            self.context["document_checklist_options"] = document_checklist_options()
+        return documents_completion(obj, self.context["document_checklist_options"])
 
     def get_profile_photo_url(self, obj):
         document = obj.documents.filter(document_type__iexact="Personal Photograph").first()
@@ -700,9 +700,13 @@ class LeaveRecordSerializer(serializers.ModelSerializer):
 class DocumentOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentOption
-        fields = ["id", "name", "instructions", "required", "is_active"]
+        fields = ["id", "name", "instructions", "required", "is_active", "builtin_key"]
 
     def validate_name(self, value):
+        if self.instance and self.instance.builtin_key:
+            if value != self.instance.name:
+                raise serializers.ValidationError("The built-in document name cannot be changed.")
+            return value
         if value.casefold() in RESERVED_DOCUMENT_NAMES:
             raise serializers.ValidationError("This name is already used by a built-in document option.")
         matches = DocumentOption.objects.filter(name__iexact=value)
@@ -711,6 +715,11 @@ class DocumentOptionSerializer(serializers.ModelSerializer):
         if matches.exists():
             raise serializers.ValidationError("A document option with this name already exists. Edit or restore it instead.")
         return value
+
+    def validate(self, attrs):
+        if self.instance and self.instance.builtin_key and attrs.keys() - {"required", "name"}:
+            raise serializers.ValidationError("Only the upload requirement can be changed for a built-in document option.")
+        return attrs
 
 
 class EmployeeDocumentSerializer(serializers.ModelSerializer):
@@ -779,6 +788,8 @@ class EmployeeDocumentSerializer(serializers.ModelSerializer):
         if self.instance and getattr(document_option, "pk", None) != self.instance.document_option_id:
             raise serializers.ValidationError({"document_option": "The document option on an existing upload cannot be changed."})
         if document_option:
+            if document_option.builtin_key:
+                raise serializers.ValidationError({"document_option": "Use the built-in document type to upload this file."})
             request = self.context.get("request")
             file = attrs.get("file", getattr(self.instance, "file", None))
             file_url = attrs.get("file_url", getattr(self.instance, "file_url", ""))

@@ -33,23 +33,26 @@ export default function DocumentOptions({ api, options, onChange }) {
     <div className="panel-header">
       <div>
         <h3>Document options</h3>
-        <p className="muted">Add uploads for all guards. Required uploads count towards document completion.</p>
+        <p className="muted">Set which uploads are required for all guards. Required uploads count towards document completion.</p>
       </div>
       <button type="button" className="secondary-button" disabled={busy} onClick={() => edit(null)}><Plus size={15} /> Add option</button>
     </div>
     {error && <p className="error" role="alert">{error}</p>}
     {draft && <form className="document-option-form" onSubmit={(event) => {
       event.preventDefault();
-      update(editing, editing ? "PATCH" : "POST", { name: draft.name.trim(), instructions: draft.instructions.trim(), required: draft.required });
+      const values = editing?.builtin_key
+        ? { required: draft.required }
+        : { name: draft.name.trim(), instructions: draft.instructions.trim(), required: draft.required };
+      update(editing, editing ? "PATCH" : "POST", values);
     }}>
       <fieldset disabled={busy}>
         <legend>{editing ? "Edit document option" : "New document option"}</legend>
         <div className="form-grid">
-          <label>Document name<input autoFocus required maxLength={100} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
-          <label>Upload requirement<select value={draft.required ? "required" : "optional"} onChange={(event) => setDraft({ ...draft, required: event.target.value === "required" })}>
+          <label>Document name<input autoFocus={!editing?.builtin_key} readOnly={Boolean(editing?.builtin_key)} required maxLength={100} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+          <label>Upload requirement<select autoFocus={Boolean(editing?.builtin_key)} value={draft.required ? "required" : "optional"} onChange={(event) => setDraft({ ...draft, required: event.target.value === "required" })}>
             <option value="optional">Optional</option><option value="required">Required</option>
           </select></label>
-          <label className="full-width">Instructions for guards (optional)<textarea rows={2} maxLength={500} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></label>
+          {!editing?.builtin_key && <label className="full-width">Instructions for guards (optional)<textarea rows={2} maxLength={500} value={draft.instructions} onChange={(event) => setDraft({ ...draft, instructions: event.target.value })} /></label>}
         </div>
         <div className="row-actions">
           <button type="button" className="secondary-button" onClick={() => { setDraft(null); setEditing(null); setError(""); }}>Cancel</button>
@@ -65,13 +68,13 @@ export default function DocumentOptions({ api, options, onChange }) {
         </span>
         <div className="row-actions">
           <button type="button" className="mini-button" disabled={busy} onClick={() => edit(option)}><Pencil size={13} /> Edit</button>
-          {option.is_active
+          {!option.builtin_key && (option.is_active
             ? <button type="button" className="mini-button" disabled={busy} onClick={() => {
               if (window.confirm(`Remove "${option.name}" from the guard checklist? Existing uploads will be kept.`)) update(option, "DELETE");
             }}><Trash2 size={13} /> Remove</button>
-            : <button type="button" className="mini-button" disabled={busy} onClick={() => update(option, "PATCH", { is_active: true })}><RotateCcw size={13} /> Restore</button>}
+            : <button type="button" className="mini-button" disabled={busy} onClick={() => update(option, "PATCH", { is_active: true })}><RotateCcw size={13} /> Restore</button>)}
         </div>
       </li>)}
-    </ul> : <p className="muted">No custom document options yet.</p>}
+    </ul> : <p className="muted">No document options yet.</p>}
   </section>;
 }

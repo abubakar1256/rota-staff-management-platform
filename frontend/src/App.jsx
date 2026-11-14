@@ -1305,12 +1305,13 @@ function DocumentsPage({ onNavigate, target = {}, isOfficeAdmin = false }) {
   const editingId = editingDocument?.id;
   const missingEmployee = editingDocument && !uniqueEmployees.some((employee) => employee.id === editingDocument.employee);
   const selectedEmployee = uniqueEmployees.find((employee) => String(employee.id) === form.employee);
-  const requiredTypes = requiredDocumentItems(selectedEmployee).map((item) => item.label);
-  const optionalTypes = [...optionalDocumentItemsFor().map((item) => item.label), "Certificates"];
+  const builtinOptions = (documentOptions || []).filter((option) => option.builtin_key);
+  const requiredTypes = requiredDocumentItems(selectedEmployee, builtinOptions).map((item) => item.label);
+  const optionalTypes = optionalDocumentItemsFor(builtinOptions, selectedEmployee).map((item) => item.label);
   const checklistTypes = [...requiredTypes, ...optionalTypes];
   const savedType = editingDocument?.document_type;
   const extraSavedType = savedType && !checklistTypes.includes(savedType) ? savedType : "";
-  const customChoices = (documentOptions || []).filter((option) => option.is_active);
+  const customChoices = (documentOptions || []).filter((option) => option.is_active && !option.builtin_key);
   const savedOption = editingDocument?.document_option;
   const selectedType = form.document_option
     ? `custom-${form.document_option}`

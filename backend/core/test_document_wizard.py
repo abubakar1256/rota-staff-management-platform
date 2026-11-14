@@ -54,7 +54,7 @@ class GuardDocumentWizardTests(APITestCase):
         self.assertEqual(self.client.post(options, {**new_option, "name": "signed handbook"}, format="json").status_code, 400)
 
         self.client.force_authenticate(self.guard)
-        self.assertEqual(self.client.get(options).data, [created.data])
+        self.assertEqual([option for option in self.client.get(options).data if not option["builtin_key"]], [created.data])
         self.assertEqual(documents_completion(self.employee), {"completed": 7, "required": 8, "percentage": 88})
         evidence = {"employee": self.employee.pk, "document_option": option_id}
         self.assertEqual(self.client.post("/api/documents/", evidence, format="multipart").status_code, 400)
@@ -72,15 +72,46 @@ class GuardDocumentWizardTests(APITestCase):
         self.assertEqual(self.client.get(document_url).data["document_label"], "Staff handbook")
         self.assertEqual(documents_completion(self.employee)["required"], 7)
         self.assertEqual(self.client.delete(option_url).status_code, 204)
-        self.assertFalse(self.client.get(options).data[0]["is_active"])
+        self.assertFalse(self.client.get(option_url).data["is_active"])
 
         self.client.force_authenticate(self.guard)
-        self.assertEqual(self.client.get(options).data, [])
+        self.assertNotIn(option_id, [option["id"] for option in self.client.get(options).data])
         self.assertEqual(self.client.get(document_url).status_code, 200)
         self.assertEqual(self.client.patch(document_url, {"file": self.file()}, format="multipart").status_code, 400)
         self.client.force_authenticate(admin)
         self.assertEqual(self.client.patch(option_url, {"is_active": True, "required": True}, format="json").status_code, 200)
         self.assertEqual(documents_completion(self.employee), {"completed": 8, "required": 8, "percentage": 100})
+
+    def test_builtin_checklist_can_change_required_status_and_preserve_evidence(self):
+        self.required_records()
+        options_url = "/api/document-options/"
+        roles = {option["builtin_key"]: option for option in self.client.get(options_url).data}
+        self.assertTrue(roles["share_code"]["required"])
+        self.assertFalse(roles["certificates"]["required"])
+        proof_url = f"{options_url}{roles['proof_address']['id']}/"
+        self.assertEqual(self.client.patch(proof_url, {"required": False}, format="json").status_code, 403)
+        self.client.force_authenticate(get_user_model().objects.create_superuser(username="checklist-admin"))
+        self.assertEqual(self.client.patch(proof_url, {"name": "New proof"}, format="json").status_code, 400)
+        self.assertEqual(self.client.delete(proof_url).status_code, 400)
+        self.assertEqual(self.client.patch(proof_url, {"required": False}, format="json").status_code, 200)
+        for key in ("right_to_work", "certificates"):
+            response = self.client.patch(f"{options_url}{roles[key]['id']}/", {"required": True}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+        self.client.force_authenticate(self.guard)
+        self.assertEqual(self.client.get("/api/employees/me/").data["documents_completion"]["required"], 8)
+        self.record("Right to Work")
+        certificate = self.record("ACT certificate", expiry_date=self.today - timedelta(days=1))
+        self.assertEqual(documents_completion(self.employee)["completed"], 7)
+        certificate.expiry_date = self.future
+        certificate.save(update_fields=["expiry_date"])
+        self.assertEqual(documents_completion(self.employee)["percentage"], 100)
+        self.employee.nationality = "British"
+        self.assertEqual(documents_completion(self.employee)["required"], 7)
+
+        self.client.force_authenticate(get_user_model().objects.get(username="checklist-admin"))
+        for option in roles.values():
+            self.assertEqual(self.client.patch(f"{options_url}{option['id']}/", {"required": False}, format="json").status_code, 200)
+        self.assertEqual(documents_completion(self.employee), {"completed": 0, "required": 0, "percentage": 100})
 
     def test_required_documents_reach_100_with_only_one_address_and_no_optional_uploads(self):
         self.assertEqual(documents_completion(self.employee)["percentage"], 0)

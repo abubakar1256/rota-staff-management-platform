@@ -1857,6 +1857,8 @@ class DocumentOptionViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
+        if instance.builtin_key:
+            raise ValidationError({"detail": "Set this built-in document to Optional to remove it from the required checklist."})
         if DocumentOption.objects.filter(pk=instance.pk, is_active=True).update(is_active=False):
             AuditLog.objects.create(
                 user=self.request.user, action="ARCHIVE", model_name="DocumentOption",

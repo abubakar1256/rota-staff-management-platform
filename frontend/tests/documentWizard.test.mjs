@@ -30,6 +30,28 @@ test("British guards have no share code step, including saved country names", ()
   assert.ok(requiredDocumentItems({ nationality: "Pakistani" }).some((item) => item.key === "share_code"));
 });
 
+test("built-in requirements can change without changing how existing uploads are matched", () => {
+  const profile = { nationality: "Pakistani" };
+  const originals = complete();
+  const options = [
+    { builtin_key: "proof_address", required: false, is_active: true },
+    { builtin_key: "right_to_work", required: true, is_active: true },
+    { builtin_key: "certificates", required: true, is_active: true },
+  ];
+  const required = requiredDocumentItems(profile, options);
+  assert.equal(required.length, 8);
+  assert.ok(optionalDocumentItemsFor(options, profile).some((item) => item.key === "proof_address" && item.issue));
+  assert.ok(required.some((item) => item.key === "right_to_work" && item.optionalExpiry));
+  const evidence = [...originals, { document_type: "Right-to-Work", file: "/right.pdf" },
+    { document_type: "ACT certificate", file: "/old-act.pdf", expiry_date: "2026-10-01" }];
+  assert.equal(documentsProgress(profile, evidence, today, options).completed, 7);
+  evidence.push({ document_type: "Certificates", certificate_type: "NASDU", file: "/training.pdf" });
+  assert.equal(documentsProgress(profile, evidence, today, options).percentage, 100);
+  assert.equal(requiredDocumentItems({ nationality: "British" }, options).length, 7);
+  const allOptional = requiredDocumentItems(profile).map((item) => ({ builtin_key: item.key, required: false, is_active: true }));
+  assert.deepEqual(documentsProgress(profile, [], today, allOptional), { required: 0, completed: 0, percentage: 100 });
+});
+
 test("one address proof and required files reach 100% without optional documents", () => {
   const profile = { nationality: "Pakistani" }, documents = complete();
   assert.equal(documentsProgress(profile, [], today).percentage, 0);

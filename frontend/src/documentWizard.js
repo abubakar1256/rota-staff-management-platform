@@ -11,7 +11,7 @@ const customDocumentItem = (option) => ({
   hint: option.instructions, required: option.required,
 });
 
-export function requiredDocumentItems(profile, options = []) {
+function defaultRequiredItems(profile) {
   const items = [
     { key: "passport", label: "Passport (First 2 pages)", hint: "Upload the first two pages together as one file.", expiry: true },
     { key: "sia_front", label: "SIA Card (Front)", hint: "Upload the front of your SIA card and enter its number.", number: true, expiry: true, aliases: ["SIA Card (Front & Back)"] },
@@ -23,14 +23,11 @@ export function requiredDocumentItems(profile, options = []) {
     { key: "ni_number", label: "National Insurance Number (NI)", hint: "Enter your NI number or upload supporting evidence.", code: true },
     { key: "photograph", label: "Personal Photograph", hint: "Your saved profile picture is used here. You can replace it in My profile.", photo: true },
   );
-  return [
-    ...items.map((item) => ({ ...item, required: true })),
-    ...options.filter((option) => option.is_active && option.required).map(customDocumentItem),
-  ];
+  return items;
 }
 
 export const optionalDocumentItems = [
-  { key: "right_to_work", label: "Right to Work", optionalExpiry: true },
+  { key: "right_to_work", label: "Right to Work", optionalExpiry: true, aliases: ["Right-to-Work"] },
   { key: "cscs_front", label: "CSCS Card (Front)", number: true, expiry: true },
   { key: "cscs_back", label: "CSCS Card (Back)" },
   { key: "driving_front", label: "Driving License (Front)" },
@@ -38,8 +35,27 @@ export const optionalDocumentItems = [
   { key: "ppac_code", label: "PPAC Code", code: true },
 ];
 
-export function optionalDocumentItemsFor(options = []) {
-  return [...optionalDocumentItems, ...options.filter((option) => option.is_active && !option.required).map(customDocumentItem)];
+export const certificateStep = { key: "certificates", label: "Certificates", aliases: ["ACT certificate"], certificateGroup: true, hint: "Upload at least one current certificate." };
+
+function checklistItems(profile, options, required) {
+  const active = options.filter((option) => option.is_active);
+  const overrides = new Map(active.filter((option) => option.builtin_key).map((option) => [option.builtin_key, option.required]));
+  const builtins = [
+    ...defaultRequiredItems(profile).map((item) => ({ ...item, required: overrides.get(item.key) ?? true })),
+    ...[...optionalDocumentItems, certificateStep].map((item) => ({ ...item, required: overrides.get(item.key) ?? false })),
+  ];
+  return [
+    ...builtins.filter((item) => item.required === required),
+    ...active.filter((option) => !option.builtin_key && option.required === required).map(customDocumentItem),
+  ];
+}
+
+export function requiredDocumentItems(profile, options = []) {
+  return checklistItems(profile, options, true);
+}
+
+export function optionalDocumentItemsFor(options = [], profile) {
+  return checklistItems(profile, options, false);
 }
 
 export function documentFieldRules(type, certificateType) {
@@ -66,6 +82,10 @@ export function documentError(item, document, today = localDate()) {
 }
 
 export function documentComplete(item, document, today = localDate()) {
+  if (item.certificateGroup && document) {
+    const act = document.document_type === "ACT certificate" || document.certificate_type === "ACT";
+    return (act || Boolean(document.certificate_type)) && documentComplete({ expiry: act }, document, today);
+  }
   return Boolean(document && document.verification_status !== "REJECTED" && !documentError(item, document, today));
 }
 export function findStepDocument(item, documents, today = localDate()) {
@@ -78,7 +98,7 @@ export function findStepDocument(item, documents, today = localDate()) {
 export function documentsProgress(profile, documents, today = localDate(), options = []) {
   const items = requiredDocumentItems(profile, options);
   const completed = items.filter((item) => documentComplete(item, findStepDocument(item, documents, today), today)).length;
-  return { completed, required: items.length, percentage: Math.round(completed / items.length * 100) };
+  return { completed, required: items.length, percentage: items.length ? Math.round(completed / items.length * 100) : 100 };
 }
 export function certificateLabel(document) {
   if (document.document_type === "ACT certificate") return "ACT";
