@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, CalendarDays, Check, History, Megaphone, MessageCircle, Search, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, History, Megaphone, MessageCircle, Pencil, Search, Trash2, Users } from "lucide-react";
 import { formatUkDateTime } from "./ukTime";
 import "./whatsappMessaging.css";
 
@@ -102,10 +102,7 @@ function useMarkSent(api, endpoint, queryKey, onConfirmed) {
   return { busyId, error, markSent };
 }
 
-function AnnouncementQueue({ api, announcementId, refreshHistory }) {
-  const endpoint = `/whatsapp/announcements/${announcementId}/`;
-  const queryKey = ["whatsapp", "announcement", announcementId];
-  const queue = useQuery({ queryKey, queryFn: () => api(endpoint, { silentError: true }) });
+function AnnouncementQueue({ api, endpoint, queryKey, queue, refreshHistory }) {
   const { busyId, error, markSent } = useMarkSent(api, endpoint, queryKey, refreshHistory);
   if (queue.isPending) return <p role="status" className="muted">Loading recipients…</p>;
   if (queue.isError) return <p role="alert" className="error">{queue.error.message} <button className="mini-button" onClick={() => queue.refetch()}>Retry</button></p>;
@@ -116,7 +113,67 @@ function AnnouncementQueue({ api, announcementId, refreshHistory }) {
   </>;
 }
 
+function AnnouncementActionDialog({ api, endpoint, announcement, action, onClose, onSaved }) {
+  const [title, setTitle] = useState(announcement.title);
+  const [message, setMessage] = useState(announcement.message);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const dialog = useRef(null);
+  const deleting = action === "delete";
+  const hasSent = announcement.recipients.some((row) => row.status === "SENT");
+  useEffect(() => { dialog.current.showModal(); }, []);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await api(endpoint, {
+        method: deleting ? "DELETE" : "PATCH",
+        body: deleting ? undefined : JSON.stringify({ title, message, version: announcement.version }),
+        silentToast: true, silentError: true,
+      });
+      onSaved(result);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <dialog ref={dialog} className="whatsapp-announcement-dialog" aria-labelledby="announcement-action-title"
+    onCancel={(event) => { event.preventDefault(); if (!saving) onClose(); }}>
+    <form onSubmit={submit}>
+      <h3 id="announcement-action-title">{deleting ? "Delete announcement?" : "Edit announcement"}</h3>
+      {deleting ? <p className="muted"><strong>{announcement.title}</strong> and its send list will be removed from Saved announcements.
+        {hasSent && " Messages sent in WhatsApp will still be visible in those chats."}</p> : <>
+        <label className="whatsapp-field">
+          <span>Announcement title</span>
+          <input className="whatsapp-control" required maxLength={120} value={title} disabled={saving}
+            onChange={(event) => setTitle(event.target.value)} autoFocus />
+        </label>
+        <label className="whatsapp-field">
+          <span>WhatsApp message</span>
+          <textarea className="whatsapp-control" required rows={6} maxLength={1500} value={message} disabled={saving}
+            onChange={(event) => setMessage(event.target.value)} />
+        </label>
+        {hasSent && <p className="muted">The edited message will be used for pending recipients. Previously sent messages stay in WhatsApp.</p>}
+      </>}
+      {error && <p className="error" role="alert">{error}</p>}
+      <footer className="modal-actions">
+        <button type="button" className="secondary-button" disabled={saving} autoFocus={deleting} onClick={onClose}>Cancel</button>
+        <button type="submit" className={deleting ? "secondary-button whatsapp-delete-button" : "primary-button"}
+          disabled={saving || (!deleting && (!title.trim() || !message.trim()))}>
+          {deleting ? (saving ? "Deleting…" : "Delete announcement") : (saving ? "Saving…" : "Save changes")}
+        </button>
+      </footer>
+    </form>
+  </dialog>;
+}
+
 export function StaffAnnouncements({ api }) {
+  const client = useQueryClient();
   const [announcementId, setAnnouncementId] = useState("");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
@@ -124,7 +181,12 @@ export function StaffAnnouncements({ api }) {
   const [selected, setSelected] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [action, setAction] = useState("");
+  const [notice, setNotice] = useState("");
   const history = useQuery({ queryKey: ["whatsapp", "announcements"], queryFn: () => api("/whatsapp/announcements/", { silentError: true }) });
+  const endpoint = `/whatsapp/announcements/${announcementId}/`;
+  const queryKey = ["whatsapp", "announcement", announcementId];
+  const queue = useQuery({ queryKey, queryFn: ({ signal }) => api(endpoint, { signal, silentError: true }), enabled: Boolean(announcementId) });
   const guards = useQuery({ queryKey: ["whatsapp", "guards"], queryFn: () => api("/whatsapp/guards/", { silentError: true }), enabled: !announcementId });
   const eligible = guards.data || [];
   const selectedIds = new Set(selected);
@@ -133,10 +195,25 @@ export function StaffAnnouncements({ api }) {
   const term = search.trim().toLowerCase();
   const visible = eligible.filter((guard) => `${guard.name} ${guard.code}`.toLowerCase().includes(term));
 
+  function completeAction(result) {
+    if (action === "delete") {
+      setAnnouncementId("");
+      client.removeQueries({ queryKey, exact: true });
+      client.setQueryData(["whatsapp", "announcements"], (items) => items?.filter((row) => String(row.id) !== announcementId));
+      setNotice("Announcement deleted.");
+    } else {
+      client.setQueryData(queryKey, result);
+      setNotice("Announcement updated.");
+    }
+    setAction("");
+    void history.refetch();
+  }
+
   async function createAnnouncement(event) {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setNotice("");
     try {
       const created = await api("/whatsapp/announcements/", {
         method: "POST", body: JSON.stringify({ title, message, employee_ids: selected }),
@@ -169,16 +246,31 @@ export function StaffAnnouncements({ api }) {
     </div>
     <section className="panel whatsapp-panel">
       <div className="whatsapp-history">
-        <label className="whatsapp-field">
-          <span className="whatsapp-label"><History size={16} aria-hidden="true" /> Saved announcements</span>
-          <select className="whatsapp-control" value={announcementId} onChange={(event) => setAnnouncementId(event.target.value)} disabled={saving}>
-            <option value="">{history.isPending ? "Loading saved announcements…" : "New announcement"}</option>
-            {(history.data || []).map((row) => <option key={row.id} value={row.id}>{row.title} · {row.sent}/{row.total} marked sent · {formatUkDateTime(row.created_at)}</option>)}
-          </select>
-        </label>
+        <div className="whatsapp-history-row">
+          <label className="whatsapp-field">
+            <span className="whatsapp-label"><History size={16} aria-hidden="true" /> Saved announcements</span>
+            <select className="whatsapp-control" value={announcementId} onChange={(event) => {
+              setAnnouncementId(event.target.value);
+              setNotice("");
+            }} disabled={saving}>
+              <option value="">{history.isPending ? "Loading saved announcements…" : "New announcement"}</option>
+              {(history.data || []).map((row) => <option key={row.id} value={row.id}>{row.title} · {row.sent}/{row.total} marked sent · {formatUkDateTime(row.created_at)}</option>)}
+            </select>
+          </label>
+          {announcementId && <div className="whatsapp-history-actions">
+            <button type="button" className="secondary-button" disabled={!queue.isSuccess || queue.isFetching}
+              onClick={() => setAction("edit")}><Pencil size={15} aria-hidden="true" /> Edit</button>
+            <button type="button" className="secondary-button whatsapp-delete-button" disabled={!queue.isSuccess || queue.isFetching}
+              onClick={() => setAction("delete")}><Trash2 size={15} aria-hidden="true" /> Delete</button>
+          </div>}
+        </div>
+        {notice && <p role="status" className="success">{notice}</p>}
         {history.isError && <p role="alert" className="error">{history.error.message} <button className="mini-button" onClick={() => history.refetch()}>Retry</button></p>}
       </div>
-      {announcementId ? <AnnouncementQueue key={announcementId} api={api} announcementId={announcementId} refreshHistory={() => history.refetch()} /> : <form className="whatsapp-compose" onSubmit={createAnnouncement}>
+      {action && queue.data && <AnnouncementActionDialog api={api} endpoint={endpoint} announcement={queue.data}
+        action={action} onClose={() => { setAction(""); void queue.refetch(); }} onSaved={completeAction} />}
+      {announcementId ? <AnnouncementQueue key={announcementId} api={api} endpoint={endpoint} queryKey={queryKey}
+        queue={queue} refreshHistory={() => history.refetch()} /> : <form className="whatsapp-compose" onSubmit={createAnnouncement}>
         <div className="whatsapp-compose-grid">
           <section className="whatsapp-compose-section" aria-labelledby="whatsapp-compose-title">
             <div className="whatsapp-section-heading">

@@ -13,9 +13,12 @@ from .permissions import IsAdminOrSuperAdmin
 from .whatsapp import message_version, rota_message, shift_key, shift_snapshot, whatsapp_link
 
 
-class AnnouncementInput(serializers.Serializer):
+class AnnouncementText(serializers.Serializer):
     title = serializers.CharField(max_length=120)
     message = serializers.CharField(max_length=1500)
+
+
+class AnnouncementInput(AnnouncementText):
     employee_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1), min_length=1, max_length=1000,
     )
@@ -23,6 +26,10 @@ class AnnouncementInput(serializers.Serializer):
 
 class MarkSentInput(serializers.Serializer):
     version = serializers.RegexField(r"\A[a-f0-9]{64}\Z")
+
+
+class AnnouncementEditInput(AnnouncementText, MarkSentInput):
+    pass
 
 
 def private_response(data, code=status.HTTP_200_OK):
@@ -125,15 +132,52 @@ def announcement_recipient(announcement, employee, recipient):
     }
 
 
-@api_view(["GET"])
-@permission_classes([IsAdminOrSuperAdmin])
-def announcement_detail(request, pk):
-    announcement = get_object_or_404(WhatsAppAnnouncement, pk=pk)
+def announcement_version(announcement):
+    return message_version(announcement.pk, announcement.title, announcement.message)
+
+
+def announcement_data(announcement):
     recipients = announcement.recipients.select_related("employee", "sent_by").order_by("employee__name", "pk")
-    return private_response({
+    return {
         "id": announcement.pk, "title": announcement.title, "message": announcement.message,
+        "version": announcement_version(announcement),
         "recipients": [announcement_recipient(announcement, row.employee, row) for row in recipients],
-    })
+    }
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrSuperAdmin])
+@transaction.atomic
+def announcement_detail(request, pk):
+    if request.method == "GET":
+        return private_response(announcement_data(get_object_or_404(WhatsAppAnnouncement, pk=pk)))
+
+    announcement = get_object_or_404(WhatsAppAnnouncement.objects.select_for_update(), pk=pk)
+    if request.method == "DELETE":
+        announcement.delete()
+        AuditLog.objects.create(
+            user=request.user, action="DELETE", model_name="WhatsAppAnnouncement",
+            object_id=str(pk), summary="Deleted a saved staff announcement.",
+        )
+        return private_response(None, status.HTTP_204_NO_CONTENT)
+
+    data = AnnouncementEditInput(data=request.data)
+    data.is_valid(raise_exception=True)
+    if data.validated_data["version"] != announcement_version(announcement):
+        return private_response(
+            {"detail": "This announcement changed. Reopen it to review the latest version before editing."},
+            status.HTTP_409_CONFLICT,
+        )
+    title, message = data.validated_data["title"], data.validated_data["message"]
+    if (announcement.title, announcement.message) != (title, message):
+        announcement.title = title
+        announcement.message = message
+        announcement.save(update_fields=["title", "message"])
+        AuditLog.objects.create(
+            user=request.user, action="UPDATE", model_name="WhatsAppAnnouncement",
+            object_id=str(pk), summary="Edited a saved staff announcement.",
+        )
+    return private_response(announcement_data(announcement))
 
 
 @api_view(["POST"])
@@ -141,7 +185,7 @@ def announcement_detail(request, pk):
 @transaction.atomic
 def mark_announcement_sent(request, pk, employee_id):
     expected = mark_input(request)
-    announcement = get_object_or_404(WhatsAppAnnouncement, pk=pk)
+    announcement = get_object_or_404(WhatsAppAnnouncement.objects.select_for_update(), pk=pk)
     recipient = get_object_or_404(
         WhatsAppAnnouncementRecipient.objects.select_for_update(),
         announcement=announcement, employee_id=employee_id,

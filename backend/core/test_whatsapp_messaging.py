@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlsplit
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import AuditLog, Employee, RotaAssignment, RotaWeek, ShiftType, Site, UserProfile
+from .models import AuditLog, Employee, RotaAssignment, RotaWeek, ShiftType, Site, UserProfile, WhatsAppAnnouncementRecipient
 from .whatsapp import message_version, shift_key
 
 
@@ -114,6 +114,33 @@ class WhatsAppMessagingTests(APITestCase):
         self.mark(url, row, expected=409)
         self.assertEqual(self.client.get(url).data["recipients"][0]["status"], "PENDING")
 
+    def test_edit_and_delete_saved_announcement(self):
+        created = self.client.post("/api/whatsapp/announcements/", {
+            "title": "Briefing", "message": "Original text", "employee_ids": [self.guard.pk, self.other_guard.pk],
+        }, format="json")
+        url = f"/api/whatsapp/announcements/{created.data['id']}/"
+        original = self.client.get(url).data
+        rows = {row["id"]: row for row in original["recipients"]}
+        sent = self.mark(url, rows[self.guard.pk])
+        body = {"title": "Updated briefing", "message": "New text", "version": original["version"]}
+        self.assertEqual(self.client.patch(url, {**body, "message": ""}, format="json").status_code, 400)
+        edited = self.client.patch(url, body, format="json")
+        self.assertEqual(edited.status_code, 200, edited.data)
+        self.assertEqual((edited.data["title"], edited.data["message"]), ("Updated briefing", "New text"))
+        edited_rows = {row["id"]: row for row in edited.data["recipients"]}
+        self.assertEqual(edited_rows[self.guard.pk], sent)
+        self.assertEqual(edited_rows[self.other_guard.pk]["status"], "PENDING")
+        self.assertEqual(parse_qs(urlsplit(edited_rows[self.other_guard.pk]["whatsapp_url"]).query), {"text": ["New text"]})
+        self.mark(url, rows[self.other_guard.pk], expected=409)
+        self.assertEqual(self.client.patch(url, body, format="json").status_code, 409)
+        self.assertEqual(self.client.get("/api/whatsapp/announcements/").data[0]["sent"], 1)
+        self.assertEqual(self.client.delete(url).status_code, 204)
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.get("/api/whatsapp/announcements/").data, [])
+        self.assertFalse(WhatsAppAnnouncementRecipient.objects.filter(announcement_id=created.data["id"]).exists())
+        self.assertEqual(set(AuditLog.objects.filter(model_name="WhatsAppAnnouncement").values_list("action", flat=True)),
+                         {"UPDATE", "DELETE"})
+
     def test_only_admin_roles_can_access_whatsapp_endpoints(self):
         week, _, _ = self.make_week()
         for role in (UserProfile.Role.EMPLOYEE, UserProfile.Role.MANAGER, UserProfile.Role.CLIENT_ADMIN):
@@ -121,6 +148,8 @@ class WhatsAppMessagingTests(APITestCase):
             for path in ("/api/whatsapp/guards/", "/api/whatsapp/announcements/", f"/api/whatsapp/rota-weeks/{week.pk}/"):
                 self.assertEqual(self.client.get(path).status_code, 403)
             self.assertEqual(self.client.post("/api/whatsapp/announcements/", {}, format="json").status_code, 403)
+            self.assertEqual(self.client.patch("/api/whatsapp/announcements/1/", {}, format="json").status_code, 403)
+            self.assertEqual(self.client.delete("/api/whatsapp/announcements/1/").status_code, 403)
 
     @patch.dict("os.environ", {"FRONTEND_URL": "https://rota.example.com/"})
     def test_weekly_rota_message_matches_the_template_in_preview_and_whatsapp(self):

@@ -35,6 +35,27 @@
 }
 
 .whatsapp-history .whatsapp-field { max-width: 580px; }
+.whatsapp-history-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.whatsapp-history-row .whatsapp-field { flex: 1 1 280px; }
+.whatsapp-history-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.whatsapp-history-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.secondary-button.whatsapp-delete-button { color: #9f2637; border-color: #efc8cf; background: #fff8f9; }
+.secondary-button.whatsapp-delete-button:hover:not(:disabled) { background: #fce8ec; border-color: #d894a1; }
+.whatsapp-announcement-dialog {
+  width: min(540px, calc(100% - 28px));
+  max-height: calc(100dvh - 28px);
+  padding: clamp(16px, 4vw, 26px);
+  border: 1px solid #dce5f4;
+  border-radius: 14px;
+  background: #fff;
+  color: #24334f;
+  box-shadow: 0 22px 65px #11214438;
+}
+.whatsapp-announcement-dialog::backdrop { background: #15223d70; }
+.whatsapp-announcement-dialog form { display: grid; gap: 14px; }
+.whatsapp-announcement-dialog :is(h3, p, .modal-actions) { margin: 0; }
+.whatsapp-announcement-dialog textarea { resize: vertical; }
+.whatsapp-announcement-dialog .modal-actions { flex-wrap: wrap; }
 .whatsapp-field { display: grid; gap: 7px; min-width: 0; }
 .whatsapp-field > span { color: #34435d; font-size: 13px; font-weight: 700; }
 .whatsapp-label { display: flex; align-items: center; gap: 8px; }
