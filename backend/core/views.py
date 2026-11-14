@@ -53,8 +53,11 @@ from .availability import assignment_availability_conflicts, unavailable_for_shi
 from .document_archive import DocumentArchiveSerializer, build_document_archive, safe_name
 from .pin_encryption import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
-from .rota_checks import RotaAssignmentChecks
+from .rota_checks import RotaAssignmentChecks, assignment_interval
 from .rota_planning import CopyWeekInput, EligibleGuardsInput, MultiDayInput, SiteInput, plan_multi_day, plan_week_copy
+from .rota_replacement import ReplacementInput, evidence_operations, leave_covers_assignment, replacement_plans
+from .staffing import day_requirements, staffed_positions, unfilled_count
+from .whatsapp import message_version, shift_snapshot
 from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
 from .models import DocumentOption
@@ -421,39 +424,62 @@ def generate_client_arrival_reports(report_date, user, shift_types=None):
             _store_arrival_pdf(report, filename, pdf_bytes, counts, user)
 
 
-def sync_rota_date_operations(rota_week, selected_date, user):
+def sync_rota_date_operations(rota_week, selected_date, user, *, only_slots=None):
     assignments = list(rota_week.assignments.filter(work_date=selected_date).select_related("employee", "site", "shift_type"))
     assignments_by_slot = {}
     for assignment in assignments:
         assignments_by_slot.setdefault((assignment.site_id, assignment.shift_type_id), []).append(assignment)
     created = 0
     updated = 0
-    sites = Site.objects.filter(is_active=True)
+    sites = list(Site.objects.filter(is_active=True))
     shifts = list(ShiftType.objects.filter(is_active=True))
-    requirements = {(item.site_id, item.shift_type_id): item.required_guards for item in SiteShiftRequirement.objects.filter(site__in=sites, weekday=selected_date.weekday())}
+    requirements = day_requirements(sites, shifts, selected_date)
     for site in sites:
         for shift in shifts:
-            slot_assignments = assignments_by_slot.get((site.id, shift.id), [])
+            slot = (site.id, shift.id)
+            if only_slots is not None and slot not in only_slots:
+                continue
+            slot_assignments = assignments_by_slot.get(slot, [])
             assigned = [item for item in slot_assignments if item.employee_id]
             operations = list(DailyOperation.objects.filter(operation_date=selected_date, site=site, shift_type=shift).order_by("id"))
+            protected = set(evidence_operations(DailyOperation.objects.filter(pk__in=[
+                item.pk for item in operations if item.employee_id
+            ])).values_list("pk", flat=True)) if operations else set()
             for assignment in assigned:
                 operation = next((item for item in operations if item.employee_id == assignment.employee_id), None)
+                timing = {
+                    "scheduled_start": assignment.scheduled_start, "scheduled_end": assignment.scheduled_end,
+                    "split_cover": assignment.split_cover,
+                }
                 if operation:
-                    operation.status = DailyOperation.Status.PRESENT if operation.reached_at else DailyOperation.Status.UNCONFIRMED
-                    operation.follow_up = ""
-                    operation.save(update_fields=["status", "follow_up", "updated_at"])
-                    updated += 1
+                    update_fields = []
+                    if only_slots is None:
+                        operation.status = DailyOperation.Status.PRESENT if operation.reached_at else DailyOperation.Status.UNCONFIRMED
+                        operation.follow_up = ""
+                        update_fields.extend(["status", "follow_up"])
+                    if operation.pk not in protected:
+                        for field, value in timing.items():
+                            if getattr(operation, field) != value:
+                                setattr(operation, field, value)
+                                update_fields.append(field)
+                    if update_fields:
+                        operation.save(update_fields=[*update_fields, "updated_at"])
+                        updated += 1
                 else:
-                    DailyOperation.objects.create(operation_date=selected_date, site=site, shift_type=shift, employee=assignment.employee, status=DailyOperation.Status.UNCONFIRMED, created_by=user)
+                    DailyOperation.objects.create(operation_date=selected_date, site=site, shift_type=shift, employee=assignment.employee, status=DailyOperation.Status.UNCONFIRMED, created_by=user, **timing)
                     created += 1
-            required = requirements.get((site.id, shift.id), site.required_guards)
-            missing = max(required - len(assigned), 0)
+            missing = max(requirements[slot] - staffed_positions(assigned), 0)
             unfilled_operations = [item for item in operations if item.employee_id is None]
+            if only_slots is not None:
+                surplus = DailyOperation.objects.filter(pk__in=[item.pk for item in unfilled_operations[missing:]])
+                surplus = surplus.filter(notes="", follow_up__in=["", "Replacement needed"])
+                surplus.exclude(pk__in=evidence_operations(surplus).values("pk")).delete()
             for index in range(missing):
                 if index < len(unfilled_operations):
                     operation = unfilled_operations[index]
                     operation.status = DailyOperation.Status.REPLACEMENT_NEEDED
-                    operation.follow_up = "Replacement needed"
+                    if only_slots is None or not operation.follow_up:
+                        operation.follow_up = "Replacement needed"
                     operation.save(update_fields=["status", "follow_up", "updated_at"])
                     updated += 1
                 else:
@@ -899,7 +925,6 @@ def dashboard(request):
     today_assignments = []
     if current_rota:
         today_assignments = list(current_rota.assignments.filter(work_date=today).select_related("site", "employee"))
-    from .staffing import day_requirements, unfilled_count
     active_sites = list(Site.objects.filter(is_active=True))
     active_shifts = list(ShiftType.objects.filter(is_active=True))
     unfilled_total = unfilled_count(day_requirements(active_sites, active_shifts, today), today_assignments)
@@ -1320,6 +1345,139 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         site = get_object_or_404(self.planning_sites(), pk=inputs.validated_data["site"], is_active=True)
         return Response(list(self.active_inducted_guards(site).values("id", "name", "employee_id")))
 
+    @action(detail=True, methods=["get"], permission_classes=[IsAdminOrSuperAdmin])
+    def leave_cover(self, request, pk=None):
+        week = self.get_object()
+        leaves = LeaveRecord.objects.filter(
+            status__in=[LeaveRecord.Status.PENDING, LeaveRecord.Status.APPROVED],
+            start_date__lte=week.week_start + timedelta(days=7), end_date__gte=week.week_start,
+        )
+        leave_by_employee = {}
+        for leave in leaves.order_by("status", "pk"):
+            leave_by_employee.setdefault(leave.employee_id, []).append(leave)
+        assignments = week.assignments.filter(
+            employee_id__in=leave_by_employee, site__is_active=True, shift_type__is_active=True,
+        ).select_related("employee", "site", "shift_type").order_by("work_date", "site__name", "pk")
+        rows = []
+        now = timezone.now()
+        for row in assignments:
+            if timezone.make_aware(assignment_interval(row)[1]) <= now:
+                continue
+            leave = next((leave for leave in leave_by_employee[row.employee_id] if leave_covers_assignment(leave, row)), None)
+            if leave:
+                rows.append({**RotaAssignmentSerializer(row).data, "leave_status": leave.status})
+        return Response(rows)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminOrSuperAdmin])
+    @transaction.atomic
+    def find_replacement(self, request, pk=None):
+        inputs = ReplacementInput(data=request.data)
+        inputs.is_valid(raise_exception=True)
+        data = inputs.validated_data
+        week = self.get_object()
+        applying = "plan" in data
+        if applying:
+            week = RotaWeek.objects.select_for_update().get(pk=week.pk)
+            # Serialise replacement writes against other planners that lock these guards.
+            list(Employee.objects.select_for_update().filter(status=Employee.Status.ACTIVE)
+                 .order_by("pk").values_list("pk", flat=True))
+            list(week.assignments.select_for_update().order_by("pk").values_list("pk", flat=True))
+        sites = set(self.planning_sites().filter(is_active=True).values_list("pk", flat=True))
+        if "assignment" in data:
+            target = get_object_or_404(
+                week.assignments.select_related("employee", "site", "shift_type"),
+                pk=data["assignment"], site_id__in=sites, shift_type__is_active=True,
+            )
+        else:
+            slot = data["slot"]
+            day = slot["work_date"]
+            if not week.week_start <= day <= week.week_start + timedelta(days=6):
+                raise ValidationError({"detail": "Choose a date in the selected week."})
+            site = get_object_or_404(Site, pk=slot["site"], pk__in=sites)
+            shift = get_object_or_404(ShiftType, pk=slot["shift_type"], is_active=True)
+            rows = list(week.assignments.filter(site=site, shift_type=shift, work_date=day).order_by("pk"))
+            required = day_requirements([site], [shift], day)[site.pk, shift.pk]
+            if staffed_positions(rows) >= required:
+                return Response({"options": [], "detail": "This shift is already covered."},
+                                status=status.HTTP_409_CONFLICT if applying else status.HTTP_200_OK)
+            target = next((row for row in rows if row.employee_id is None), None)
+            if target is None:
+                target = RotaAssignment(rota_week=week, site=site, shift_type=shift, work_date=day)
+        plans, reason = replacement_plans(week, target, sites)
+        if not applying:
+            return Response({"options": [plan for plan, _ in plans], "detail": reason})
+        selected = next(((plan, changes) for plan, changes in plans if plan["id"] == data["plan"]), None)
+        if not selected:
+            return Response(
+                {"detail": reason or "The rota or guard availability changed. Review the available options again.",
+                 "options": [plan for plan, _ in plans]}, status=status.HTTP_409_CONFLICT,
+            )
+        plan, changes = selected
+        self.apply_replacement(week, request.user, plan, changes)
+        return Response({"changed": len(changes), "published": week.status == RotaWeek.Status.PUBLISHED})
+
+    @staticmethod
+    def apply_replacement(week, user, plan, changes):
+        relevant = Q()
+        affected = {}
+        slots_by_day = {}
+        split_cover = None
+        if plan["kind"] == "split":
+            start, end = assignment_interval(changes[0][0])
+            split_cover = {"group": plan["id"], "start": start.time().isoformat(), "end": end.time().isoformat()}
+        for before, after in changes:
+            slots_by_day.setdefault(after.work_date, set()).add((after.site_id, after.shift_type_id))
+            affected[after.employee_id] = after.employee
+            if before is not None and before.employee_id:
+                relevant |= Q(operation_date=before.work_date, site_id=before.site_id,
+                              shift_type_id=before.shift_type_id, employee_id=before.employee_id)
+                affected[before.employee_id] = before.employee
+        if relevant:
+            operations = DailyOperation.objects.filter(relevant)
+            list(operations.select_for_update().order_by("pk").values_list("pk", flat=True))
+            if evidence_operations(operations).exists():
+                raise ValidationError({"detail": "Attendance has been recorded for a shift in this plan."})
+            operations.filter(notes="", follow_up__in=["", "Replacement needed"]).delete()
+            if operations.exists():
+                raise ValidationError({"detail": "This shift has office notes. Review the operational record before replacing the guard."})
+        for _, after in changes:
+            if split_cover:
+                after.split_cover = split_cover
+            if after.pk:
+                after.save(update_fields=["employee", "scheduled_start", "scheduled_end", "split_cover", "updated_at"])
+            else:
+                after.created_by = user
+                after.save(force_insert=True)
+        for day, slots in slots_by_day.items():
+            sync_rota_date_operations(week, day, user, only_slots=slots)
+            transaction.on_commit(lambda day=day: generate_daily_arrival_reports(day, user), robust=True)
+
+        if week.status == RotaWeek.Status.PUBLISHED:
+            for employee in affected.values():
+                has_shifts = week.assignments.filter(employee=employee).exists()
+                if has_shifts:
+                    RotaConfirmation.objects.update_or_create(
+                        rota_week=week, employee=employee,
+                        defaults={"status": RotaConfirmation.Status.PENDING, "confirmed_at": None},
+                    )
+                else:
+                    week.confirmations.filter(employee=employee).delete()
+                if employee.user_id:
+                    publish_notification(
+                        user=employee.user, title="Your rota was updated",
+                        message=(f"Your shifts for the week commencing {week.week_start:%d %b %Y} changed. Review your updated rota."
+                                 if has_shifts else f"Your remaining assignment for the week commencing {week.week_start:%d %b %Y} was removed."),
+                        link="rota", category="ROTA_STAFFING", employee=employee, event_date=week.week_start,
+                        context={"rota_week_id": week.pk}, event_key=f"replacement:{plan['id']}",
+                    )
+        AuditLog.objects.create(
+            user=user, action="UPDATE", model_name="RotaWeek", object_id=week.pk,
+            summary=("Replacement saved. " + "; ".join(
+                f"{row['start'][:10]} {row['site']}: {row['previous_guard'] or 'Unfilled'} → {row['guard']}"
+                for row in plan["rows"]
+            ))[:250],
+        )
+
     @action(detail=True, methods=["post"])
     def assign_days(self, request, pk=None):
         week = self.get_object()
@@ -1375,12 +1533,13 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(week_start=week_start)
         result = []
         for rota_week in queryset:
-            assignments = rota_week.assignments.filter(employee=employee).select_related("site", "shift_type")
+            assignments = list(rota_week.assignments.filter(employee=employee).select_related("site", "shift_type"))
             confirmation = rota_week.confirmations.filter(employee=employee).first()
             result.append({
                 "rota_week": RotaWeekSerializer(rota_week).data,
                 "assignments": RotaAssignmentSerializer(assignments, many=True).data,
                 "confirmation": RotaConfirmationSerializer(confirmation).data if confirmation else None,
+                "schedule_version": message_version([shift_snapshot(row) for row in sorted(assignments, key=lambda row: row.pk)]),
             })
         return Response(result)
 
@@ -1450,8 +1609,10 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def confirm(self, request, pk=None):
         rota_week = self.get_object()
+        rota_week = RotaWeek.objects.select_for_update().get(pk=rota_week.pk)
         employee_id = request.data.get("employee")
         profile = getattr(request.user, "profile", None)
         employee = getattr(request.user, "employee_record", None)
@@ -1463,8 +1624,13 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             return Response({"detail": "employee is required."}, status=status.HTTP_400_BAD_REQUEST)
         if rota_week.status != RotaWeek.Status.PUBLISHED:
             return Response({"detail": "Only a published rota can be confirmed."}, status=status.HTTP_400_BAD_REQUEST)
-        if not rota_week.assignments.filter(employee_id=employee_id).exists():
+        assignments = list(rota_week.assignments.filter(employee_id=employee_id).select_related("site", "shift_type").order_by("pk"))
+        if not assignments:
             return Response({"detail": "This employee is not assigned on this rota."}, status=status.HTTP_400_BAD_REQUEST)
+        if ("schedule_version" in request.data
+                and request.data["schedule_version"] != message_version([shift_snapshot(row) for row in assignments])):
+            return Response({"detail": "Your rota changed. Review the updated shifts before confirming."},
+                            status=status.HTTP_409_CONFLICT)
         confirmation, _ = RotaConfirmation.objects.update_or_create(
             rota_week=rota_week,
             employee_id=employee_id,
@@ -1495,6 +1661,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             for shift in shifts:
                 slot_assignments = by_slot.get((site.id, shift.id), [])
                 assigned = [assignment for assignment in slot_assignments if assignment.employee_id]
+                filled = staffed_positions(assigned)
                 required = requirements.get((site.id, shift.id), site.required_guards)
                 slots.append({
                     "site": site.id,
@@ -1503,9 +1670,9 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
                     "shift_type": shift.id,
                     "shift_name": shift.name,
                     "required": required,
-                    "assigned": len(assigned),
-                    "unfilled": max(required - len(assigned), 0),
-                    "status": "FULL" if len(assigned) >= required else "PARTIAL" if assigned else "EMPTY",
+                    "assigned": filled,
+                    "unfilled": max(required - filled, 0),
+                    "status": "FULL" if filled >= required else "PARTIAL" if assigned else "EMPTY",
                     "employees": [{"assignment": item.id, "employee": item.employee_id, "employee_name": item.employee.name, "employee_id": item.employee.employee_id} for item in assigned],
                 })
         site_totals = []
@@ -1697,6 +1864,8 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         from .location_tracking import protect_tracked_assignment
         protect_tracked_assignment(instance)
+        if instance.split_cover:
+            raise ValidationError({"detail": "Use Find Replacement to assign another guard to this split cover segment."})
         report_date = instance.work_date
         site_id = instance.site_id
         shift_id = instance.shift_type_id
@@ -1710,6 +1879,8 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def move_to_site(self, request, pk=None):
         assignment = self.get_object()
+        if assignment.split_cover:
+            raise ValidationError({"detail": "A split cover segment must keep its original site."})
         from .location_tracking import protect_tracked_assignment
         protect_tracked_assignment(assignment)
         if assignment.rota_week.status == RotaWeek.Status.PUBLISHED:
@@ -1756,6 +1927,8 @@ class RotaAssignmentViewSet(viewsets.ModelViewSet):
             previous_employee_id = assignment.employee_id
             if conflicts:
                 for conflict in conflicts:
+                    if conflict.split_cover:
+                        raise ValidationError({"detail": "Use Find Replacement to cover the conflicting split shift."})
                     protect_tracked_assignment(conflict)
                     DailyOperation.objects.filter(
                         operation_date=conflict.work_date,
@@ -2218,7 +2391,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def attendance(self, request, pk=None):
         operation = self.get_object()
-        operation = self.get_queryset().select_for_update(of=("self",)).get(pk=operation.pk)
+        operation = get_object_or_404(self.get_queryset().select_for_update(of=("self",)), pk=operation.pk)
         if not operation.employee_id:
             return Response({"detail": "This shift has no assigned guard."}, status=status.HTTP_400_BAD_REQUEST)
         event_type = (request.data.get("event_type") or "").upper()
@@ -2240,10 +2413,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
             if operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_OFF).exists():
                 return Response({"detail": "Book Off has already been recorded for this shift."}, status=status.HTTP_400_BAD_REQUEST)
             current_timezone = timezone.get_current_timezone()
-            start_minutes = operation.shift_type.start_time.hour * 60 + operation.shift_type.start_time.minute
-            end_minutes = operation.shift_type.end_time.hour * 60 + operation.shift_type.end_time.minute
-            end_date = operation.operation_date + timedelta(days=1 if end_minutes <= start_minutes else 0)
-            due_at = timezone.make_aware(datetime.combine(end_date, operation.shift_type.end_time), current_timezone)
+            due_at = operation.scheduled_end_at
             deadline_at = due_at + timedelta(minutes=30)
             now = timezone.now()
             if now < due_at:
@@ -2395,7 +2565,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         if not operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).exists():
             return Response({"detail": "Book On must be completed before explaining a missed hourly picture."}, status=status.HTTP_400_BAD_REQUEST)
         current_timezone = timezone.get_current_timezone()
-        shift_start = timezone.make_aware(datetime.combine(operation.operation_date, operation.shift_type.start_time), current_timezone)
+        shift_start = operation.scheduled_start_at
         deadline_at = shift_start + timedelta(hours=sequence) + HOURLY_PICTURE_WINDOW
         if timezone.now() <= deadline_at:
             return Response({"detail": f"Hourly check-in {sequence} is not missed yet. You can add a reason after {deadline_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2421,10 +2591,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
         if not operation.attendance_events.filter(event_type=ShiftAttendanceEvent.EventType.BOOK_ON).exists():
             return Response({"detail": "Book On must be completed before explaining a missed Book Off."}, status=status.HTTP_400_BAD_REQUEST)
         current_timezone = timezone.get_current_timezone()
-        start_minutes = operation.shift_type.start_time.hour * 60 + operation.shift_type.start_time.minute
-        end_minutes = operation.shift_type.end_time.hour * 60 + operation.shift_type.end_time.minute
-        end_date = operation.operation_date + timedelta(days=1 if end_minutes <= start_minutes else 0)
-        due_at = timezone.make_aware(datetime.combine(end_date, operation.shift_type.end_time), current_timezone)
+        due_at = operation.scheduled_end_at
         deadline_at = due_at + timedelta(minutes=30)
         if timezone.now() <= deadline_at:
             return Response({"detail": f"Book Off is not missed yet. You can add a reason after {deadline_at.astimezone(current_timezone).strftime('%H:%M')}."}, status=status.HTTP_400_BAD_REQUEST)
@@ -2439,7 +2606,7 @@ class DailyOperationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="mark-reached")
     @transaction.atomic
     def mark_reached(self, request, pk=None):
-        operation = self.get_queryset().select_for_update(of=("self",)).get(pk=self.get_object().pk)
+        operation = get_object_or_404(self.get_queryset().select_for_update(of=("self",)), pk=self.get_object().pk)
         if operation.attendance_events.filter(event_type="BOOK_OFF").exists():
             return Response({"detail": "This shift is completed. Its attendance timestamps are locked."}, status=status.HTTP_400_BAD_REQUEST)
         if not operation.employee_id:

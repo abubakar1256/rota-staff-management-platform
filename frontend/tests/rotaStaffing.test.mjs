@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { siteWeekStaffing } from "../src/rotaStaffing.js";
+import { siteWeekStaffing, staffedPositions } from "../src/rotaStaffing.js";
 
 const site = { id: 1, required_guards: 1, is_active: true };
 const shifts = [{ id: 1 }, { id: 2 }];
@@ -35,4 +35,13 @@ test("a selected daily count remains distinct from a whole week and uses the act
   const wednesday = siteWeekStaffing({ site, shifts, days: [days[2]], assignments: [], requirements });
   assert.equal(wholeWeek.unfilled, 17);
   assert.equal(wednesday.unfilled, 5);
+});
+
+test("overnight split cover contributes one position only when both segments cover it", () => {
+  const split_cover = { group: "night", start: "19:00", end: "07:00" };
+  const first = { employee: 1, scheduled_start: "19:00", scheduled_end: "23:00", split_cover };
+  const second = { employee: 2, scheduled_start: "23:00", scheduled_end: "07:00", split_cover };
+  assert.equal(staffedPositions([first]), 0);
+  assert.equal(staffedPositions([first, second]), 1);
+  assert.equal(staffedPositions([first, second, { employee: 3 }]), 2);
 });

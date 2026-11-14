@@ -12,6 +12,14 @@ def shift_interval(day, start, end):
     return start_at, end_at + timedelta(days=end <= start)
 
 
+def assignment_interval(assignment):
+    return shift_interval(
+        assignment.work_date,
+        assignment.scheduled_start or assignment.shift_type.start_time,
+        assignment.scheduled_end or assignment.shift_type.end_time,
+    )
+
+
 class RotaAssignmentChecks:
     """Load the eligibility data once for a preview or batch of shifts."""
 

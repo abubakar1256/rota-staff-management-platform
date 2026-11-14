@@ -40,6 +40,15 @@
 .rota-site-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #50617a; font-size: 13px; }
 .rota-site-summary strong { color: #24334f; }
 .rota-share-link { text-decoration: none; }
+.rota-cover-queue h4 { margin: 6px 0 0; color: #24334f; }
+.rota-replacement-options { min-width: 0; display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
+.rota-replacement-options legend { margin-bottom: 8px; font-weight: 650; }
+.rota-replacement-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; border: 1px solid #dce5f4; border-radius: 10px; background: #f8faff; padding: 12px; cursor: pointer; }
+.rota-replacement-option:has(input:checked) { border-color: #597cdc; background: #edf2ff; }
+.rota-replacement-option input { margin-top: 4px; accent-color: #496fd1; }
+.rota-replacement-details, .rota-replacement-change { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.rota-replacement-change { padding-top: 6px; border-top: 1px solid #dce5f4; font-size: 13px; color: #354865; }
+.rota-replacement-change small { color: #50617a; }
 @media (max-width: 550px) {
   .rota-planning-dialog .form-grid { grid-template-columns: minmax(0, 1fr); }
   .rota-cover-queue .rota-planning-row { flex-wrap: wrap; }

@@ -1,5 +1,5 @@
 """Current operational exceptions; each shift/slot generates one office alert."""
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from django.utils import timezone
 
@@ -17,9 +17,8 @@ def refresh_operational_alerts(now=None, employee_user=None):
     created = 0
     for operation in operations:
         start = operation.scheduled_start_at
-        end_day = operation.operation_date + timedelta(days=int(operation.shift_type.end_time <= operation.shift_type.start_time))
-        end = timezone.make_aware(datetime.combine(end_day, operation.shift_type.end_time))
-        if end_day < today:
+        end = operation.scheduled_end_at
+        if end.date() < today:
             continue
         context = {"operation_id": operation.pk}
 

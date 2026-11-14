@@ -1,6 +1,6 @@
 """Duty-only location evidence. Missing evidence never proves a guard disabled GPS."""
 import math
-from datetime import datetime, timedelta, timezone as datetime_timezone
+from datetime import timedelta, timezone as datetime_timezone
 
 from django.conf import settings
 from django.db import transaction
@@ -18,8 +18,7 @@ STATUS_LABELS = {"UPDATED": "Updated", "PERMISSION_DENIED": "Permission denied",
 
 
 def operation_end(operation):
-    day = operation.operation_date + timedelta(days=int(operation.shift_type.end_time <= operation.shift_type.start_time))
-    return timezone.make_aware(datetime.combine(day, operation.shift_type.end_time))
+    return operation.scheduled_end_at
 
 
 def live_operations(now=None, *, tracking_only=True):

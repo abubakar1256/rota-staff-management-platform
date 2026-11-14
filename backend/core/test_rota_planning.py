@@ -2,9 +2,10 @@ from datetime import date, time, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from .models import Employee, GuardUnavailability, LeaveRecord, RotaAssignment, RotaWeek, ShiftType, Site, SiteInduction, UserProfile
+from .models import DailyOperation, Employee, GuardUnavailability, LeaveRecord, Notification, RotaAssignment, RotaConfirmation, RotaWeek, ShiftType, Site, SiteInduction, SiteShiftRequirement, UserProfile
 
 
 class RotaPlanningTests(APITestCase):
@@ -25,6 +26,7 @@ class RotaPlanningTests(APITestCase):
                     status=SiteInduction.Status.COMPLETED, created_by=self.admin)
         for path in (
             "core.rota_planning.employee_compliance_issues", "core.views.employee_compliance_issues",
+            "core.rota_replacement.employee_compliance_issues",
             "core.serializers.employee_compliance_issues", "core.views.generate_daily_arrival_reports",
         ):
             mock = patch(path, return_value=[])
@@ -138,6 +140,158 @@ class RotaPlanningTests(APITestCase):
         self.assertIn(self.other_site.name, rows[overlap.pk])
         self.assertEqual(rows[self.cover.pk], "")
         self.assertEqual(RotaAssignment.objects.count(), 1)
+
+    def future_week(self):
+        today = timezone.localdate()
+        self.monday = today + timedelta(days=7 - today.weekday())
+        self.week.week_start = self.monday
+        self.week.save(update_fields=["week_start"])
+
+    def extra_guard(self, name, *sites):
+        guard = Employee.objects.create(employee_id=name.upper(), name=name,
+                                        user=get_user_model().objects.create_user(username=name.lower()))
+        for site in sites:
+            SiteInduction.objects.create(site=site, employee=guard, induction_date=self.monday,
+                status=SiteInduction.Status.COMPLETED, created_by=self.admin)
+        return guard
+
+    def test_replacement_preserves_published_rota_and_only_resets_affected_confirmations(self):
+        self.future_week()
+        leaving = self.extra_guard("Leaving", self.site)
+        untouched = self.extra_guard("Untouched", self.site)
+        self.cover.user = get_user_model().objects.create_user(username="cover")
+        self.cover.save(update_fields=["user"])
+        target = self.add_shift(leaving, self.monday)
+        self.add_shift(untouched, self.monday + timedelta(days=1))
+        self.week.status = RotaWeek.Status.PUBLISHED
+        self.week.save(update_fields=["status"])
+        for guard in (leaving, untouched):
+            RotaConfirmation.objects.create(rota_week=self.week, employee=guard, status="CONFIRMED")
+        DailyOperation.objects.create(operation_date=self.monday, site=self.site, shift_type=self.day,
+                                      employee=leaving, created_by=self.admin)
+        leave = LeaveRecord.objects.create(employee=leaving, start_date=self.monday, end_date=self.monday,
+                                           status=LeaveRecord.Status.APPROVED, created_by=self.admin)
+        queue = self.client.get(f"/api/rota-weeks/{self.week.pk}/leave_cover/")
+        self.assertEqual([row["id"] for row in queue.data], [target.pk])
+        preview = self.post("find_replacement", assignment=target.pk)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        plan = next(row for row in preview.data["options"] if row["kind"] == "direct" and row["rows"][0]["guard_id"] == self.cover.pk)
+        target.refresh_from_db()
+        self.assertEqual(target.employee, leaving)
+        saved = self.post("find_replacement", assignment=target.pk, plan=plan["id"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.week.refresh_from_db()
+        target.refresh_from_db()
+        leave.refresh_from_db()
+        self.assertEqual(self.week.status, RotaWeek.Status.PUBLISHED)
+        self.assertEqual(leave.status, LeaveRecord.Status.APPROVED)
+        self.assertEqual(target.employee, self.cover)
+        self.assertEqual(self.week.confirmations.get(employee=untouched).status, "CONFIRMED")
+        self.assertEqual(self.week.confirmations.get(employee=self.cover).status, "PENDING")
+        self.assertFalse(self.week.confirmations.filter(employee=leaving).exists())
+        self.assertEqual(set(Notification.objects.values_list("user_id", flat=True)), {leaving.user_id, self.cover.user_id})
+        self.assertFalse(DailyOperation.objects.filter(employee=leaving).exists())
+        self.assertTrue(DailyOperation.objects.filter(employee=self.cover, site=self.site).exists())
+        self.assertEqual(self.post("find_replacement", assignment=target.pk, plan=plan["id"]).status_code, 409)
+
+    def test_guard_cannot_confirm_an_outdated_view_of_a_replaced_rota(self):
+        self.future_week()
+        leaving = self.extra_guard("Leaving", self.site)
+        UserProfile.objects.create(user=leaving.user, role=UserProfile.Role.EMPLOYEE)
+        target = self.add_shift(leaving, self.monday)
+        self.add_shift(leaving, self.monday + timedelta(days=1))
+        self.week.status = RotaWeek.Status.PUBLISHED
+        self.week.save(update_fields=["status"])
+        self.client.force_authenticate(leaving.user)
+        old = self.client.get(f"/api/rota-weeks/my/?week_start={self.monday}").data[0]["schedule_version"]
+        self.client.force_authenticate(self.admin)
+        preview = self.post("find_replacement", assignment=target.pk)
+        plan = preview.data["options"][0]
+        self.assertEqual(self.post("find_replacement", assignment=target.pk, plan=plan["id"]).status_code, 200)
+        self.client.force_authenticate(leaving.user)
+        self.assertEqual(self.post("confirm", schedule_version=old).status_code, 409)
+        current = self.client.get(f"/api/rota-weeks/my/?week_start={self.monday}").data[0]["schedule_version"]
+        self.assertEqual(self.post("confirm", schedule_version=current).status_code, 200)
+
+    def test_replacement_moves_a_guard_only_when_their_old_shift_is_covered(self):
+        self.future_week()
+        third = self.extra_guard("Third", self.other_site)
+        target = self.add_shift(self.guard, self.monday)
+        other = self.add_shift(self.cover, self.monday, site=self.other_site)
+        preview = self.post("find_replacement", assignment=target.pk)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        [plan] = [row for row in preview.data["options"] if row["kind"] == "move"]
+        self.assertEqual([row["guard_id"] for row in plan["rows"]], [self.cover.pk, third.pk])
+        blocker = GuardUnavailability.objects.create(employee=third, work_date=self.monday)
+        self.assertEqual(self.post("find_replacement", assignment=target.pk, plan=plan["id"]).status_code, 409)
+        target.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((target.employee_id, other.employee_id), (self.guard.pk, self.cover.pk))
+        blocker.delete()
+        saved = self.post("find_replacement", assignment=target.pk, plan=plan["id"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        target.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual((target.employee_id, other.employee_id), (self.cover.pk, third.pk))
+
+    def test_split_cover_counts_once_and_uses_segment_times_for_attendance(self):
+        self.future_week()
+        third = self.extra_guard("Third", self.site, self.other_site)
+        morning = ShiftType.objects.create(name="Planner Morning", start_time=time(7), end_time=time(13))
+        evening = ShiftType.objects.create(name="Planner Evening", start_time=time(13), end_time=time(19))
+        self.add_shift(self.cover, self.monday, site=self.other_site, shift=evening)
+        self.add_shift(third, self.monday, site=self.other_site, shift=morning)
+        target = self.add_shift(self.guard, self.monday)
+        SiteShiftRequirement.objects.create(site=self.site, shift_type=self.day, weekday=0, required_guards=2)
+        preview = self.post("find_replacement", assignment=target.pk)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        [plan] = [row for row in preview.data["options"] if row["kind"] == "split"]
+        saved = self.post("find_replacement", assignment=target.pk, plan=plan["id"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        slots = self.client.get(f"/api/rota-weeks/{self.week.pk}/coverage/?date={self.monday}").data["slots"]
+        slot = next(row for row in slots if row["site"] == self.site.pk and row["shift_type"] == self.day.pk)
+        self.assertEqual((slot["assigned"], slot["unfilled"]), (1, 1))
+        operations = DailyOperation.objects.filter(site=self.site, shift_type=self.day, employee__isnull=False).order_by("scheduled_start")
+        self.assertEqual([(row.start_time, row.end_time) for row in operations],
+                         [(time(7), time(13)), (time(13), time(19))])
+
+    def test_replacement_checks_attendance_evidence_and_blocks_unauthorized_users(self):
+        self.future_week()
+        target = self.add_shift(self.guard, self.monday)
+        DailyOperation.objects.create(operation_date=self.monday, site=self.site, shift_type=self.day,
+                                      employee=self.guard, reached_at=timezone.now(), created_by=self.admin)
+        result = self.post("find_replacement", assignment=target.pk)
+        self.assertEqual(result.data["options"], [])
+        self.assertIn("attendance evidence", result.data["detail"])
+        manager = get_user_model().objects.create_user(username="replacement-manager")
+        UserProfile.objects.create(user=manager, role=UserProfile.Role.MANAGER)
+        self.client.force_authenticate(manager)
+        self.assertEqual(self.post("find_replacement", assignment=target.pk).status_code, 403)
+
+    def test_open_position_can_be_filled_without_replacing_office_notes(self):
+        self.future_week()
+        note = DailyOperation.objects.create(operation_date=self.monday, site=self.site, shift_type=self.day,
+                                            notes="Contact site office", created_by=self.admin)
+        slot = {"site": self.site.pk, "shift_type": self.day.pk, "work_date": str(self.monday)}
+        preview = self.post("find_replacement", slot=slot)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        plan = preview.data["options"][0]
+        saved = self.post("find_replacement", slot=slot, plan=plan["id"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(self.week.assignments.count(), 1)
+        note.refresh_from_db()
+        self.assertEqual(note.notes, "Contact site office")
+        self.assertEqual(self.post("find_replacement", slot=slot, plan=plan["id"]).status_code, 409)
+
+    def test_overnight_leave_queue_covers_next_day_and_excludes_guards_with_pending_leave(self):
+        self.future_week()
+        target = self.add_shift(self.guard, self.monday, shift=self.night)
+        for employee in (self.guard, self.cover):
+            LeaveRecord.objects.create(employee=employee, start_date=self.monday + timedelta(days=1),
+                                       end_date=self.monday + timedelta(days=1), created_by=self.admin)
+        queue = self.client.get(f"/api/rota-weeks/{self.week.pk}/leave_cover/")
+        self.assertEqual([(row["id"], row["leave_status"]) for row in queue.data], [(target.pk, "PENDING")])
+        self.assertEqual(self.post("find_replacement", assignment=target.pk).data["options"], [])
 
     def test_manager_can_copy_only_managed_sites(self):
         manager = get_user_model().objects.create_user(username="planner-manager")

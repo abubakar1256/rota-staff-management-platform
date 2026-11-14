@@ -434,6 +434,7 @@ class RotaAssignment(models.Model):
     shift_type = models.ForeignKey(ShiftType, on_delete=models.PROTECT, related_name="assignments")
     scheduled_start = models.TimeField(null=True, blank=True)
     scheduled_end = models.TimeField(null=True, blank=True)
+    split_cover = models.JSONField(null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="rota_assignments", null=True, blank=True)
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="rota_assignments")
     notes = models.CharField(max_length=250, blank=True)
@@ -709,6 +710,9 @@ class DailyOperation(models.Model):
     operation_date = models.DateField()
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="daily_operations")
     shift_type = models.ForeignKey(ShiftType, on_delete=models.PROTECT, related_name="daily_operations")
+    scheduled_start = models.TimeField(null=True, blank=True)
+    scheduled_end = models.TimeField(null=True, blank=True)
+    split_cover = models.JSONField(null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="daily_operations", null=True, blank=True)
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.UNCONFIRMED)
     notes = models.TextField(blank=True)
@@ -726,18 +730,33 @@ class DailyOperation(models.Model):
         return f"{self.operation_date} - {self.site.name} - {self.shift_type.name}"
 
     @property
+    def start_time(self):
+        return self.scheduled_start or self.shift_type.start_time
+
+    @property
+    def end_time(self):
+        return self.scheduled_end or self.shift_type.end_time
+
+    @property
     def scheduled_start_at(self):
         from datetime import datetime
         from django.utils import timezone
-        return timezone.make_aware(datetime.combine(self.operation_date, self.shift_type.start_time), timezone.get_current_timezone())
+        return timezone.make_aware(datetime.combine(self.operation_date, self.start_time))
+
+    @property
+    def scheduled_end_at(self):
+        from datetime import datetime, timedelta
+        from django.utils import timezone
+        day = self.operation_date + timedelta(days=self.end_time <= self.start_time)
+        return timezone.make_aware(datetime.combine(day, self.end_time))
 
     @property
     def expected_hourly_checkins(self):
         from math import ceil
         if not self.site.hourly_pictures_required:
             return 0
-        start = self.shift_type.start_time.hour * 60 + self.shift_type.start_time.minute
-        end = self.shift_type.end_time.hour * 60 + self.shift_type.end_time.minute
+        start = self.start_time.hour * 60 + self.start_time.minute
+        end = self.end_time.hour * 60 + self.end_time.minute
         duration = end - start if end > start else end + 24 * 60 - start
         return max(0, ceil(duration / 60) - 1)
 

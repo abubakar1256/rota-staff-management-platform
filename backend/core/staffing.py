@@ -1,8 +1,34 @@
 """Staffing capacity is calculated per site/shift, never from stored empty rows."""
-from collections import Counter
-from datetime import timedelta
+from collections import defaultdict
+from datetime import time, timedelta
 
 from .models import SiteShiftRequirement
+from .rota_checks import shift_interval
+
+
+def staffed_positions(rows):
+    count = 0
+    groups = defaultdict(list)
+    for row in rows:
+        if not row.employee_id:
+            continue
+        if not row.split_cover:
+            count += 1
+            continue
+        groups[row.split_cover["group"]].append(row)
+    for parts in groups.values():
+        first = parts[0]
+        day = getattr(first, "work_date", None) or first.operation_date
+        start, end = shift_interval(day, time.fromisoformat(first.split_cover["start"]),
+                                    time.fromisoformat(first.split_cover["end"]))
+        intervals = sorted(shift_interval(getattr(part, "work_date", None) or part.operation_date,
+                                          part.scheduled_start, part.scheduled_end) for part in parts)
+        for part_start, part_end in intervals:
+            if part_start > start:
+                break
+            start = max(start, part_end)
+        count += start >= end
+    return count
 
 
 def day_requirements(sites, shifts, selected_date):
@@ -13,8 +39,10 @@ def day_requirements(sites, shifts, selected_date):
 
 
 def unfilled_count(requirements, assignments):
-    assigned = Counter((item.site_id, item.shift_type_id) for item in assignments if item.employee_id)
-    return sum(max(required - assigned[slot], 0) for slot, required in requirements.items())
+    assigned = defaultdict(list)
+    for item in assignments:
+        assigned[item.site_id, item.shift_type_id].append(item)
+    return sum(max(required - staffed_positions(assigned[slot]), 0) for slot, required in requirements.items())
 
 
 def attendance_summary_rows(operations, sites, shifts, selected_date, serialize):
@@ -25,7 +53,9 @@ def attendance_summary_rows(operations, sites, shifts, selected_date, serialize)
     """
     operations = list(operations)
     requirements = day_requirements(sites, shifts, selected_date)
-    assigned = Counter((item.site_id, item.shift_type_id) for item in operations if item.employee_id)
+    assigned = defaultdict(list)
+    for item in operations:
+        assigned[item.site_id, item.shift_type_id].append(item)
     rows = [serialize(item) for item in operations if item.employee_id]
     empty = {}
     for item in operations:
@@ -34,7 +64,7 @@ def attendance_summary_rows(operations, sites, shifts, selected_date, serialize)
     for site in sites:
         for shift in shifts:
             slot = (site.pk, shift.pk)
-            missing = max(requirements[slot] - assigned[slot], 0)
+            missing = max(requirements[slot] - staffed_positions(assigned[slot]), 0)
             existing = empty.get(slot, [])
             for index in range(missing):
                 if index < len(existing):
@@ -54,14 +84,16 @@ def range_unfilled_positions(operations, sites, shifts, start_date, end_date):
     """Group vacancies by date/site/shift without treating them as guard arrivals."""
     overrides = {(item.site_id, item.shift_type_id, item.weekday): item.required_guards
         for item in SiteShiftRequirement.objects.filter(site__in=sites)}
-    assigned = Counter((item.operation_date, item.site_id, item.shift_type_id) for item in operations if item.employee_id)
+    assigned = defaultdict(list)
+    for item in operations:
+        assigned[item.operation_date, item.site_id, item.shift_type_id].append(item)
     rows = []
     current = start_date
     while current <= end_date:
         for site in sites:
             for shift in shifts:
                 required = overrides.get((site.pk, shift.pk, current.weekday()), site.required_guards)
-                missing = max(required - assigned[(current, site.pk, shift.pk)], 0)
+                missing = max(required - staffed_positions(assigned[current, site.pk, shift.pk]), 0)
                 if missing:
                     rows.append({"id": f"unfilled-{current}-{site.pk}-{shift.pk}", "date": current,
                         "site": site.pk, "site_name": site.name, "shift_name": shift.name,

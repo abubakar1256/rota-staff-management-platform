@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import timedelta
 import hashlib
 import json
@@ -8,6 +8,7 @@ from rest_framework import serializers
 from .models import RotaAssignment, SiteShiftRequirement
 from .rota_checks import RotaAssignmentChecks
 from .serializers import employee_compliance_issues
+from .staffing import staffed_positions
 
 
 class CopyWeekInput(serializers.Serializer):
@@ -58,9 +59,10 @@ def plan_multi_day(week, data, employee, site, shift):
     if data["cover_only"]:
         required = dict(SiteShiftRequirement.objects.filter(site=site, shift_type=shift)
                         .values_list("weekday", "required_guards"))
-        assigned = Counter(week.assignments.filter(site=site, shift_type=shift, work_date__in=days,
-                                                   employee__isnull=False).values_list("work_date", flat=True))
-        coverage = {day: required.get(day.weekday(), site.required_guards) - assigned[day] for day in days}
+        assigned = defaultdict(list)
+        for row in week.assignments.filter(site=site, shift_type=shift, work_date__in=days, employee__isnull=False):
+            assigned[row.work_date].append(row)
+        coverage = {day: required.get(day.weekday(), site.required_guards) - staffed_positions(assigned[day]) for day in days}
     rows, ready = [], []
     for day in days:
         assignment = RotaAssignment(
@@ -95,9 +97,13 @@ def plan_week_copy(source_assignments, target):
             site_id__in=site_ids,
         ).values_list("site_id", "shift_type_id", "weekday", "required_guards")
     }
-    existing = set(target.assignments.filter(site_id__in=site_ids, employee__isnull=False)
-                   .values_list("work_date", "site_id", "shift_type_id", "employee_id")) if target.pk else set()
-    assigned = Counter((day, site, shift) for day, site, shift, _ in existing)
+    existing, filled = set(), defaultdict(list)
+    if target.pk:
+        for row in target.assignments.filter(site_id__in=site_ids, employee__isnull=False):
+            slot = (row.work_date, row.site_id, row.shift_type_id)
+            existing.add((*slot, row.employee_id))
+            filled[slot].append(row)
+    assigned = Counter({slot: staffed_positions(rows) for slot, rows in filled.items()})
     rows, ready = [], []
     for source in source_assignments:
         day, site, shift = source.work_date + offset, source.site, source.shift_type
@@ -110,6 +116,8 @@ def plan_week_copy(source_assignments, target):
         state, reason = "skipped", ""
         if not site.is_active or not shift.is_active:
             reason = "The site or shift is inactive."
+        elif source.split_cover:
+            reason = "Split cover is specific to the source week. Choose cover for the new week."
         elif not source.employee_id:
             reason = "Unassigned in the source week. Check Needs cover for open positions."
         elif (*slot, source.employee_id) in existing:

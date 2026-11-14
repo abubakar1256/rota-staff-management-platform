@@ -143,27 +143,137 @@ function Pages({ page, count, onChange }) {
   </nav>;
 }
 
-export function NeedsCover({ gaps, onSelect, published }) {
+export function NeedsCover({ gaps, leaveShifts = [], leaveStatus, onSelect, published, canReplace }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const term = search.trim().toLowerCase();
   const matching = gaps.filter(({ site, shift, day }) =>
-    `${site.name} ${site.site_id} ${shift.name} ${dateLabel(day)}`.toLowerCase().includes(search.trim().toLowerCase()),
+    `${site.name} ${site.site_id} ${shift.name} ${dateLabel(day)}`.toLowerCase().includes(term),
+  );
+  const leaveMatching = leaveShifts.filter((row) =>
+    `${row.employee_name} ${row.site_name} ${row.shift_name} ${dateLabel(row.work_date)}`.toLowerCase().includes(term),
   );
   const current = Math.min(page, Math.max(0, Math.ceil(matching.length / pageSize) - 1));
   return <section className="rota-cover-queue" aria-label="Needs cover">
-    <label className="search-box"><Search size={16} aria-hidden="true" /><input aria-label="Filter cover needed" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search site, day or shift" /></label>
+    <label className="search-box"><Search size={16} aria-hidden="true" /><input aria-label="Filter cover needed" value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search guard, site, day or shift" /></label>
+    {canReplace && <div className="rota-planning-rows">
+      <h4>Leave cover</h4>
+      {leaveStatus}
+      {leaveMatching.map((row) => <article className="rota-planning-row" key={row.id}>
+        <div><strong>{row.employee_name}</strong><span>{dateLabel(row.work_date)} · {row.site_name} · {row.shift_name}</span></div>
+        <div className="rota-planning-actions"><span className={`status-pill ${row.leave_status === "APPROVED" ? "active" : "pending"}`}>
+          {row.leave_status === "APPROVED" ? "Leave approved" : "Leave pending"}
+        </span><button type="button" className="secondary-button" onClick={() => onSelect({ assignment: row.id })}>Find replacement</button></div>
+      </article>)}
+      {!leaveStatus && !leaveMatching.length && <p className="muted">{leaveShifts.length ? "No leave shifts match your search." : "No shifts affected by leave this week."}</p>}
+    </div>}
     <div className="rota-planning-rows">
+      {canReplace && <h4>Open positions</h4>}
       {matching.slice(current * pageSize, (current + 1) * pageSize).map((slot) =>
         <article className="rota-planning-row" key={`${slot.site.id}-${slot.day}-${slot.shift.id}`}>
           <div><strong>{slot.site.name}</strong><span>{dateLabel(slot.day)} · {slot.shift.name} · {time(slot.shift.start_time)}–{time(slot.shift.end_time)}</span></div>
           <div className="rota-planning-actions"><span className="status-pill pending">{slot.unfilled} needed</span>
-            <button type="button" className="secondary-button" onClick={() => onSelect(slot)}>{published ? "View shift" : "Find cover"}</button></div>
+            <button type="button" className="secondary-button" onClick={() => onSelect(slot)}>{canReplace ? "Find replacement" : published ? "View shift" : "Find cover"}</button></div>
         </article>,
       )}
       {!matching.length && <p className="muted">{gaps.length ? "No gaps match your search." : "All required shifts are covered."}</p>}
     </div>
     <Pages page={current} count={matching.length} onChange={setPage} />
   </section>;
+}
+
+const replacementNames = { direct: "Direct cover", move: "Shift move + cover", split: "Split cover" };
+
+function replacementTime(value) {
+  return value.slice(11, 16);
+}
+
+export function FindReplacementDialog({ api, rota, target, onClose, onSaved }) {
+  const [chosen, setChosen] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(0);
+  const [filter, setFilter] = useState("all");
+  const path = `/rota-weeks/${rota.id}/find_replacement/`;
+  const options = useQuery({
+    queryKey: ["rota", "replacement", rota.id, target],
+    refetchOnMount: "always",
+    retry: false,
+    queryFn: ({ signal }) => api(path, {
+      method: "POST", signal, silentLoading: true, silentError: true, silentToast: true,
+      skipInvalidation: true, body: JSON.stringify(target),
+    }),
+  });
+  const plans = options.data?.options || [];
+  const visible = plans.filter((plan) => filter === "all" || plan.kind === filter);
+  const current = Math.min(page, Math.max(0, Math.ceil(visible.length / pageSize) - 1));
+  const selected = plans.find((plan) => plan.id === chosen);
+
+  async function save(event) {
+    event.preventDefault();
+    if (!selected || busy || options.isFetching || options.isError) return;
+    setError("");
+    setBusy(true);
+    try {
+      const result = await api(path, {
+        method: "POST", silentError: true, silentToast: true,
+        body: JSON.stringify({ ...target, plan: selected.id }),
+      });
+      await onSaved(result);
+    } catch (err) {
+      setError(err.message);
+      setChosen("");
+      await options.refetch();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <PlanningDialog title="Find replacement" onClose={onClose} busy={busy}>
+    <form className="rota-planning-form" onSubmit={save}>
+      {rota.status === "PUBLISHED" && <p className="muted">Saving updates the published rota and notifies the affected guards.</p>}
+      {options.isFetching && <p role="status" className="muted">Checking cover options…</p>}
+      {options.isError && <div className="rota-planning-actions" role="alert">
+        <p className="error">{options.error.message}</p>
+        <button type="button" className="secondary-button" onClick={() => options.refetch()}>Try again</button>
+      </div>}
+      {options.isSuccess && !options.isFetching && !plans.length &&
+        <p role="status" className="muted">{options.data.detail || "No eligible cover could be found for this shift."}</p>}
+      {!!plans.length && <div className="rota-planning-filters" aria-label="Cover plan types">
+        {[["all", "All options"], ...Object.entries(replacementNames)].map(([kind, label]) => (
+          <button type="button" key={kind} className="secondary-button" aria-pressed={filter === kind}
+            onClick={() => { setFilter(kind); setPage(0); setChosen(""); }}>{label}</button>
+        ))}
+      </div>}
+      {!!plans.length && !visible.length && <p className="muted">No {replacementNames[filter].toLowerCase()} options for this shift.</p>}
+      {!!visible.length && <fieldset className="rota-replacement-options" disabled={busy || options.isFetching}>
+        <legend>Choose a cover plan</legend>
+        {visible.slice(current * pageSize, (current + 1) * pageSize).map((plan) => (
+          <label key={plan.id} className="rota-replacement-option">
+            <input type="radio" name="replacement" checked={chosen === plan.id} onChange={() => setChosen(plan.id)} />
+            <span className="rota-replacement-details">
+              <strong>{replacementNames[plan.kind]}</strong>
+              {plan.rows.map((row) => <span className="rota-replacement-change" key={`${row.guard_id}-${row.start}`}>
+                <span><b>{row.guard}</b> <small>{row.guard_code}</small>
+                  {row.previous_guard && <small> covers {row.previous_guard}</small>}</span>
+                <span>{row.site} · {row.shift} · {dateLabel(row.start.slice(0, 10))} · {replacementTime(row.start)}–{replacementTime(row.end)}
+                  {row.start.slice(0, 10) !== row.end.slice(0, 10) && " next day"}</span>
+                <small>{row.weekly_hours}h this week{row.rest_minutes !== null && ` · Nearest shift gap ${Math.floor(row.rest_minutes / 60)}h ${row.rest_minutes % 60}m`}</small>
+              </span>)}
+            </span>
+          </label>
+        ))}
+      </fieldset>}
+      <Pages page={current} count={visible.length} onChange={(next) => { setPage(next); setChosen(""); }} />
+      {error && <p className="error" role="alert">{error}</p>}
+      <footer className="modal-actions">
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>Cancel</button>
+        <button type="submit" className="primary-button" disabled={!selected || busy || options.isFetching || options.isError}>
+          {busy ? "Saving…" : "Apply replacement"}
+        </button>
+      </footer>
+    </form>
+  </PlanningDialog>;
 }
 
 function PreviewRows({ result }) {

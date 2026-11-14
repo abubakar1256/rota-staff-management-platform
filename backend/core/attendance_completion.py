@@ -39,7 +39,7 @@ def complete_shift(operation, user):
     start, end = timezone.localtime(book_on.captured_at), timezone.localtime(book_off.captured_at)
     sheet, created = Timesheet.objects.get_or_create(operation=operation, defaults={
         "employee": operation.employee, "site": operation.site, "work_date": operation.operation_date,
-        "scheduled_start": operation.shift_type.start_time, "scheduled_end": operation.shift_type.end_time,
+        "scheduled_start": operation.start_time, "scheduled_end": operation.end_time,
         "actual_start": start.time().replace(tzinfo=None), "actual_end": end.time().replace(tzinfo=None),
         "actual_start_at": book_on.captured_at, "actual_end_at": book_off.captured_at,
         "review_flags": flags, "approved": False, "created_by": user,

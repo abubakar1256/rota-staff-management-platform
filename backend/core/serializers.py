@@ -1,5 +1,5 @@
 from copy import copy
-from datetime import datetime, timedelta
+from datetime import timedelta
 from math import isfinite
 import os
 from secrets import token_urlsafe
@@ -541,9 +541,9 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "rota_week", "work_date", "shift_type", "shift_name", "employee", "employee_name", "employee_code",
             "site", "site_name", "site_address", "site_latitude", "site_longitude", "scheduled_start", "scheduled_end",
-            "notes", "replaced_assignment", "created_at", "updated_at",
+            "notes", "replaced_assignment", "split_cover", "created_at", "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["split_cover", "created_at", "updated_at"]
 
     def validate(self, attrs):
         rota_week = attrs.get("rota_week", getattr(self.instance, "rota_week", None))
@@ -553,6 +553,13 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         site = attrs.get("site", getattr(self.instance, "site", None))
         scheduled_start = attrs.get("scheduled_start", getattr(self.instance, "scheduled_start", None)) or shift_type.start_time
         scheduled_end = attrs.get("scheduled_end", getattr(self.instance, "scheduled_end", None)) or shift_type.end_time
+
+        if self.instance and self.instance.split_cover:
+            if employee is None:
+                raise serializers.ValidationError("Use Find Replacement to assign another guard to this split cover segment.")
+            for field in ("rota_week", "work_date", "shift_type", "site", "scheduled_start", "scheduled_end"):
+                if field in attrs and attrs[field] != getattr(self.instance, field):
+                    raise serializers.ValidationError("A split cover segment must keep its original site and timing.")
 
         if rota_week and work_date:
             week_end = rota_week.week_start + __import__("datetime").timedelta(days=6)
@@ -922,8 +929,8 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     site_longitude = serializers.FloatField(source="site.longitude", read_only=True)
     site_geofence_radius_m = serializers.IntegerField(source="site.geofence_radius_m", read_only=True)
     shift_name = serializers.CharField(source="shift_type.name", read_only=True)
-    scheduled_start = serializers.TimeField(source="shift_type.start_time", read_only=True)
-    scheduled_end = serializers.TimeField(source="shift_type.end_time", read_only=True)
+    scheduled_start = serializers.TimeField(source="start_time", read_only=True)
+    scheduled_end = serializers.TimeField(source="end_time", read_only=True)
     reached_by_name = serializers.SerializerMethodField()
     delay_minutes = serializers.SerializerMethodField()
     arrival_status = serializers.SerializerMethodField()
@@ -984,11 +991,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
         return obj.expected_hourly_checkins
 
     def _book_off_window(self, obj):
-        current_timezone = timezone.get_current_timezone()
-        shift_start_minutes = obj.shift_type.start_time.hour * 60 + obj.shift_type.start_time.minute
-        shift_end_minutes = obj.shift_type.end_time.hour * 60 + obj.shift_type.end_time.minute
-        end_date = obj.operation_date + timedelta(days=1 if shift_end_minutes <= shift_start_minutes else 0)
-        due_at = timezone.make_aware(datetime.combine(end_date, obj.shift_type.end_time), current_timezone)
+        due_at = obj.scheduled_end_at
         return due_at, due_at + timedelta(minutes=30)
 
     def get_book_off_due_at(self, obj):
@@ -1016,8 +1019,7 @@ class DailyOperationSerializer(serializers.ModelSerializer):
     def get_hourly_checkins(self, obj):
         from .attendance_windows import HOURLY_PICTURE_WINDOW
         expected = self.get_expected_hourly_checkins(obj)
-        current_timezone = timezone.get_current_timezone()
-        shift_start = timezone.make_aware(datetime.combine(obj.operation_date, obj.shift_type.start_time), current_timezone)
+        shift_start = obj.scheduled_start_at
         events = {event.sequence: event for event in obj.attendance_events.all() if event.event_type == ShiftAttendanceEvent.EventType.HOURLY}
         notes = {note.sequence: note for note in obj.hourly_checkin_notes.all()}
         now = timezone.now()

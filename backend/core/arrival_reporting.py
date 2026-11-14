@@ -38,8 +38,8 @@ def arrival_report(operations, sites, shifts, start_date, end_date):
         rows.append({"id": operation.pk, "date": operation.operation_date,
             "employee": operation.employee_id, "employee_id": operation.employee.employee_id,
             "employee_name": operation.employee.name, "site": operation.site_id, "site_name": operation.site.name,
-            "shift_name": operation.shift_type.name, "scheduled_start": operation.shift_type.start_time,
-            "scheduled_end": operation.shift_type.end_time,
+            "shift_name": operation.shift_type.name, "scheduled_start": operation.start_time,
+            "scheduled_end": operation.end_time,
             "reached_at": operation.reached_at,
             "reached_by_name": operation.reached_by.get_full_name() or operation.reached_by.get_username() if operation.reached_by else None,
             "delay_minutes": delay, "status": operation.status, "arrival_status": status})
