@@ -897,42 +897,76 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
   padding: clamp(10px, 2vw, 22px);
 }
 .modal-card.employee-record-modal {
-  width: min(100%, 1120px);
+  width: min(100%, 960px);
   max-height: none;
   overflow: visible;
-  padding: clamp(12px, 2vw, 20px);
-  border-radius: 14px;
+  padding: 0;
+  border: 1px solid #dce5f1;
+  border-radius: 16px;
 }
-.employee-record-modal .modal-header { margin-bottom: 10px; }
-.employee-record-modal .modal-header h3 { margin-top: 3px; }
+.modal-card.employee-record-modal.is-editing { width: min(100%, 1100px); }
+.employee-record-modal .modal-header {
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid #dce5f1;
+  border-radius: 15px 15px 0 0;
+  background: #f5f8fe;
+}
+.employee-record-heading { display: flex; align-items: center; gap: 11px; }
+.employee-record-icon {
+  display: grid;
+  flex: 0 0 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 10px;
+  background: #e5edff;
+  color: #315bad;
+}
+.employee-record-modal .modal-header h3 { margin-top: 3px; color: #172944; font-size: 20px; }
 .employee-record-sections {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px 18px;
 }
-.employee-record-secondary { display: grid; min-width: 0; gap: 10px; }
 .employee-record-section {
   min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid #e2e9f4;
-  border-radius: 10px;
-  background: #fbfcff;
+  padding: 12px;
+  border: 1px solid #dce5f1;
+  border-radius: 11px;
+  background: #fcfdff;
 }
-.employee-record-section h4 { margin: 0 0 8px; font-size: 13px; color: #26344d; }
-.employee-record-access > .form-grid + .form-grid { margin-top: 8px; }
+.employee-record-section h4 { margin: 0 0 8px; font-size: 13px; color: #223654; }
+.employee-record-access { grid-column: 1 / -1; }
+.employee-record-access-grid { display: grid; gap: 10px; align-items: start; }
+.employee-record-access-grid:has(> fieldset) { grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.55fr); }
+.employee-record-access-grid > .form-grid { min-width: 0; }
+.employee-record-access-grid > .guard-pin-setting { grid-column: auto; }
 .employee-record-modal .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.employee-record-modal .form-grid label { align-content: start; min-width: 0; gap: 4px; }
-.employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) {
+.employee-record-modal :is(.form-grid, .guard-pin-setting) label { align-content: start; min-width: 0; gap: 4px; color: #465a77; }
+.employee-record-modal .guard-pin-setting label:not(.cortex-itime-toggle) { display: grid; font-size: 11px; font-weight: 700; }
+.employee-record-modal .cortex-itime-toggle { display: flex; align-items: flex-start; font-size: 11px; }
+.employee-record-modal .cortex-itime-toggle input { margin: 2px 0 0; accent-color: #4d76de; }
+.employee-record-modal :is(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 36px;
   padding: 6px 8px;
+  border: 1px solid #d3deed;
+  border-radius: 7px;
+  background: #fff;
+  color: #243650;
   font-size: 13px;
 }
+.employee-record-modal :is(input, select, textarea):focus-visible { outline: 2px solid #5279d5; outline-offset: 1px; }
+.employee-record-modal .form-grid input:disabled { background: #f0f4fa; color: #526680; }
 .employee-record-modal .form-grid textarea { resize: vertical; }
-.employee-record-modal .form-help { margin: 0; }
-.employee-record-modal :is(.guard-pin-setting, .checkbox-field) { gap: 5px; padding: 6px 8px; }
+.employee-record-modal .form-help { margin: 0; color: #566987; }
+.employee-record-modal :is(.guard-pin-setting, .checkbox-field) { gap: 5px; padding: 7px 9px; background: #f3f7ff; }
 .employee-record-modal .guard-pin-setting p { margin: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.employee-record-modal :is(.guard-pin-setting .muted, .checkbox-field small, .role-picker-heading small) { color: #586c89; }
 .employee-record-modal .cortex-itime-fields { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px; }
 .employee-record-modal .role-picker { gap: 7px; }
 .employee-record-modal .role-picker-heading { flex-direction: row; align-items: center; }
@@ -940,29 +974,46 @@ a.document-drive-badge:focus-visible { outline: 2px solid #4d76de; outline-offse
 .employee-record-modal .role-options .role-option { min-height: 36px; padding: 5px 7px; gap: 6px; overflow-wrap: anywhere; }
 .employee-record-modal .role-option-actions { opacity: 1; }
 .employee-record-modal .role-option-actions button { width: 20px; height: 22px; }
-.employee-record-modal .modal-actions { flex-direction: row; flex-wrap: wrap; margin-top: 10px; }
-.employee-record-modal .modal-actions button { width: auto; }
+.employee-record-modal > .error { margin: 0 18px 10px; }
+.employee-record-modal .modal-actions {
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 11px 18px;
+  border-top: 1px solid #dce5f1;
+  border-radius: 0 0 15px 15px;
+  background: #f8faff;
+}
+.employee-record-modal .modal-actions button { width: auto; min-height: 38px; }
+@media (min-width: 701px) { .employee-record-emergency { grid-column: 1 / -1; } }
 @media (min-width: 960px) {
-  .employee-record-sections { grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr) minmax(0, 1fr); }
+  .employee-record-modal.is-editing .employee-record-sections {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.05fr) minmax(0, 1fr);
+    grid-template-areas: "details roles emergency" "access access access";
+  }
+  .employee-record-modal.is-editing .employee-record-details { grid-area: details; }
+  .employee-record-modal.is-editing .employee-record-roles { grid-area: roles; }
+  .employee-record-modal.is-editing .employee-record-emergency { grid-area: emergency; }
+  .employee-record-modal.is-editing .employee-record-access { grid-area: access; }
+  .employee-record-modal.is-editing .employee-record-details .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (min-width: 960px) and (max-height: 780px) {
   .modal-backdrop.employee-record-backdrop { padding-block: 12px; }
-  .modal-card.employee-record-modal { padding-block: 12px; }
-  .employee-record-section { padding-block: 8px; }
-  .employee-record-modal .modal-header { margin-bottom: 8px; }
-  .employee-record-modal .form-grid { gap: 5px 8px; }
-  .employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) { min-height: 31px; padding-block: 4px; }
+  .employee-record-modal .modal-header, .employee-record-modal .modal-actions { padding-block: 7px; }
+  .employee-record-sections { gap: 8px; padding-block: 8px; }
+  .employee-record-section { padding-block: 9px; }
+  .employee-record-modal .form-grid { gap: 6px 8px; }
+  .employee-record-modal :is(input:not([type="checkbox"]), select, textarea) { min-height: 32px; padding-block: 4px; }
   .employee-record-modal .form-grid label { gap: 3px; }
   .employee-record-modal :is(.guard-pin-setting, .checkbox-field) { padding-block: 5px; }
   .employee-record-modal .guard-pin-setting p { font-size: 12px; }
 }
-@media (min-width: 701px) and (max-width: 959px) {
-  .employee-record-secondary { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
-}
 @media (max-width: 700px) {
-  .employee-record-sections { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .employee-record-modal .form-grid :is(input:not([type="checkbox"]), select, textarea) { font-size: 16px; }
+  .employee-record-sections, .employee-record-access-grid:has(> fieldset) { grid-template-columns: minmax(0, 1fr); }
+  .employee-record-modal .modal-header, .employee-record-modal .modal-actions, .employee-record-sections { padding-inline: 12px; }
+  .employee-record-modal :is(input:not([type="checkbox"]), select, textarea) { font-size: 16px; }
   .employee-record-modal .modal-actions button { flex: 1; }
 }
+@media (max-width: 380px) { .employee-record-modal .cortex-itime-fields { grid-template-columns: minmax(0, 1fr); } }
 .saved-report-actions button { white-space: nowrap; }
 @media (max-width: 680px) { .saved-report-row > .saved-report-actions { width: 100%; } .saved-report-actions button { flex: 1; } }

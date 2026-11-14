@@ -2421,22 +2421,25 @@ function EmployeeRecords({ canManagePins = false }) {
   const copyEmployeeInvite = async (employee) => { const url = employeeInviteUrl(employee); if (!url) return; try { await navigator.clipboard.writeText(url); notifyToast(`${employee.name} invite link copied.`); } catch { setInvite({ employee: employee.name, url }); setCopied(false); } };
   const copyInvite = async () => { if (!invite?.url) return; try { await navigator.clipboard.writeText(invite.url); setCopied(true); } catch { setCopied(false); } };
   return <><div className="page-heading"><div><p className="eyebrow">PEOPLE MANAGEMENT</p><h2>Employees</h2><p className="muted">Create a guard record, then control portal access. The Diligent form appears automatically after activation.</p></div><button className="primary-button" onClick={() => { setEditingId(null); setForm(empty); setError(""); setOpen(true); }}>Add employee</button></div>{error && <p className="error page-error">{error}</p>}<section className="panel"><div className="toolbar"><div className="search-box"><Search size={17} /><input placeholder="Search employees..." value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === "Enter" && load()} /></div><span className="muted">{items.length} records</span></div>{items.length ? <div className="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Position</th><th>Portal access</th><th>Compliance form</th><th>Status</th><th>Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td>{item.employee_id}</td><td><strong>{item.name}</strong><small className="table-subtext">{item.email || "Profile details pending"}</small></td><td>{formatEmployeeRoles(item)}</td><td>{item.portal_status === "ACTIVE" ? <span className="status-pill active">Active</span> : <button className="mini-button" onClick={() => createPortalAccount(item)}>{item.portal_status === "INVITE_PENDING" ? "Resend invite" : "Invite guard"}</button>}</td><td><span className="status-pill active">Available after login</span></td><td><span className={`status-pill ${String(item.status || "").toLowerCase()}`}>{item.status === "ON_HOLD" ? "On hold" : String(item.status || "").replace("_", " ")}</span></td><td><div className="row-actions"><button className="mini-button" onClick={() => { setEditingId(item.id); setForm(editForm(item)); setError(""); setOpen(true); }}><Pencil size={13} /> View / edit</button>{employeeInviteUrl(item) && <button className="mini-button" onClick={() => copyEmployeeInvite(item)}>Copy invite</button>}</div></td></tr>)}</tbody></table></div> : <div className="empty-state"><Users size={30} /><strong>No employees found</strong><span>Use Add employee to create a guard record.</span></div>}</section>{open && <div className="modal-backdrop employee-record-backdrop">
-    <form className="modal-card employee-record-modal" role="dialog" aria-modal="true" aria-labelledby="employee-record-title" onSubmit={save}>
+    <form className={`modal-card employee-record-modal${editingId ? " is-editing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="employee-record-title" onSubmit={save}>
       <header className="modal-header">
-        <div>
-          <p className="eyebrow">{editingId ? "EMPLOYEE RECORD" : "NEW RECORD"}</p>
-          <h3 id="employee-record-title">{editingId ? "View / edit employee" : "Add employee"}</h3>
+        <div className="employee-record-heading">
+          <span className="employee-record-icon" aria-hidden="true">{editingId ? <Users size={20} /> : <UserPlus size={20} />}</span>
+          <div>
+            <p className="eyebrow">{editingId ? "EMPLOYEE RECORD" : "NEW RECORD"}</p>
+            <h3 id="employee-record-title">{editingId ? "View / edit employee" : "Add employee"}</h3>
+          </div>
         </div>
         <button type="button" className="icon-button" aria-label="Close employee form" disabled={saving}
           onClick={() => setOpen(false)}><X size={19} /></button>
       </header>
       <div className="employee-record-sections">
-        <section className="employee-record-section" aria-labelledby="employee-details-title">
+        <section className="employee-record-section employee-record-details" aria-labelledby="employee-details-title">
           <h4 id="employee-details-title">Employee details</h4>
           <div className="form-grid">
-            <label>Full name (first name + surname)<input required value={form.name}
+            <label>Full name<input required value={form.name} autoComplete="name"
               onChange={(event) => updateField("name", event.target.value)} placeholder="First name Surname" /></label>
-            <label>Email (portal login)<input required={!editingId} type="email" value={form.email}
+            <label>Email (portal login)<input required={!editingId} type="email" value={form.email} autoComplete="email"
               onChange={(event) => updateField("email", event.target.value)} placeholder="guard@example.com" /></label>
             <label>Employee ID<input value={form.employee_id || "System will generate"} disabled /></label>
             <label>Status<select required value={form.status} onChange={(event) => updateField("status", event.target.value)}>
@@ -2451,42 +2454,40 @@ function EmployeeRecords({ canManagePins = false }) {
             </>}
           </div>
         </section>
+        <section className="employee-record-section employee-record-roles">
+          <RoleMultiSelect compact value={form.roles || employeeRoles(form)} customRoles={customRoles}
+            onAddCustomRole={addCustomRole} onEditCustomRole={editCustomRole} onDeleteCustomRole={deleteCustomRole}
+            onChange={(roles) => setForm((current) => ({ ...current, roles, position: roles[0] || "" }))} />
+        </section>
         <section className="employee-record-section employee-record-access" aria-labelledby="employee-access-title">
           <h4 id="employee-access-title">Portal access</h4>
-          <div className="form-grid">
-            <label className="full-width checkbox-field"><span className="checkbox-control">
-              <input type="checkbox" checked={Boolean(form.compliance_registration_enabled)}
-                onChange={(event) => updateField("compliance_registration_enabled", event.target.checked)} />
-              <span><strong>Enable compliance registration</strong>
-                <small>Show the external Compliance registration link in this guard's portal sidebar.</small></span>
-            </span></label>
-            {canManagePins && <>
-              <label className="full-width">WhatsApp number<input type="tel" value={form.whatsapp_number} maxLength={40}
+          <div className="employee-record-access-grid">
+            <div className="form-grid">
+              <label className="full-width checkbox-field"><span className="checkbox-control">
+                <input type="checkbox" checked={Boolean(form.compliance_registration_enabled)}
+                  onChange={(event) => updateField("compliance_registration_enabled", event.target.checked)} />
+                <span><strong>Enable compliance registration</strong>
+                  <small>Show the compliance link in the guard portal.</small></span>
+              </span></label>
+              {canManagePins && <label className="full-width">WhatsApp number<input type="tel" value={form.whatsapp_number} maxLength={40}
                 onChange={(event) => updateField("whatsapp_number", event.target.value)} placeholder="+44 7700 900123" />
                 <small className="form-help">Include the country code.</small>
-              </label>
+              </label>}
+            </div>
+            {canManagePins && <>
               <EmployeeTimeGateFields form={form} setForm={setForm} />
+              <EmployeeCortexITimeFields form={form} setForm={setForm} api={api} />
             </>}
           </div>
-          {canManagePins && <div className="form-grid">
-            <EmployeeCortexITimeFields form={form} setForm={setForm} api={api} />
-          </div>}
         </section>
-        <div className="employee-record-secondary">
-          <section className="employee-record-section employee-record-roles">
-            <RoleMultiSelect compact value={form.roles || employeeRoles(form)} customRoles={customRoles}
-              onAddCustomRole={addCustomRole} onEditCustomRole={editCustomRole} onDeleteCustomRole={deleteCustomRole}
-              onChange={(roles) => setForm((current) => ({ ...current, roles, position: roles[0] || "" }))} />
-          </section>
-          {editingId && <section className="employee-record-section employee-record-emergency" aria-labelledby="employee-emergency-title">
-            <h4 id="employee-emergency-title">Emergency contact</h4>
-            <div className="form-grid">
-              <label>Name<input value={form.emergency_contact_name} onChange={(event) => updateField("emergency_contact_name", event.target.value)} /></label>
-              <label>Phone<input type="tel" value={form.emergency_contact_phone} onChange={(event) => updateField("emergency_contact_phone", event.target.value)} /></label>
-              <label>Relationship<input value={form.emergency_contact_relationship} onChange={(event) => updateField("emergency_contact_relationship", event.target.value)} /></label>
-            </div>
-          </section>}
-        </div>
+        {editingId && <section className="employee-record-section employee-record-emergency" aria-labelledby="employee-emergency-title">
+          <h4 id="employee-emergency-title">Emergency contact</h4>
+          <div className="form-grid">
+            <label>Name<input value={form.emergency_contact_name} onChange={(event) => updateField("emergency_contact_name", event.target.value)} /></label>
+            <label>Phone<input type="tel" value={form.emergency_contact_phone} onChange={(event) => updateField("emergency_contact_phone", event.target.value)} /></label>
+            <label>Relationship<input value={form.emergency_contact_relationship} onChange={(event) => updateField("emergency_contact_relationship", event.target.value)} /></label>
+          </div>
+        </section>}
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       <footer className="modal-actions">
