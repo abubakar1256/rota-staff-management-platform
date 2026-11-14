@@ -40,6 +40,32 @@
 .rota-site-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; color: #50617a; font-size: 13px; }
 .rota-site-summary strong { color: #24334f; }
 .rota-share-link { text-decoration: none; }
+.rota-week-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 12px;
+  border: 1px solid #dce5f4;
+  border-radius: 12px;
+  background: #fff;
+}
+.rota-week-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; }
+.rota-week-shortcuts .rota-week-shortcut { display: grid; gap: 3px; min-width: 112px; min-height: 50px; text-align: left; }
+.rota-week-shortcut small { color: #536783; font-size: 11px; font-weight: 500; }
+.rota-week-shortcut[aria-pressed="true"], .rota-week-shortcut[data-selected="true"] { background: #edf2ff; border-color: #a8baf0; color: #244aa5; }
+.rota-week-navigation .week-picker { align-content: center; }
+.rota-history-week { width: 100%; color: #24334f; text-align: left; cursor: pointer; }
+.rota-history-week[aria-current="true"], .rota-history-week:hover { background: #edf2ff; border-color: #a8baf0; }
+@media (max-width: 580px) {
+  .rota-week-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .rota-week-shortcuts .rota-week-shortcut { min-width: 0; padding-inline: 10px; }
+  .rota-week-shortcuts .rota-week-shortcut:last-child { grid-column: 1 / -1; }
+  .rota-week-navigation .week-picker { width: 100%; }
+  .rota-week-navigation .week-picker input { width: 100%; }
+}
 .rota-cover-queue h4 { margin: 6px 0 0; color: #24334f; }
 .rota-replacement-options { min-width: 0; display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
 .rota-replacement-options legend { margin-bottom: 8px; font-weight: 650; }

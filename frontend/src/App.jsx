@@ -17,7 +17,7 @@ import ReachedReport from "./ReachedReport";
 import DailyOperationsPage from "./DailyOperationsPage";
 import { ControlPortal, ControlTeamAdmin } from "./ControlTeam";
 import { siteWeekSlots, staffedPositions } from "./rotaStaffing.js";
-import { BulkAssignmentDialog, FindReplacementDialog, NeedsCover, PublishRotaDialog, RotaBatchDialog } from "./RotaPlanning";
+import { BulkAssignmentDialog, FindReplacementDialog, NeedsCover, PublishRotaDialog, RotaBatchDialog, RotaWeekNavigation } from "./RotaPlanning";
 import { ukDate, formatUkAttendanceTime, formatUkDateTime } from "./ukTime.js";
 import { clearAuth, endAdminSession, getToken, isControlPortal, readAdminSession, storeLogin, syncAdminSession } from "./authSession";
 import { GuardScreening, AdminScreening } from "./SecurityScreening";
@@ -479,7 +479,10 @@ function formatDay(value, options = {}) {
 }
 
 function Rota({ target = {}, canShareWhatsApp = false }) {
-  const [weekStart, setWeekStart] = useState(toMonday(target.event_date || new Date().toISOString().slice(0, 10)));
+  const thisWeek = toMonday(ukDate());
+  const nextWeek = addDays(thisWeek, 7);
+  const [weekStart, setWeekStart] = useState(() => target.event_date ? toMonday(target.event_date) : thisWeek);
+  const weekRequest = useRef(0);
   const availability = useGuardAvailability(api, weekStart);
   const [rota, setRota] = useState(null);
   const [assignments, setAssignments] = useState([]);
@@ -519,17 +522,36 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   });
 
   const loadWeek = async () => {
+    const request = ++weekRequest.current;
     setLoading(true);
     setError("");
     try {
       const weeks = await api(`/rota-weeks/?week_start=${weekStart}`);
+      if (request !== weekRequest.current) return;
       const currentWeek = weeks[0] || await api("/rota-weeks/", { method: "POST", body: JSON.stringify({ week_start: weekStart }) });
+      if (request !== weekRequest.current) return;
       const summary = await api(`/rota-weeks/${currentWeek.id}/summary/`);
+      if (request !== weekRequest.current) return;
       setRota(summary.rota_week);
       setAssignments(summary.assignments);
-    } catch (err) { setError(err.message); } finally { setLoading(false); }
+    } catch (err) {
+      if (request === weekRequest.current) setError(err.message);
+    } finally {
+      if (request === weekRequest.current) setLoading(false);
+    }
   };
 
+  const selectWeek = (monday) => {
+    if (monday === weekStart) return;
+    weekRequest.current += 1;
+    setLoading(true);
+    setRota(null);
+    setAssignments([]);
+    setSelectedDate(monday);
+    setInductionForm((current) => ({ ...current, induction_date: monday }));
+    setNotice("");
+    setWeekStart(monday);
+  };
 
   useEffect(() => {
     api("/employees/?status=ACTIVE").then(setEmployees).catch(() => {});
@@ -559,7 +581,10 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     return () => { active = false; };
   }, [selectedRosterSite]);
 
-  useEffect(() => { setSelectedDate(weekStart); setBulkOpen(false); loadWeek(); }, [weekStart]);
+  useEffect(() => {
+    loadWeek();
+    return () => { weekRequest.current += 1; };
+  }, [weekStart]);
 
   const updateForm = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const selectRosterSite = (siteId) => {
@@ -770,7 +795,7 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   const batchSaved = async (result) => {
     const copied = batch.mode === "copy";
     setBatch(null);
-    if (copied) setWeekStart(result.week_start);
+    if (copied) selectWeek(result.week_start);
     else await loadWeek();
     const skipped = result.skipped ? ` ${result.skipped} skipped. Check Needs cover for open positions.` : "";
     setNotice(`${result.created} ${result.created === 1 ? "assignment" : "assignments"} ${copied ? "copied" : "saved"}.${skipped}`);
@@ -827,8 +852,12 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   })) : [];
 
   return <>
-    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><label className="week-picker">Week starting<input type="date" value={weekStart} onChange={(event) => setWeekStart(toMonday(event.target.value))} /></label><button className="secondary-button" onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || !assignments.length || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={openMultiDay}><CalendarDays size={14} /> Assign multiple days</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || saving} onClick={() => setBulkOpen(true)}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || !staffingReady} onClick={reviewPublish}>{rota?.status === "PUBLISHED" ? "Published" : "Review & publish"}</button></div></div>
+    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><button className="secondary-button" disabled={!rota || loading} onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || !assignments.length || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={openMultiDay}><CalendarDays size={14} /> Assign multiple days</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || saving} onClick={() => setBulkOpen(true)}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={loading || saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || !staffingReady} onClick={reviewPublish}>{rota?.status === "PUBLISHED" ? "Published" : "Review & publish"}</button></div></div>
+    <RotaWeekNavigation api={api} thisWeek={thisWeek} nextWeek={nextWeek} weekStart={weekStart}
+      disabled={saving || Boolean(bulkOpen || editingAssignment || batch || replacement || publishReview)}
+      onSelect={selectWeek} onPickDate={(date) => selectWeek(toMonday(date))} />
     {error && <p className="error page-error">{error}</p>}{shiftLoadError && <p className="error page-error">Shift list could not be loaded: {shiftLoadError}</p>}{!shiftLoadError && !shiftTypes.length && !loading && <p className="error page-error">No active shifts are configured. Ask an Admin to run the latest deployment/migrations.</p>}{notice && <p className="success page-success">{notice}</p>}
+    {rota?.week_start === weekStart && <>
     {availability.error && <p className="rota-availability-warning" role="status">Availability could not be loaded. The server checks availability when you save or publish.</p>}
     {availabilityConflicts.length > 0 && <div className="rota-availability-warning" role="status">
       <strong>Guard availability conflicts</strong>
@@ -905,6 +934,7 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
       initial={batch.initial} onClose={() => setBatch(null)} onSaved={batchSaved} />}
     {publishReview && <PublishRotaDialog {...publishReview} busy={saving}
       onClose={() => setPublishReview(null)} onPublish={publish} />}
+    </>}
     {loading && <div className="loading-strip">Loading rota...</div>}
   </>;
 }

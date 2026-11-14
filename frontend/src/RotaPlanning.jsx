@@ -143,6 +143,73 @@ function Pages({ page, count, onChange }) {
   </nav>;
 }
 
+const weekRangeFormat = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const historyRangeFormat = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+function weekRange(monday, formatter) {
+  const start = new Date(`${monday}T12:00:00Z`);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  return formatter.formatRange(start, end);
+}
+
+function PreviousWeeksDialog({ api, thisWeek, weekStart, onSelect, onClose }) {
+  const [page, setPage] = useState(0);
+  const history = useQuery({
+    queryKey: ["rota", "rota-weeks", "history"],
+    queryFn: ({ signal }) => api("/rota-weeks/", { signal, silentLoading: true, silentError: true }),
+  });
+  const weeks = (history.data || []).filter((week) => week.week_start < thisWeek)
+    .sort((first, second) => second.week_start.localeCompare(first.week_start));
+  const current = Math.min(page, Math.max(0, Math.ceil(weeks.length / pageSize) - 1));
+
+  return <PlanningDialog title="Previous weeks" onClose={onClose}>
+    <div className="rota-planning-rows">
+      {history.isPending && <p className="muted" role="status">Loading saved rotas…</p>}
+      {history.isError && <div className="rota-planning-actions">
+        <p className="error" role="alert">{history.error.message}</p>
+        <button type="button" className="secondary-button" onClick={() => history.refetch()}>Try again</button>
+      </div>}
+      {history.isSuccess && !weeks.length && <p className="muted">No previous rotas have been saved.</p>}
+      {weeks.slice(current * pageSize, (current + 1) * pageSize).map((week) => (
+        <button key={week.id} type="button" className="rota-planning-row rota-history-week"
+          aria-current={week.week_start === weekStart ? "true" : undefined} onClick={() => onSelect(week.week_start)}>
+          <strong>{weekRange(week.week_start, historyRangeFormat)}</strong>
+          <span className={`status-pill ${week.status === "PUBLISHED" ? "active" : "neutral"}`}>
+            {week.status === "PUBLISHED" ? "Published" : "Draft"}
+          </span>
+        </button>
+      ))}
+      <Pages page={current} count={weeks.length} onChange={setPage} />
+    </div>
+  </PlanningDialog>;
+}
+
+export function RotaWeekNavigation({ api, thisWeek, nextWeek, weekStart, disabled, onSelect, onPickDate }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  return <div className="rota-week-navigation" role="group" aria-label="Choose rota week">
+    <div className="rota-week-shortcuts">
+      {[["This week", thisWeek], ["Next week", nextWeek]].map(([label, monday]) => (
+        <button type="button" className="secondary-button rota-week-shortcut" key={monday} disabled={disabled}
+          aria-pressed={weekStart === monday} onClick={() => onSelect(monday)}>
+          <strong>{label}</strong><small>{weekRange(monday, weekRangeFormat)}</small>
+        </button>
+      ))}
+      <button type="button" className="secondary-button rota-week-shortcut" disabled={disabled}
+        aria-haspopup="dialog" data-selected={weekStart < thisWeek} onClick={() => setHistoryOpen(true)}>
+        <strong>Previous weeks</strong>
+        <small>{weekStart < thisWeek ? weekRange(weekStart, historyRangeFormat) : "Browse saved rotas"}</small>
+      </button>
+    </div>
+    <label className="week-picker">Week starting
+      <input type="date" value={weekStart} disabled={disabled}
+        onChange={(event) => { if (event.target.value) onPickDate(event.target.value); }} />
+    </label>
+    {historyOpen && <PreviousWeeksDialog api={api} thisWeek={thisWeek} weekStart={weekStart}
+      onClose={() => setHistoryOpen(false)} onSelect={(monday) => { setHistoryOpen(false); onSelect(monday); }} />}
+  </div>;
+}
+
 export function NeedsCover({ gaps, leaveShifts = [], leaveStatus, onSelect, published, canReplace }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
