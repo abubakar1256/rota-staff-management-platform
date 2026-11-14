@@ -56,6 +56,11 @@ const server = createServer(async (request, response) => {
   }
 
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/") {
+    response.writeHead(302, { Location: `/admin${url.search}`, "Cache-Control": "no-cache" });
+    response.end();
+    return;
+  }
   const requestedPath = safeFilePath(url.pathname);
   if (!requestedPath) {
     response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });

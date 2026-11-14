@@ -52,6 +52,7 @@ class GoogleDriveSwitchTests(APITestCase):
         self.assertEqual(callback.status_code, 302)
         destination = urlsplit(callback["Location"])
         self.assertEqual(destination.netloc, "rota.example")
+        self.assertEqual(destination.path, "/admin")
         self.assertEqual(destination.query, "google_drive=authorize")
         self.assertEqual(parse_qs(destination.fragment)["code"], ["google-code"])
         cancelled = self.client.get(self.callback_path, {"state": state, "error": "access_denied"})

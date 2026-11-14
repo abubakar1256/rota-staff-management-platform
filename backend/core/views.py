@@ -122,7 +122,7 @@ def google_drive_callback(request):
     code = request.query_params.get("code", "")
     fragment = urlencode({"state": state, "code": code})
     result = "cancelled" if request.query_params.get("error") or not code else "authorize"
-    response = HttpResponseRedirect(f"{frontend_url}/?google_drive={result}#{fragment}")
+    response = HttpResponseRedirect(f"{frontend_url}/admin?google_drive={result}#{fragment}")
     response["Cache-Control"] = "no-store"
     response["Referrer-Policy"] = "no-referrer"
     return response

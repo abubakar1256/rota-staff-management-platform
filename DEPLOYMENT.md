@@ -20,7 +20,7 @@ Build:  npm ci && npm run build
 Start:  npm start
 ~~~
 
-The frontend server serves the Vite dist directory and falls back to index.html for /guard and /client client-side routes.
+The frontend server serves the Vite dist directory and redirects the root URL to `/admin`. The `/admin`, `/guard`, `/client`, and `/control` routes load the React app.
 
 Railway is configured from the dashboard using the commands above; the included render.yaml is retained only for Render deployments.
 
