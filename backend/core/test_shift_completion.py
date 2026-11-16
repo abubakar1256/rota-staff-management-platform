@@ -146,6 +146,35 @@ class ShiftCompletionTests(AttendanceFixture, APITestCase):
         response = self.client.post(f"/api/operations/{self.basic.pk}/book-on-note/", {"reason": "Office correction"}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
 
+    def test_office_can_correct_weekly_hours_without_replacing_attendance(self):
+        summary = self.finish()
+        self.client.force_authenticate(self.admin)
+        url = f"/api/timesheets/{summary['timesheet_id']}/"
+        original = self.client.patch(url, {"approved": True}, format="json").data
+        correction = {
+            "original_updated_at": original["updated_at"],
+            "corrected_start_at": f"{self.day}T19:00",
+            "corrected_end_at": f"{self.day}T05:00",
+            "overtime_minutes": 30,
+            "notes": "Corrected from the office log.",
+        }
+        self.assertEqual(self.client.patch(f"{url}correct-hours/", correction, format="json").status_code, 400)
+        correction["corrected_end_at"] = "2026-11-03T05:30"
+        result = self.client.patch(f"{url}correct-hours/", correction, format="json")
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["actual_hours"], 10.5)
+        self.assertEqual(result.data["actual_seconds"], 37800)
+        self.assertEqual(result.data["overtime_minutes"], 30)
+        self.assertEqual(result.data["actual_start_at"], original["actual_start_at"])
+        self.assertEqual(result.data["actual_end_at"], original["actual_end_at"])
+        self.assertTrue(result.data["approved"])
+        self.assertEqual(ShiftAttendanceEvent.objects.filter(operation=self.basic).count(), 2)
+        self.assertTrue(AuditLog.objects.filter(model_name="Timesheet", action="CORRECT_HOURS", object_id=str(summary["timesheet_id"])).exists())
+        correction["overtime_minutes"] = 90
+        self.assertEqual(self.client.patch(f"{url}correct-hours/", correction, format="json").status_code, 409)
+        self.client.force_authenticate(self.guard)
+        self.assertEqual(self.client.patch(f"{url}correct-hours/", correction, format="json").status_code, 403)
+
     def test_manual_timesheets_still_work_and_are_not_overwritten(self):
         manual = Timesheet.objects.create(employee=self.employee, site=self.basic_site, work_date=self.day, actual_start=time(9), actual_end=time(17), created_by=self.admin)
         self.finish()

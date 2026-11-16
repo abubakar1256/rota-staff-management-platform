@@ -11,6 +11,17 @@ export function ukDate(now = new Date()) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+export function toMonday(value) {
+  const weekday = new Date(`${value}T12:00:00Z`).getUTCDay();
+  return addDays(value, -((weekday + 6) % 7));
+}
+
+export function addDays(value, amount) {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+
 export function formatUkAttendanceTime(value) {
   return value ? new Intl.DateTimeFormat("en-GB", { timeZone: UK_TIME_ZONE, hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" }).format(new Date(value)) : "—";
 }

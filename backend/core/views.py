@@ -59,12 +59,12 @@ from .rota_planning import CopyWeekInput, EligibleGuardsInput, MultiDayInput, Si
 from .rota_replacement import ReplacementInput, evidence_operations, leave_covers_assignment, replacement_plans
 from .staffing import day_requirements, staffed_positions, unfilled_count
 from .whatsapp import message_version, shift_snapshot
-from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_verified_document
+from .google_drive import DriveConnectionError, OAUTH_SALT, OAUTH_STATE_MAX_AGE, build_flow, connection as google_drive_connection, connection_version, is_configured as google_drive_is_configured, redirect_uri as google_drive_redirect_uri, save_oauth_connection, sync_induction_text, sync_registration_pdf, sync_verified_document
 from .permissions import IsAdminManagerOrEmployee, IsAdminManagerOrEmployeeDocument, IsAdminManagerOrEmployeeLeave, IsAdminManagerOrEmployeeOperation, IsAdminManagerOrEmployeeRota, IsAdminOnly, IsAdminOrManager, IsAdminOrSuperAdmin, IsClientAdmin, IsInternalUser, is_admin, role_of
 from .models import DocumentOption
 from .serializers import DocumentOptionSerializer
 from .serializers import AuditLogSerializer, ClientArrivalReportSerializer, ClientSerializer, DailyArrivalReportSerializer, DailyOperationSerializer, EmployeeDocumentSerializer, EmployeeSerializer, GuardComplianceRegistrationSerializer, GuardSiteInductionSerializer, LeaveRecordSerializer, LoginSerializer, NotificationSerializer, RotaAssignmentSerializer, RotaConfirmationSerializer, RotaWeekSerializer, ShiftAttendanceEventSerializer, ShiftTypeSerializer, SiteInductionSerializer, SiteSerializer, SiteShiftRequirementSerializer, TimesheetSerializer, UserSerializer
-from .serializers import employee_compliance_issues
+from .serializers import TimesheetHoursCorrectionInput, employee_compliance_issues
 
 
 User = get_user_model()
@@ -778,13 +778,21 @@ def _compliance_admin_allowed(request):
     return role_of(request.user) in {UserProfile.Role.SUPER_ADMIN, UserProfile.Role.ADMIN}
 
 
-def _compliance_admin_response(registration, request):
+def _compliance_admin_response(registration, request, *, drive_root_id=None):
     data = GuardComplianceRegistrationSerializer(registration, context={"request": request}).data
     data["employee"] = _compliance_employee_data(registration.employee, request)
     if registration.approval_deadline:
         data["approval_remaining_seconds"] = max(0, round((registration.approval_deadline - timezone.now()).total_seconds()))
     else:
         data["approval_remaining_seconds"] = None
+    if (
+        drive_root_id and registration.drive_root_folder_id == drive_root_id
+        and registration.status == GuardComplianceRegistration.Status.APPROVED
+        and registration.drive_file_id and registration.drive_synced_at
+        and (not registration.approved_at or registration.drive_synced_at >= registration.approved_at)
+    ):
+        data["drive_file_id"] = registration.drive_file_id
+        data["drive_synced_at"] = registration.drive_synced_at
     return data
 
 
@@ -797,7 +805,9 @@ def compliance_approvals(request):
     registrations = GuardComplianceRegistration.objects.select_related("employee", "approved_by").order_by("approval_deadline", "-submitted_at")
     if status_filter and status_filter != "ALL":
         registrations = registrations.filter(status=status_filter)
-    return Response([_compliance_admin_response(item, request) for item in registrations])
+    connection = google_drive_connection()
+    root_id = connection.root_folder_id if connection else None
+    return Response([_compliance_admin_response(item, request, drive_root_id=root_id) for item in registrations])
 
 
 @api_view(["POST"])
@@ -816,6 +826,33 @@ def approve_compliance(request, pk):
     if registration.employee.user_id:
         publish_notification(user=registration.employee.user, notification_type=Notification.Type.SUCCESS, title="Diligent registration approved", message="Your registration is approved. You can now download your Diligent PDF.", link="compliance", employee=registration.employee, context={"registration_id": registration.pk, "submitted_at": str(registration.submitted_at)})
     return Response(_compliance_admin_response(registration, request))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sync_compliance_drive(request, pk):
+    if not _compliance_admin_allowed(request):
+        raise PermissionDenied("Only Admin or Super Admin users can upload registration PDFs.")
+    with transaction.atomic():
+        registration = get_object_or_404(
+            GuardComplianceRegistration.objects.select_for_update(of=("self",)).select_related("employee"), pk=pk,
+        )
+        if registration.status != GuardComplianceRegistration.Status.APPROVED:
+            raise ValidationError({"detail": "Approve this registration before uploading its PDF to Google Drive."})
+        if not google_drive_is_configured():
+            return Response({"detail": "Google Drive is unavailable. Check the connection in Documents."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            uploaded = sync_registration_pdf(registration, build_compliance_pdf(registration.employee, registration, request))
+        except Exception:
+            logger.exception("Registration %s could not be uploaded to Google Drive", registration.pk)
+            return Response({"detail": "Google Drive upload failed. Check the connection in Documents and try again."}, status=status.HTTP_502_BAD_GATEWAY)
+        if not uploaded:
+            return Response({"detail": "Check the Google Drive connection in Documents, then retry the upload."}, status=status.HTTP_409_CONFLICT)
+        AuditLog.objects.create(
+            user=request.user, action="UPLOAD_DRIVE", model_name="GuardComplianceRegistration",
+            object_id=registration.pk, summary=f"Uploaded the Diligent PDF for {registration.employee.name} to Google Drive",
+        )
+        return Response(_compliance_admin_response(registration, request, drive_root_id=registration.drive_root_folder_id))
 
 
 @api_view(["POST"])
@@ -1239,6 +1276,13 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(site__manager_profiles__user=self.request.user)
         return queryset
 
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if is_admin(self.request.user):
+            connection = google_drive_connection()
+            context["drive_root_id"] = connection.root_folder_id if connection else None
+        return context
+
     def _check_site(self, site):
         if role_of(self.request.user) == "MANAGER" and not self.request.user.profile.managed_sites.filter(pk=site.pk).exists():
             raise PermissionDenied("This site is outside your assigned management scope.")
@@ -1255,15 +1299,38 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
     def download_txt(self, request, pk=None):
         employee = self.get_object().employee
         name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
+        response = HttpResponse(self._induction_text(employee), content_type="text/plain; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{name} - induction.txt"'
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @action(detail=True, methods=["post"], url_path="sync-drive", permission_classes=[IsAdminOrSuperAdmin])
+    def sync_drive(self, request, pk=None):
+        if not google_drive_is_configured():
+            return Response({"detail": "Google Drive is unavailable. Check the connection in Documents."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        with transaction.atomic():
+            induction = get_object_or_404(
+                SiteInduction.objects.select_for_update(of=("self",)).select_related("employee", "site"), pk=pk,
+            )
+            try:
+                uploaded = sync_induction_text(induction, self._induction_text(induction.employee))
+            except Exception:
+                logger.exception("Induction %s could not be uploaded to Google Drive", induction.pk)
+                return Response({"detail": "Google Drive upload failed. Check the connection in Documents and try again."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not uploaded:
+                return Response({"detail": "Check the Google Drive connection in Documents, then retry the upload."}, status=status.HTTP_409_CONFLICT)
+            AuditLog.objects.create(
+                user=request.user, action="UPLOAD_DRIVE", model_name="SiteInduction",
+                object_id=induction.pk, summary=f"Uploaded the induction for {induction.employee.name} to Google Drive",
+            )
+            return Response(self.get_serializer(induction).data)
+
+    def _induction_text(self, employee):
         lines = ["DETAILS FOR INDUCTION:", ""]
         for field, value in self._export_rows(employee):
             formatted = " ".join(str(value).splitlines()).strip()
             lines.append(f"• {field}: {formatted}".rstrip())
-
-        response = HttpResponse("\r\n".join(lines) + "\r\n", content_type="text/plain; charset=utf-8")
-        response["Content-Disposition"] = f'attachment; filename="{name} - induction.txt"'
-        response["Cache-Control"] = "private, no-store"
-        return response
+        return "\r\n".join(lines) + "\r\n"
 
     @action(detail=True, methods=["get"], url_path="download-xlsx")
     def download_xlsx(self, request, pk=None):
@@ -2381,6 +2448,8 @@ class TimesheetViewSet(viewsets.ModelViewSet):
         was_approved = sheet.approved
         approved = serializer.validated_data.get("approved", was_approved)
         serializer.instance = sheet
+        if not sheet.operation_id and {"work_date", "actual_start", "actual_end"}.intersection(serializer.validated_data):
+            serializer.validated_data.update(corrected_start_at=None, corrected_end_at=None)
         sheet = serializer.save(
             approved_by=(sheet.approved_by if was_approved else self.request.user) if approved else None,
             approved_at=(sheet.approved_at if was_approved else timezone.now()) if approved else None,
@@ -2388,6 +2457,39 @@ class TimesheetViewSet(viewsets.ModelViewSet):
         AuditLog.objects.create(user=self.request.user, action="APPROVE" if approved and not was_approved else "UPDATE", model_name="Timesheet", object_id=str(sheet.pk), summary=f"{'Approved' if approved else 'Updated'} timesheet for {sheet.employee.name}")
         if approved and not was_approved and sheet.operation_id and sheet.employee.user_id:
             publish_notification(user=sheet.employee.user, notification_type="SUCCESS", title="Shift hours approved", message=f"Your shift at {sheet.site.name} on {sheet.work_date} has been reviewed and approved.", link="attendance", employee=sheet.employee, site=sheet.site, event_date=sheet.work_date, context={"timesheet_id": sheet.pk})
+
+    @action(detail=True, methods=["patch"], url_path="correct-hours")
+    @transaction.atomic
+    def correct_hours(self, request, pk=None):
+        target = self.get_object()
+        sheet = get_object_or_404(self.get_queryset().select_for_update(of=("self",)), pk=target.pk)
+        correction = TimesheetHoursCorrectionInput(data=request.data)
+        correction.is_valid(raise_exception=True)
+        values = correction.validated_data
+        if values.pop("original_updated_at").timestamp() != sheet.updated_at.timestamp():
+            return Response({"detail": "This timesheet changed. Reopen it before editing."}, status=status.HTTP_409_CONFLICT)
+        if not values:
+            return Response(self.get_serializer(sheet).data)
+
+        def audit_values():
+            return {
+                "corrected_start_at": sheet.corrected_start_at.isoformat() if sheet.corrected_start_at else None,
+                "corrected_end_at": sheet.corrected_end_at.isoformat() if sheet.corrected_end_at else None,
+                "actual_hours": sheet.actual_hours,
+                "overtime_minutes": sheet.overtime_minutes,
+                "notes": sheet.notes,
+            }
+
+        previous = audit_values()
+        for field, value in values.items():
+            setattr(sheet, field, value)
+        sheet.save(update_fields=[*values, "updated_at"])
+        AuditLog.objects.create(
+            user=request.user, action="CORRECT_HOURS", model_name="Timesheet", object_id=str(sheet.pk),
+            summary=f"Corrected timesheet hours for {sheet.employee.name}"[:250],
+            before_data=previous, after_data=audit_values(),
+        )
+        return Response(self.get_serializer(sheet).data)
 
     def perform_destroy(self, instance):
         if instance.operation_id:

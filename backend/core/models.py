@@ -301,6 +301,9 @@ class GuardComplianceRegistration(models.Model):
     approved_at = models.DateTimeField(null=True, blank=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_guard_compliance_forms", null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
+    drive_file_id = models.CharField(max_length=160, blank=True)
+    drive_root_folder_id = models.CharField(max_length=160, blank=True)
+    drive_synced_at = models.DateTimeField(null=True, blank=True)
     verification_code = models.CharField(max_length=32, unique=True, editable=False, blank=True)
     verification_token = models.CharField(max_length=64, unique=True, editable=False, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -523,6 +526,9 @@ class SiteInduction(models.Model):
     induction_time = models.TimeField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
     notes = models.CharField(max_length=250, blank=True)
+    drive_file_id = models.CharField(max_length=160, blank=True)
+    drive_root_folder_id = models.CharField(max_length=160, blank=True)
+    drive_synced_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_site_inductions")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -663,6 +669,8 @@ class Timesheet(models.Model):
     actual_end = models.TimeField(null=True, blank=True)
     actual_start_at = models.DateTimeField(null=True, blank=True)
     actual_end_at = models.DateTimeField(null=True, blank=True)
+    corrected_start_at = models.DateTimeField(null=True, blank=True)
+    corrected_end_at = models.DateTimeField(null=True, blank=True)
     review_flags = models.JSONField(default=list, blank=True)
     overtime_minutes = models.PositiveIntegerField(default=0)
     notes = models.CharField(max_length=250, blank=True)
@@ -677,24 +685,34 @@ class Timesheet(models.Model):
         ordering = ["-work_date", "employee__name"]
 
     @staticmethod
-    def _hours(start, end):
+    def _clock_seconds(start, end):
         if not start or not end:
             return 0
         start_minutes = start.hour * 60 + start.minute
         end_minutes = end.hour * 60 + end.minute
         if end_minutes <= start_minutes:
             end_minutes += 24 * 60
-        return round((end_minutes - start_minutes) / 60, 2)
+        return (end_minutes - start_minutes) * 60
+
+    @property
+    def scheduled_seconds(self):
+        return self._clock_seconds(self.scheduled_start, self.scheduled_end)
 
     @property
     def scheduled_hours(self):
-        return self._hours(self.scheduled_start, self.scheduled_end)
+        return round(self.scheduled_seconds / 3600, 2)
+
+    @property
+    def actual_seconds(self):
+        if self.corrected_start_at and self.corrected_end_at:
+            return max(0, self.corrected_end_at.timestamp() - self.corrected_start_at.timestamp())
+        if self.actual_start_at and self.actual_end_at:
+            return max(0, self.actual_end_at.timestamp() - self.actual_start_at.timestamp())
+        return self._clock_seconds(self.actual_start, self.actual_end)
 
     @property
     def actual_hours(self):
-        if self.actual_start_at and self.actual_end_at:
-            return round(max(0, self.actual_end_at.timestamp() - self.actual_start_at.timestamp()) / 3600, 2)
-        return self._hours(self.actual_start, self.actual_end)
+        return round(self.actual_seconds / 3600, 2)
 
     def __str__(self):
         return f"{self.work_date} - {self.employee.name}"

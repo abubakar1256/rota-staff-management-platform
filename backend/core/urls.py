@@ -8,7 +8,7 @@ from . import whatsapp_views
 from .availability_views import guard_availability
 from .views import DocumentOptionViewSet
 
-from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, activation_details, approve_compliance, client_login, client_me, client_portal_summary, compliance_approvals, dashboard, employee_compliance, employee_compliance_pdf, google_drive_callback, google_drive_connect, google_drive_status, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, password_reset_verify, reject_compliance, report_print, reports_summary, request_compliance_resubmission, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
+from .views import AuditLogViewSet, ClientViewSet, DailyArrivalReportViewSet, DailyOperationViewSet, EmployeeDocumentViewSet, EmployeeViewSet, LeaveRecordViewSet, NotificationViewSet, RotaAssignmentViewSet, RotaWeekViewSet, ShiftTypeViewSet, SiteInductionViewSet, SiteShiftRequirementViewSet, SiteViewSet, TimesheetViewSet, UserViewSet, activate_portal, activation_details, approve_compliance, client_login, client_me, client_portal_summary, compliance_approvals, dashboard, employee_compliance, employee_compliance_pdf, google_drive_callback, google_drive_connect, google_drive_status, guard_login, guard_me, login, me, password_reset_confirm, password_reset_request, password_reset_verify, reject_compliance, report_print, reports_summary, request_compliance_resubmission, sync_compliance_drive, rota_csv, secure_attendance_media, secure_client_report_media, secure_daily_report_media, secure_document_media, timesheets_csv
 
 
 router = DefaultRouter()
@@ -71,6 +71,7 @@ urlpatterns = [
     path("employees/<int:employee_id>/compliance/pdf/", employee_compliance_pdf, name="employee-compliance-pdf-admin"),
     path("compliance-approvals/", compliance_approvals, name="compliance-approvals"),
     path("compliance-approvals/<int:pk>/approve/", approve_compliance, name="approve-compliance"),
+    path("compliance-approvals/<int:pk>/sync-drive/", sync_compliance_drive, name="sync-compliance-drive"),
     path("compliance-approvals/<int:pk>/reject/", reject_compliance, name="reject-compliance"),
     path("compliance-approvals/<int:pk>/request-resubmission/", request_compliance_resubmission, name="request-compliance-resubmission"),
     path("client-portal/summary/", client_portal_summary, name="client-portal-summary"),

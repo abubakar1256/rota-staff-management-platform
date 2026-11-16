@@ -3,6 +3,7 @@ from datetime import timedelta
 from math import isfinite
 import os
 from secrets import token_urlsafe
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction
@@ -653,11 +654,18 @@ class SiteInductionSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     cortex_activation_required = serializers.SerializerMethodField()
+    drive_file_id = serializers.SerializerMethodField()
 
     class Meta:
         model = SiteInduction
-        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "induction_time", "status", "notes", "created_by", "created_at", "updated_at", "cortex_activation_required"]
+        fields = ["id", "site", "site_name", "employee", "employee_name", "employee_code", "induction_date", "induction_time", "status", "notes", "created_by", "created_at", "updated_at", "cortex_activation_required", "drive_file_id"]
         read_only_fields = ["created_by", "created_at", "updated_at"]
+
+    def get_drive_file_id(self, induction):
+        root_id = self.context.get("drive_root_id")
+        if root_id and induction.drive_root_folder_id == root_id and induction.drive_synced_at and induction.drive_synced_at >= induction.updated_at:
+            return induction.drive_file_id
+        return ""
 
     def validate_employee(self, value):
         if value.status != Employee.Status.ACTIVE:
@@ -880,11 +888,13 @@ class TimesheetSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source="site.name", read_only=True)
     scheduled_hours = serializers.ReadOnlyField()
     actual_hours = serializers.ReadOnlyField()
+    actual_seconds = serializers.ReadOnlyField()
+    scheduled_seconds = serializers.ReadOnlyField()
 
     class Meta:
         model = Timesheet
-        fields = ["id", "employee", "employee_name", "site", "site_name", "work_date", "scheduled_start", "scheduled_end", "actual_start", "actual_end", "scheduled_hours", "actual_hours", "overtime_minutes", "notes", "approved", "created_by", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
-        read_only_fields = ["created_by", "scheduled_hours", "actual_hours", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
+        fields = ["id", "employee", "employee_name", "site", "site_name", "work_date", "scheduled_start", "scheduled_end", "actual_start", "actual_end", "scheduled_hours", "actual_hours", "scheduled_seconds", "actual_seconds", "corrected_start_at", "corrected_end_at", "overtime_minutes", "notes", "approved", "created_by", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
+        read_only_fields = ["created_by", "scheduled_hours", "actual_hours", "scheduled_seconds", "actual_seconds", "corrected_start_at", "corrected_end_at", "created_at", "updated_at", "operation", "actual_start_at", "actual_end_at", "review_flags", "approved_by", "approved_at"]
 
     def validate(self, attrs):
         if self.instance and self.instance.operation_id:
@@ -896,6 +906,22 @@ class TimesheetSerializer(serializers.ModelSerializer):
             end = attrs.get(f"{prefix}_end")
             if (start and not end) or (end and not start):
                 raise serializers.ValidationError({f"{prefix}_end": f"Provide both {prefix} start and end times."})
+        return attrs
+
+
+class TimesheetHoursCorrectionInput(serializers.Serializer):
+    original_updated_at = serializers.DateTimeField()
+    corrected_start_at = serializers.DateTimeField(default_timezone=ZoneInfo("Europe/London"), required=False)
+    corrected_end_at = serializers.DateTimeField(default_timezone=ZoneInfo("Europe/London"), required=False)
+    overtime_minutes = serializers.IntegerField(min_value=0, max_value=2147483647, required=False)
+    notes = serializers.CharField(max_length=250, allow_blank=True, required=False)
+
+    def validate(self, attrs):
+        start, end = attrs.get("corrected_start_at"), attrs.get("corrected_end_at")
+        if (start is None) != (end is None):
+            raise serializers.ValidationError("Enter both actual start and end date and time.")
+        if start is not None and end.timestamp() < start.timestamp():
+            raise serializers.ValidationError({"corrected_end_at": "Actual end must be at or after actual start."})
         return attrs
 
 

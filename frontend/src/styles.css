@@ -41,6 +41,11 @@ button { cursor: pointer; }
 .nav-item.active { box-shadow: inset 3px 0 #6a8dff; }
 .nav-item:disabled { opacity: .46; cursor: not-allowed; }
 .nav-item small { margin-left: auto; text-transform: uppercase; font-size: 9px; letter-spacing: .08em; }
+.workspace-sidebar .sidebar-brand { padding-bottom: 18px; }
+.workspace-sidebar nav { gap: 4px; }
+.workspace-sidebar .nav-item { min-height: 43px; padding: 10px 12px; line-height: 1.35; }
+.workspace-sidebar .nav-item > svg { flex: 0 0 18px; }
+.workspace-sidebar .nav-item > span { min-width: 0; }
 .nav-external-icon { margin-left: auto; opacity: .72; }
 .sidebar-footer { margin-top: auto; padding: 20px 10px 0; border-top: 1px solid #2a3851; }
 .user-badge { display: flex; gap: 10px; align-items: center; margin-bottom: 17px; }

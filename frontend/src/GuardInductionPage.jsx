@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Pencil, RefreshCw, X } from "lucide-react";
+import { Download, ExternalLink, Pencil, RefreshCw, Upload, X } from "lucide-react";
 import { cortexActivationWarning } from "./CortexITime";
 import { ukDate } from "./ukTime";
 import "./guardInduction.css";
@@ -133,12 +133,13 @@ function GuardInductionSummary({ guard, documents }) {
 
 const readOptions = (signal) => ({ signal, cache: "no-store", silentLoading: true, silentError: true });
 
-export default function GuardInductionPage({ api, downloadFile, canManageCortex }) {
+export default function GuardInductionPage({ api, downloadFile, canManageIntegrations }) {
   const [form, setForm] = useState(newForm);
   const [siteFilter, setSiteFilter] = useState("");
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [driveUploadId, setDriveUploadId] = useState(null);
   const [addResult, setAddResult] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -162,7 +163,7 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
   const inductions = recordsQuery.data || [];
   const selectedGuard = guards.find((guard) => String(guard.id) === form.employee);
   const selectedSite = sites.find((site) => String(site.id) === form.site);
-  const needsCortexActivation = canManageCortex && form.status !== "CANCELLED" && selectedGuard && selectedSite?.is_active
+  const needsCortexActivation = canManageIntegrations && form.status !== "CANCELLED" && selectedGuard && selectedSite?.is_active
     && selectedSite.cortex_itime_enabled && (!selectedGuard.cortex_itime_enabled || !selectedGuard.cortex_itime_sites?.some((entry) => entry.id === selectedSite.id));
 
   async function refresh() {
@@ -200,6 +201,21 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
       setNotice(`${record.employee_name} induction downloaded.`);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function uploadInduction(record) {
+    if (driveUploadId !== null) return;
+    setDriveUploadId(record.id); setError(""); setNotice("");
+    try {
+      await api(`/site-inductions/${record.id}/sync-drive/`, {
+        method: "POST", silentLoading: true, silentError: true, silentToast: true,
+      });
+      setNotice(`${record.employee_name}’s induction text uploaded to Google Drive.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDriveUploadId(null);
     }
   }
 
@@ -256,11 +272,18 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
               </td>
               <td>{record.notes || "—"}</td>
               <td><div className="induction-record-actions">
-                <button type="button" className="mini-button" onClick={() => { setEditing(record); setError(""); setNotice(""); setActivationNotice(""); }}>
+                <button type="button" className="mini-button" disabled={driveUploadId === record.id} onClick={() => { setEditing(record); setError(""); setNotice(""); setActivationNotice(""); }}>
                   <Pencil size={13} /> Edit
                 </button>
                 <button type="button" className="mini-button" onClick={() => downloadInduction(record, "xlsx")}><Download size={13} /> Excel</button>
                 <button type="button" className="mini-button" onClick={() => downloadInduction(record, "txt")}><Download size={13} /> Text</button>
+                {canManageIntegrations && <>
+                  <button type="button" className="mini-button" disabled={driveUploadId !== null} onClick={() => uploadInduction(record)}>
+                    <Upload size={13} /> {driveUploadId === record.id ? "Uploading…" : record.drive_file_id ? "Re-upload to Drive" : "Upload to Drive"}
+                  </button>
+                  {record.drive_file_id && <a className="mini-button" href={`https://drive.google.com/file/d/${encodeURIComponent(record.drive_file_id)}/view`}
+                    target="_blank" rel="noopener noreferrer"><ExternalLink size={13} /> Open in Drive</a>}
+                </>}
               </div></td>
             </tr>;
           })}</tbody>

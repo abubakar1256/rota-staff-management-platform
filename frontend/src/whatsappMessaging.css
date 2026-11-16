@@ -7,7 +7,6 @@
   text-transform: uppercase;
 }
 
-.sidebar .whatsapp-nav-item { padding-inline-start: 22px; }
 .whatsapp-page-heading { align-items: center; flex-direction: row; }
 
 .whatsapp-heading-icon, .whatsapp-section-icon {
