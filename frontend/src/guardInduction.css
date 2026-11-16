@@ -1,0 +1,47 @@
+.induction-records .document-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.induction-records .document-toolbar select {
+  width: auto;
+  min-width: 130px;
+}
+
+.induction-records .document-toolbar button {
+  width: auto;
+}
+
+.induction-record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.induction-edit-dialog.modal-card {
+  position: fixed;
+  inset: 0;
+  width: min(620px, calc(100% - 24px));
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  border: 1px solid #d9e4f3;
+  border-radius: 14px;
+}
+
+.induction-edit-dialog::backdrop { background: #15223d70; }
+
+.induction-edit-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.induction-edit-dialog textarea, .induction-page-form textarea { resize: vertical; }
+
+@media (max-width: 680px) {
+  .induction-records .document-toolbar { justify-content: flex-start; }
+  .induction-record-actions button { min-height: 34px; }
+}

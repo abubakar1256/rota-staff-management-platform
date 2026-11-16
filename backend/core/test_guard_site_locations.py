@@ -87,3 +87,36 @@ class GuardSiteLocationTests(APITestCase):
         self.assertEqual(update.status_code, 200, update.data)
         self.assertEqual(update.data["phone"], "+447700900456")
         self.assertEqual(download_phone(), "+447700900456")
+
+    def test_induction_status_updates_existing_guard_and_rota_eligibility(self):
+        self.client.force_authenticate(self.admin)
+        week = RotaWeek.objects.create(week_start=date(2026, 11, 2), created_by=self.admin)
+        url = f"/api/site-inductions/{self.induction.pk}/"
+        rota_url = f"/api/rota-weeks/{week.pk}/inducted_guards/"
+
+        def inducted_ids():
+            response = self.client.post(rota_url, {"site": self.site.pk}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            return [guard["id"] for guard in response.data]
+
+        self.assertEqual(inducted_ids(), [])
+        response = self.client.patch(url, {
+            "status": "COMPLETED", "induction_date": "2026-11-07", "induction_time": None, "notes": "Induction attended.",
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["id"], self.induction.pk)
+        self.assertEqual(response.data["notes"], "Induction attended.")
+        self.assertEqual(inducted_ids(), [self.employee.pk])
+
+        self.client.force_authenticate(self.guard)
+        visible = self.client.get("/api/site-inductions/my/").data[0]
+        self.assertEqual(visible["status"], "COMPLETED")
+        self.assertEqual(visible["induction_date"], "2026-11-07")
+        self.assertIsNone(visible["induction_time"])
+
+        self.client.force_authenticate(self.admin)
+        for status in ("CANCELLED", "PLANNED"):
+            response = self.client.patch(url, {"status": status}, format="json")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["status"], status)
+            self.assertEqual(inducted_ids(), [])
