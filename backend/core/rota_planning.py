@@ -68,13 +68,14 @@ class MultiDayInput(AssignmentSlotInput):
         return attrs
 
 
-def planning_preview(rows):
+def planning_preview(rows, *, context=None):
+    snapshot = rows if context is None else {"rows": rows, "context": context}
     return {
         "rows": rows,
         "ready": sum(row["status"] == "ready" for row in rows),
         "skipped": sum(row["status"] == "skipped" for row in rows),
         "preserved": sum(row["status"] == "preserved" for row in rows),
-        "preview_key": hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest(),
+        "preview_key": hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest(),
     }
 
 

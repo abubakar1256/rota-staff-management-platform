@@ -26,6 +26,7 @@ class RotaPlanningTests(APITestCase):
                     status=SiteInduction.Status.COMPLETED, created_by=self.admin)
         for path in (
             "core.rota_planning.employee_compliance_issues", "core.views.employee_compliance_issues",
+            "core.site_rota_planner.employee_compliance_issues",
             "core.rota_replacement.employee_compliance_issues",
             "core.serializers.employee_compliance_issues", "core.views.generate_daily_arrival_reports",
         ):
@@ -35,6 +36,9 @@ class RotaPlanningTests(APITestCase):
 
     def post(self, action, **payload):
         return self.client.post(f"/api/rota-weeks/{self.week.pk}/{action}/", payload, format="json")
+
+    def site_plan(self, changes, **options):
+        return self.post("site-planner", site=self.site.pk, changes=changes, **options)
 
     def add_shift(self, employee, day, *, week=None, site=None, shift=None):
         return RotaAssignment.objects.create(
@@ -113,6 +117,98 @@ class RotaPlanningTests(APITestCase):
         saved = self.post("copy_to", week_start=next_week, preview_key=preview.data["preview_key"])
         self.assertEqual(saved.data["created"], 1)
         self.assertEqual(RotaWeek.objects.get(week_start=next_week).status, RotaWeek.Status.DRAFT)
+
+    def test_site_planner_loads_inducted_guards_and_saves_changes_for_multiple_guards(self):
+        old = self.add_shift(self.guard, self.monday)
+        untouched = self.add_shift(self.guard, self.monday + timedelta(days=4), site=self.other_site)
+        retained = self.add_shift(self.cover, self.monday + timedelta(days=2))
+        old_operation = DailyOperation.objects.create(
+            site=self.site, shift_type=self.day, employee=self.guard, operation_date=self.monday, created_by=self.admin,
+        )
+        uninducted = Employee.objects.create(employee_id="PL-G9", name="Uninducted")
+        self.add_shift(uninducted, self.monday + timedelta(days=3))
+        SiteShiftRequirement.objects.create(site=self.site, shift_type=self.night, weekday=1, required_guards=3)
+        snapshot = self.client.get(f"/api/rota-weeks/{self.week.pk}/site-planner/", {"site": self.site.pk})
+        self.assertEqual(snapshot.status_code, 200, snapshot.data)
+        guards = {row["id"]: row for row in snapshot.data["guards"]}
+        self.assertEqual(set(guards), {self.guard.pk, self.cover.pk})
+
+        def shift(guard, day, shift_type, start=None, end=None):
+            day = day.isoformat()
+            return {"employee": guard.pk, "work_date": day,
+                    "revision": guards[guard.pk]["days"].get(day, {}).get("revision"),
+                    "shift_type": shift_type.pk if shift_type else None,
+                    **({"scheduled_start": start, "scheduled_end": end} if shift_type else {})}
+
+        changes = [
+            shift(self.guard, self.monday, None),
+            shift(self.guard, self.monday + timedelta(days=1), self.night, "20:30", "07:15"),
+            shift(self.cover, self.monday, self.day, "06:30", "18:00"),
+            shift(self.cover, self.monday + timedelta(days=2), self.day, "08:00", "18:30"),
+        ]
+        preview = self.site_plan(changes)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["ready"], 4)
+        self.assertEqual(RotaAssignment.objects.count(), 4)
+        night = next(row for row in preview.data["coverage"] if row["work_date"] == changes[1]["work_date"]
+                     and row["shift_type"] == self.night.pk)
+        self.assertEqual((night["required"], night["assigned"], night["unfilled"]), (3, 1, 2))
+        saved = self.site_plan(changes, preview=False, preview_key=preview.data["preview_key"])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data["saved"], 4)
+        self.assertFalse(RotaAssignment.objects.filter(pk=old.pk).exists())
+        self.assertFalse(DailyOperation.objects.filter(pk=old_operation.pk).exists())
+        self.assertTrue(RotaAssignment.objects.filter(pk=untouched.pk).exists())
+        retained.refresh_from_db()
+        self.assertEqual(retained.scheduled_start, time(8))
+        self.assertTrue(DailyOperation.objects.filter(site=self.site, employee=self.guard,
+                                                      shift_type=self.night, scheduled_end=time(7, 15)).exists())
+        self.week.refresh_from_db()
+        self.assertEqual(self.week.status, RotaWeek.Status.DRAFT)
+
+    def test_site_planner_conflicts_prevent_partial_save_and_protect_stale_cells(self):
+        self.add_shift(self.guard, self.monday, site=self.other_site, shift=self.night)
+        tuesday = self.monday + timedelta(days=1)
+        GuardUnavailability.objects.create(employee=self.cover, work_date=self.monday)
+        changes = [
+            {"employee": self.guard.pk, "work_date": str(tuesday), "revision": None,
+             "shift_type": self.day.pk, "scheduled_start": "07:00", "scheduled_end": "19:00"},
+            {"employee": self.cover.pk, "work_date": str(self.monday), "revision": None,
+             "shift_type": self.day.pk, "scheduled_start": "07:00", "scheduled_end": "19:00"},
+            {"employee": self.cover.pk, "work_date": str(tuesday), "revision": None,
+             "shift_type": self.day.pk, "scheduled_start": "07:00", "scheduled_end": "19:00"},
+        ]
+        preview = self.site_plan(changes)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual((preview.data["ready"], preview.data["skipped"]), (1, 2))
+        self.assertIn("unavailable", preview.data["rows"][0]["reason"])
+        self.assertIn(self.other_site.name, preview.data["rows"][1]["reason"])
+        blocked = self.site_plan(changes, preview=False, preview_key=preview.data["preview_key"])
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertFalse(self.week.assignments.filter(site=self.site).exists())
+        preview = self.site_plan(changes[2:])
+        existing = self.add_shift(self.cover, tuesday)
+        stale = self.site_plan(changes[2:], preview=False, preview_key=preview.data["preview_key"])
+        self.assertEqual(stale.status_code, 409, stale.data)
+        self.assertTrue(stale.data["stale"])
+        self.assertEqual(self.week.assignments.filter(site=self.site).get().pk, existing.pk)
+
+    def test_site_planner_protects_attendance_and_published_weeks(self):
+        shift = self.add_shift(self.guard, self.monday)
+        DailyOperation.objects.create(site=self.site, shift_type=self.day, employee=self.guard,
+                                      operation_date=self.monday, reached_at=timezone.now(), created_by=self.admin)
+        snapshot = self.client.get(f"/api/rota-weeks/{self.week.pk}/site-planner/", {"site": self.site.pk})
+        self.assertEqual(snapshot.status_code, 200, snapshot.data)
+        guard = next(row for row in snapshot.data["guards"] if row["id"] == self.guard.pk)
+        cell = guard["days"][str(self.monday)]
+        self.assertIn("attendance", cell["locked_reason"])
+        change = {"employee": self.guard.pk, "work_date": str(self.monday), "revision": cell["revision"], "shift_type": None}
+        preview = self.site_plan([change])
+        self.assertEqual(preview.data["skipped"], 1)
+        self.assertTrue(self.week.assignments.filter(pk=shift.pk).exists())
+        self.week.status = RotaWeek.Status.PUBLISHED
+        self.week.save(update_fields=["status"])
+        self.assertEqual(self.site_plan([change]).status_code, 400)
 
     def test_find_cover_filters_ineligible_guards_and_rechecks_open_position(self):
         GuardUnavailability.objects.create(employee=self.guard, work_date=self.monday)

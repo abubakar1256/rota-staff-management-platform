@@ -1,0 +1,119 @@
+.rota-planning-dialog.site-weekly-planner {
+  width: min(1200px, calc(100% - 28px));
+  padding-bottom: 0;
+}
+.site-planner-toolbar, .site-planner-list-heading, .site-planner-section-heading, .site-planner-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.site-planner-toolbar .form-grid { display: block; width: min(100%, 350px); }
+.site-planner-week { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: #345598; }
+.site-planner-list-heading .search-box { min-width: 0; width: min(100%, 320px); }
+.site-planner-mobile-day { display: none; }
+.site-planner-grid {
+  overflow: auto;
+  max-height: 55dvh;
+  border: 1px solid #dae4f3;
+  border-radius: 12px;
+  background: #fff;
+}
+.site-planner-grid:focus-visible { outline: 2px solid #5979c8; outline-offset: 2px; }
+.site-planner-grid table { border-spacing: 0; width: 100%; min-width: 940px; table-layout: fixed; }
+.site-planner-grid th { text-align: left; }
+.site-planner-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #2b4d89;
+  background: #edf2fa;
+  padding: 10px 8px;
+  font-size: 12px;
+}
+.site-planner-grid thead th:first-child { width: 155px; left: 0; z-index: 3; }
+.site-planner-grid tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #f8faff;
+  color: #24334f;
+  font-size: 13px;
+  padding: 10px;
+  overflow-wrap: anywhere;
+}
+.site-planner-grid td { padding: 5px; vertical-align: top; }
+.site-planner-grid th, .site-planner-grid td { border-bottom: 1px solid #e3ebf6; }
+.site-planner-grid tr:last-child td, .site-planner-grid tr:last-child th[scope="row"] { border-bottom: 0; }
+.site-planner-grid small, .site-planner-time-editor small { display: block; color: #536785; font-size: 11px; }
+.site-planner-grid > p { padding: 12px; }
+.site-planner-cell {
+  min-height: 57px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f5f7fb;
+}
+.site-planner-cell[data-shift="DAY"] { background: #fdf4e8; }
+.site-planner-cell[data-shift="NIGHT"] { background: #eef0ff; }
+.site-planner-cell[data-changed="true"] { border-color: #7595e0; }
+.site-planner-cell select {
+  width: 100%;
+  min-height: 31px;
+  padding: 4px;
+  border: 1px solid #cbd8ec;
+  border-radius: 6px;
+  color: #24334f;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+}
+.site-planner-cell .text-button { display: inline-flex; align-items: center; gap: 4px; color: #2b4d89; }
+.site-planner-locked { padding: 6px; color: #536785; background: #f4f6f9; border-radius: 7px; font-size: 11px; }
+.site-planner-locked strong { display: inline-flex; align-items: center; gap: 4px; }
+.site-planner-time-editor {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px;
+  border: 1px solid #adc0ea;
+  border-radius: 10px;
+  background: #f1f5ff;
+}
+.site-planner-time-editor .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.site-planner-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.site-planner-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: #fff;
+  padding-bottom: 14px;
+}
+.site-planner-review { display: grid; gap: 10px; }
+.site-planner-review h4 { margin: 0; color: #263853; }
+.site-planner-coverage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
+  gap: 8px;
+}
+.site-planner-coverage > div { padding: 9px; border: 1px solid #dfe8f5; border-radius: 9px; background: #f8faff; }
+.site-planner-coverage-slot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1px 6px;
+  padding-top: 6px;
+  margin-top: 6px;
+  border-top: 1px solid #dfe8f5;
+  font-size: 12px;
+}
+.site-planner-coverage-slot small { color: #315c50; }
+.site-planner-coverage-slot .needs-cover { color: #835018; }
+@media (max-width: 700px) {
+  .site-planner-mobile-day { display: grid; }
+  .site-planner-grid table { min-width: 0; }
+  .site-planner-grid [data-mobile-day="false"] { display: none; }
+  .site-planner-grid thead th:first-child { width: 46%; }
+  .site-planner-cell select, .site-planner-cell .text-button { min-height: 36px; }
+}

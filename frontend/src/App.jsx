@@ -18,6 +18,7 @@ import CompleteShiftReview from "./CompleteShiftReview";
 import ReachedReport from "./ReachedReport";
 import DailyOperationsPage from "./DailyOperationsPage";
 import { ControlPortal, ControlTeamAdmin } from "./ControlTeam";
+import SiteWeeklyPlanner from "./SiteWeeklyPlanner";
 import { siteWeekSlots, staffedPositions } from "./rotaStaffing.js";
 import { BulkAssignmentDialog, FindReplacementDialog, NeedsCover, PublishRotaDialog, RotaBatchDialog, RotaWeekNavigation } from "./RotaPlanning";
 import { addDays, toMonday, ukDate, formatUkAttendanceTime, formatUkDateTime } from "./ukTime.js";
@@ -516,6 +517,7 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   const [siteRosterSearch, setSiteRosterSearch] = useState("");
   const [siteView, setSiteView] = useState("all");
   const [batch, setBatch] = useState(null);
+  const [sitePlannerOpen, setSitePlannerOpen] = useState(false);
   const [replacement, setReplacement] = useState(null);
   const [publishReview, setPublishReview] = useState(null);
   const [selectedRosterSite, setSelectedRosterSite] = useState(target.site_id ? String(target.site_id) : "");
@@ -821,6 +823,12 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
     if (!confirm("Remove this assignment?")) return;
     try { await api(`/assignments/${id}/`, { method: "DELETE" }); await loadWeek(); } catch (err) { setError(err.message); }
   };
+  const sitePlanSaved = async (result, siteId) => {
+    setSitePlannerOpen(false);
+    selectRosterSite(siteId);
+    await loadWeek();
+    setNotice(`Site draft saved. ${result.saved} ${result.saved === 1 ? "assignment change" : "assignment changes"} applied.`);
+  };
   const bulkSaved = async (result) => {
     setBulkOpen(false);
     setNotice(`${result.created} ${result.created === 1 ? "guard" : "guards"} assigned successfully.`);
@@ -869,7 +877,7 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
   })) : [];
 
   return <>
-    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><button className="secondary-button" disabled={!rota || loading} onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || !assignments.length || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={openMultiDay}><CalendarDays size={14} /> Assign multiple days</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || saving} onClick={() => setBulkOpen(true)}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={loading || saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || !staffingReady} onClick={reviewPublish}>{rota?.status === "PUBLISHED" ? "Published" : "Review & publish"}</button></div></div>
+    <div className="page-heading"><div><p className="eyebrow">ROTA MANAGEMENT</p><h2>Weekly rota</h2><p className="muted">Plan staffing by day, shift and site. Conflict checks run automatically.</p></div><div className="rota-actions"><button className="secondary-button" disabled={!rota || loading} onClick={() => downloadFile(`/exports/rota.csv?rota_week=${rota?.id || ""}`, "weekly-rota.csv")}><Download size={14} /> Export</button><button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || !assignments.length || saving} onClick={copyWeek}><Copy size={14} /> Copy week</button>{rota?.status === "DRAFT" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={() => setSitePlannerOpen(true)}><CalendarDays size={14} /> Site Weekly Planner</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={!staffingReady || saving} onClick={openMultiDay}><CalendarDays size={14} /> Assign multiple days</button>}{rota?.status !== "PUBLISHED" && <button className="secondary-button" disabled={loading || rota?.week_start !== weekStart || saving} onClick={() => setBulkOpen(true)}><Users size={14} /> Bulk assign</button>}{rota?.status === "PUBLISHED" && <button className="secondary-button" disabled={loading || saving} onClick={reopen}>Reopen for editing</button>}<button className="primary-button" disabled={(!assignments.length && !rota?.whatsapp_previously_shared) || rota?.status === "PUBLISHED" || saving || !staffingReady} onClick={reviewPublish}>{rota?.status === "PUBLISHED" ? "Published" : "Review & publish"}</button></div></div>
     <RotaWeekNavigation api={api} thisWeek={thisWeek} nextWeek={nextWeek} weekStart={weekStart}
       disabled={saving || Boolean(bulkOpen || editingAssignment || batch || replacement || publishReview)}
       onSelect={selectWeek} onPickDate={(date) => selectWeek(toMonday(date))} />
@@ -939,6 +947,9 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
         }) : <div className="day-empty">Drop a shift here or add a new assignment</div>}
       </article>;
     })}</section>
+    {sitePlannerOpen && <SiteWeeklyPlanner api={api} rota={rota} days={days} shifts={shiftTypes}
+      sites={activeRosterSites.map(({ site }) => site)} initialSite={selectedRoster?.site.is_active !== false ? selectedRosterSite : ""}
+      onClose={() => setSitePlannerOpen(false)} onSaved={sitePlanSaved} />}
     {bulkOpen && <BulkAssignmentDialog api={api} rota={rota} days={days} sites={sites} shifts={shiftTypes}
       selectedDate={selectedDate} onClose={() => setBulkOpen(false)} onSaved={bulkSaved} />}
     {replacement && <FindReplacementDialog api={api} rota={rota} target={replacement}

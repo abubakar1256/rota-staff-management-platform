@@ -55,6 +55,7 @@ from .document_archive import DocumentArchiveSerializer, build_document_archive,
 from .pin_encryption import pin_cipher
 from .rota_document_expiry import assignment_document_expiry_conflicts
 from .rota_checks import RotaAssignmentChecks, assignment_interval
+from .site_rota_planner import SitePlannerInput, SiteWeeklyPlan
 from .rota_planning import CopyWeekInput, EligibleGuardsInput, MultiDayInput, SiteInput, plan_multi_day, plan_week_copy
 from .rota_replacement import ReplacementInput, evidence_operations, leave_covers_assignment, replacement_plans
 from .staffing import day_requirements, staffed_positions, unfilled_count
@@ -1599,6 +1600,47 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
                 for row in plan["rows"]
             ))[:250],
         )
+
+    @action(detail=True, methods=["get", "post"], url_path="site-planner")
+    @transaction.atomic
+    def site_planner(self, request, pk=None):
+        week = self.get_object()
+        if request.method == "GET":
+            inputs = SiteInput(data=request.query_params)
+            inputs.is_valid(raise_exception=True)
+            site = get_object_or_404(self.planning_sites(), pk=inputs.validated_data["site"], is_active=True)
+            return Response(SiteWeeklyPlan(week, site).snapshot(self.active_inducted_guards(site)))
+
+        inputs = SitePlannerInput(data=request.data)
+        inputs.is_valid(raise_exception=True)
+        data = inputs.validated_data
+        site = get_object_or_404(self.planning_sites(), pk=data["site"], is_active=True)
+        applying = not data["preview"]
+        if applying:
+            week = RotaWeek.objects.select_for_update().get(pk=week.pk)
+        if week.status == RotaWeek.Status.PUBLISHED:
+            raise ValidationError({"detail": "Reopen the rota before changing the site plan."})
+        changes = data["changes"]
+        last_day = week.week_start + timedelta(days=6)
+        if any(not week.week_start <= row["work_date"] <= last_day for row in changes):
+            raise ValidationError({"detail": "All dates must be within the selected week."})
+
+        employee_ids = {row["employee"] for row in changes}
+        if applying:
+            list(Employee.objects.filter(pk__in=employee_ids).select_for_update().order_by("pk").values_list("pk", flat=True))
+        guards = self.active_inducted_guards(site).filter(pk__in=employee_ids).prefetch_related("documents")
+        plan = SiteWeeklyPlan(week, site, locking=applying)
+        result, pending = plan.preview(changes, {guard.pk: guard for guard in guards})
+        if not applying:
+            return Response(result)
+        if changed := self.check_preview(data, result):
+            return changed
+        if result["skipped"] or not result["ready"]:
+            raise ValidationError({"detail": "Resolve the conflicts and preview the changes before saving."})
+        for day, slots in plan.save(pending, request.user).items():
+            sync_rota_date_operations(week, day, request.user, only_slots=slots)
+            transaction.on_commit(lambda day=day: generate_daily_arrival_reports(day, request.user), robust=True)
+        return Response({**result, "saved": result["ready"]})
 
     @action(detail=True, methods=["post"])
     def assign_days(self, request, pk=None):

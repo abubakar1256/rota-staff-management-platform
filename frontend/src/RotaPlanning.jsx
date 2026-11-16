@@ -5,14 +5,14 @@ import { matchesShiftPreference, shiftPeriod, shiftPreferenceLabels } from "./sh
 import "./rotaPlanning.css";
 
 const dayFormat = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
-const dateLabel = (date) => dayFormat.format(new Date(`${date}T12:00:00Z`));
+export const dateLabel = (date) => dayFormat.format(new Date(`${date}T12:00:00Z`));
 const time = (value) => value?.slice(0, 5) || "";
 const pageSize = 12;
 
-function PlanningDialog({ title, onClose, busy, children }) {
+export function PlanningDialog({ title, onClose, busy, children, className = "" }) {
   const dialog = useRef(null);
   useEffect(() => { dialog.current.showModal(); }, []);
-  return <dialog className="rota-planning-dialog" ref={dialog} aria-labelledby="rota-planning-title"
+  return <dialog className={`rota-planning-dialog ${className}`} ref={dialog} aria-labelledby="rota-planning-title"
     onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
     <header className="modal-header">
       <h3 id="rota-planning-title">{title}</h3>
@@ -134,7 +134,7 @@ export function BulkAssignmentDialog({ api, rota, days, sites, shifts, selectedD
   </PlanningDialog>;
 }
 
-function Pages({ page, count, onChange }) {
+export function Pages({ page, count, onChange }) {
   const pages = Math.ceil(count / pageSize);
   if (pages < 2) return null;
   return <nav className="rota-planning-pagination" aria-label="Result pages">
