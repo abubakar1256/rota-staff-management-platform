@@ -54,7 +54,7 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertEqual(response.status_code, expected, response.data)
         return response.data
 
-    def test_whatsapp_number_is_optional_normalised_and_office_only(self):
+    def test_guard_whatsapp_number_syncs_with_admin_and_sharing(self):
         url = f"/api/employees/{self.guard.pk}/"
         updated = self.client.patch(url, {"whatsapp_number": "0044 (7700) 900012"}, format="json")
         self.assertEqual(updated.status_code, 200, updated.data)
@@ -65,8 +65,31 @@ class WhatsAppMessagingTests(APITestCase):
         self.guard.user = user
         self.guard.save(update_fields=["user"])
         self.client.force_authenticate(user)
-        self.assertNotIn("whatsapp_number", self.client.get("/api/employees/me/").data)
-        self.assertEqual(self.client.patch("/api/employees/me/", {"whatsapp_number": "+447700900055"}, format="json").status_code, 400)
+        self.assertEqual(self.client.get("/api/employees/me/").data["whatsapp_number"], "")
+        updated = self.client.patch("/api/employees/me/", {"whatsapp_number": "0044 (7700) 900055"}, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["whatsapp_number"], "+447700900055")
+        invalid = self.client.patch("/api/employees/me/", {"whatsapp_number": "07700900012"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(self.client.get(f"/api/employees/{self.other_guard.pk}/").status_code, 403)
+        self.assertEqual(self.client.patch(f"/api/employees/{self.other_guard.pk}/", {"whatsapp_number": ""}, format="json").status_code, 403)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.get(url).data["whatsapp_number"], "+447700900055")
+        week, shift, site = self.make_week()
+        self.assign(week, shift, site, self.guard, week.week_start)
+        self.publish(week)
+        self.assertEqual(urlsplit(self.rota_queue(week)[self.guard.pk]["whatsapp_url"]).path, "/447700900055")
+
+        manager = self.user("whatsapp-manager", UserProfile.Role.MANAGER)
+        manager.profile.managed_sites.add(site)
+        self.client.force_authenticate(manager)
+        self.assertNotIn("whatsapp_number", self.client.get(url).data)
+        self.assertEqual(self.client.patch(url, {"whatsapp_number": ""}, format="json").status_code, 403)
+
+        self.client.force_authenticate(user)
+        self.assertEqual(self.client.patch("/api/employees/me/", {"whatsapp_number": ""}, format="json").data["whatsapp_number"], "")
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.rota_queue(week)[self.guard.pk]["status"], "NUMBER_MISSING")
 
     def test_announcement_for_150_guards_preserves_exact_text_and_progress(self):
         extras = Employee.objects.bulk_create([

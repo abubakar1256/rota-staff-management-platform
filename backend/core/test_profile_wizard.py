@@ -73,6 +73,18 @@ class GuardProfileWizardTests(APITestCase):
         self.assertEqual(audit.after_data["photo_document_id"], photo.pk)
         self.assertEqual(audit.after_data["profile"]["nationality"], "United Kingdom")
 
+    def test_optional_whatsapp_number_can_be_saved_without_resetting_profile(self):
+        self.photo()
+        submitted = self.submit(whatsapp_number="0044 7700 900012")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data["whatsapp_number"], "+447700900012")
+        for number in ("+447700900013", ""):
+            updated = self.client.patch("/api/employees/me/", {"whatsapp_number": number}, format="json")
+            self.assertEqual(updated.status_code, 200, updated.data)
+            self.assertEqual(updated.data["whatsapp_number"], number)
+            self.assertEqual(updated.data["profile_completion"], 100)
+            self.assertEqual(updated.data["profile_declaration_accepted_at"], submitted.data["profile_declaration_accepted_at"])
+
     def test_guard_cannot_submit_another_guard_or_change_office_fields(self):
         self.photo()
         for extra in ({"employee": self.other_employee.pk}, {"joining_date": "2026-11-03"}, {"profile_declaration_accepted_at": timezone.now().isoformat()}):

@@ -27,10 +27,10 @@ test("100% requires every guard field, picture and declaration without office-ma
   assert.equal(profilePercentage(profileDraft(), false, false), 0);
 });
 
-test("every profile field blocks its step and final submission when empty, missing or whitespace", () => {
+test("every required profile field blocks its step and final submission when empty, missing or whitespace", () => {
   const details = Object.fromEntries(profileFields.map((field) => [field, field === "nationality" ? "Pakistan" : "Provided"]));
   for (const [step, fields] of Object.entries(stepFields)) {
-    for (const field of fields) {
+    for (const field of fields.filter((field) => profileFields.includes(field))) {
       for (const value of [undefined, null, "", " \t\n "]) {
         const incomplete = { ...details, [field]: value };
         assert.equal(profileStepError(incomplete, Number(step))?.step, Number(step), `${field} must block Next`);
@@ -38,6 +38,15 @@ test("every profile field blocks its step and final submission when empty, missi
       }
     }
   }
+});
+
+test("WhatsApp is saved with contact details and stays optional for profile completion", () => {
+  const details = Object.fromEntries(profileFields.map((field) => [field, field === "nationality" ? "Pakistan" : "Provided"]));
+  const draft = profileDraft({ ...details, whatsapp_number: "+447700900123" });
+  assert.ok(stepFields[2].includes("whatsapp_number"));
+  assert.equal(draft.whatsapp_number, "+447700900123");
+  assert.equal(profileStepError({ ...draft, whatsapp_number: "" }, 4), null);
+  assert.equal(profilePercentage({ ...draft, whatsapp_number: "" }, true, true), 100);
 });
 
 test("Next validates previous steps but permits unfinished future steps", () => {

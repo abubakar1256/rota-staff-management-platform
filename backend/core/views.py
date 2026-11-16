@@ -1012,7 +1012,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not employee:
             return Response({"detail": "No employee profile is linked to this account."}, status=status.HTTP_404_NOT_FOUND)
         if request.method == "PATCH":
-            blocked = set(request.data) - {"name", "date_of_birth", "nationality", "phone", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship"}
+            blocked = set(request.data) - {"name", "date_of_birth", "nationality", "phone", "whatsapp_number", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship"}
             if blocked:
                 return Response({"detail": f"These fields cannot be changed from your profile: {', '.join(sorted(blocked))}."}, status=status.HTTP_400_BAD_REQUEST)
             serializer = self.get_serializer(employee, data=request.data, partial=True)
@@ -1031,10 +1031,11 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No employee profile is linked to this account."}, status=404)
         if request.data.get("declaration_accepted") is not True:
             return Response({"detail": "Please confirm that your information is true and correct before submitting."}, status=400)
-        blocked = set(request.data) - set(PROFILE_FIELDS) - {"declaration_accepted"}
+        editable_fields = {*PROFILE_FIELDS, "whatsapp_number"}
+        blocked = set(request.data) - editable_fields - {"declaration_accepted"}
         if blocked:
             return Response({"detail": "Only your personal and emergency details can be submitted here."}, status=400)
-        details = {key: value for key, value in request.data.items() if key in PROFILE_FIELDS}
+        details = {key: value for key, value in request.data.items() if key in editable_fields}
         serializer = self.get_serializer(employee, data=details, partial=True)
         serializer.is_valid(raise_exception=True)
         missing = [field.replace("_", " ") for field in PROFILE_FIELDS if not str(serializer.validated_data.get(field, getattr(employee, field)) or "").strip()]

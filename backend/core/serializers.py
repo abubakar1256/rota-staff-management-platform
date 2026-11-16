@@ -239,17 +239,21 @@ class EmployeeSerializer(serializers.ModelSerializer):
     )
     timegate_pin_saved = serializers.SerializerMethodField()
 
+    def can_access_whatsapp_number(self, employee):
+        request = self.context.get("request")
+        return bool(request and (is_admin(request.user) or (
+            is_guard(request.user) and employee is not None and employee.user_id == request.user.pk
+        )))
+
     def to_representation(self, instance):
         result = super().to_representation(instance)
-        request = self.context.get("request")
-        if not request or not is_admin(request.user):
+        if not self.can_access_whatsapp_number(instance):
             result.pop("whatsapp_number", None)
         return result
 
     def validate_whatsapp_number(self, value):
-        request = self.context.get("request")
-        if not request or not is_admin(request.user):
-            raise PermissionDenied("Only Admin or Super Admin can manage WhatsApp numbers.")
+        if not self.can_access_whatsapp_number(self.instance):
+            raise PermissionDenied("Only the guard or an admin can manage this WhatsApp number.")
         if not value:
             return ""
         try:
