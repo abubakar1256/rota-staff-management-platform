@@ -87,8 +87,10 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertEqual(self.client.patch(url, {"whatsapp_number": ""}, format="json").status_code, 403)
 
         self.client.force_authenticate(user)
-        self.assertEqual(self.client.patch("/api/employees/me/", {"whatsapp_number": ""}, format="json").data["whatsapp_number"], "")
+        self.assertEqual(self.client.patch("/api/employees/me/", {"whatsapp_number": ""}, format="json").status_code, 400)
         self.client.force_authenticate(self.admin)
+        self.assertEqual(urlsplit(self.rota_queue(week)[self.guard.pk]["whatsapp_url"]).path, "/447700900055")
+        self.assertEqual(self.client.patch(url, {"whatsapp_number": ""}, format="json").data["whatsapp_number"], "")
         self.assertEqual(self.rota_queue(week)[self.guard.pk]["status"], "NUMBER_MISSING")
 
     def test_announcement_for_150_guards_preserves_exact_text_and_progress(self):

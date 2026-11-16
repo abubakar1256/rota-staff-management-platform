@@ -1023,7 +1023,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="submit-profile")
     @transaction.atomic
     def submit_profile(self, request):
-        from .profile_completion import PROFILE_FIELDS, PROFILE_DECLARATION, PROFILE_DECLARATION_VERSION, profile_photo
+        from .profile_completion import (
+            PROFILE_FIELDS, PROFILE_DECLARATION, PROFILE_DECLARATION_VERSION, REQUIRED_PROFILE_FIELDS,
+            profile_field_complete, profile_photo,
+        )
         if role_of(request.user) != "EMPLOYEE":
             raise PermissionDenied("Only guards can submit their own profile declaration.")
         employee = self.get_queryset().select_for_update().first()
@@ -1031,14 +1034,18 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No employee profile is linked to this account."}, status=404)
         if request.data.get("declaration_accepted") is not True:
             return Response({"detail": "Please confirm that your information is true and correct before submitting."}, status=400)
-        editable_fields = {*PROFILE_FIELDS, "whatsapp_number"}
+        editable_fields = set(REQUIRED_PROFILE_FIELDS)
         blocked = set(request.data) - editable_fields - {"declaration_accepted"}
         if blocked:
             return Response({"detail": "Only your personal and emergency details can be submitted here."}, status=400)
         details = {key: value for key, value in request.data.items() if key in editable_fields}
         serializer = self.get_serializer(employee, data=details, partial=True)
         serializer.is_valid(raise_exception=True)
-        missing = [field.replace("_", " ") for field in PROFILE_FIELDS if not str(serializer.validated_data.get(field, getattr(employee, field)) or "").strip()]
+        missing = [
+            "WhatsApp number with country code" if field == "whatsapp_number" else field.replace("_", " ")
+            for field in REQUIRED_PROFILE_FIELDS
+            if not profile_field_complete(field, serializer.validated_data.get(field, getattr(employee, field)))
+        ]
         photo = profile_photo(employee)
         if missing or not photo:
             if not photo:
@@ -1249,6 +1256,7 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
         induction = self.get_object()
         employee = induction.employee
         response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Cache-Control"] = "private, no-store"
         safe_name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
         response["Content-Disposition"] = f'attachment; filename="{safe_name} - induction.csv"'
         response.write("\ufeff")

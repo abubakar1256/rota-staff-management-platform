@@ -255,6 +255,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if not self.can_access_whatsapp_number(self.instance):
             raise PermissionDenied("Only the guard or an admin can manage this WhatsApp number.")
         if not value:
+            if is_guard(self.context["request"].user):
+                raise serializers.ValidationError("Enter your WhatsApp number with its country code.")
             return ""
         try:
             return normalise_whatsapp_number(value)

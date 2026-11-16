@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import NationalitySelect from "./NationalitySelect";
 import ProfilePictureStep from "./ProfilePictureStep";
 import { findNationality } from "./nationalities";
-import { profileDraft, profileReviewFields, profileFieldLabels, profilePercentage, profileStepError, profileSteps, stepFields } from "./profileWizard";
+import { hasValidWhatsAppNumber, profileDraft, profileFields, profileFieldLabels, profilePercentage, profileStepError, profileSteps, stepFields } from "./profileWizard";
 import "./profileWizard.css";
 
 export default function GuardProfileWizard({ api, Image }) {
@@ -16,7 +16,17 @@ export default function GuardProfileWizard({ api, Image }) {
   const heading = useRef(null), previousStep = useRef(0);
   const load = () => {
     setLoading(true); setError("");
-    return api("/employees/me/", { silentLoading: true }).then((data) => { setProfile(data); setForm(profileDraft(data)); setAccepted(Boolean(data.profile_declaration_accepted_at)); setSubmitted(Boolean(data.profile_declaration_accepted_at)); }).catch((err) => setError(err.message)).finally(() => setLoading(false));
+    return api("/employees/me/", { silentLoading: true }).then((data) => {
+      const draft = profileDraft(data);
+      const confirmed = Boolean(data.profile_declaration_accepted_at);
+      const needsWhatsApp = confirmed && Boolean(data.profile_photo_url) && !hasValidWhatsAppNumber(draft.whatsapp_number);
+      setProfile(data);
+      setForm(draft);
+      setAccepted(confirmed);
+      setSubmitted(profilePercentage(draft, data.profile_photo_url, confirmed) === 100);
+      setEditingContact(needsWhatsApp);
+      if (needsWhatsApp) setStep(2);
+    }).catch((err) => setError(err.message)).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (previousStep.current !== step) { previousStep.current = step; heading.current?.focus({ preventScroll: true }); heading.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } }, [step]);
@@ -50,7 +60,10 @@ export default function GuardProfileWizard({ api, Image }) {
     }
     if (!profile.profile_photo_url) { setStep(0); setError("Choose a profile photo before continuing."); return; }
     const validationError = profileStepError(form, step);
-    if (validationError) { setStep(validationError.step); setError(validationError.message); return; }
+    if (validationError) {
+      if (editingContact && validationError.step !== 2) setEditingContact(false);
+      setStep(validationError.step); setError(validationError.message); return;
+    }
     if (step === 4) {
       if (!accepted) { setError("Please confirm that all your information is true and correct."); return; }
     }
@@ -60,7 +73,7 @@ export default function GuardProfileWizard({ api, Image }) {
       const data = await api(step === 4 ? "/employees/submit-profile/" : "/employees/me/", { method: step === 4 ? "POST" : "PATCH", body: JSON.stringify(withoutUnchangedWhatsApp(payload)), silentToast: step !== 4 });
       setProfile(data);
       if (step === 4) { setForm(profileDraft(data)); setSubmitted(true); setAccepted(true); }
-      else if (editingContact && data.profile_declaration_accepted_at) {
+      else if (editingContact && profilePercentage(profileDraft(data), data.profile_photo_url, data.profile_declaration_accepted_at) === 100) {
         setForm(profileDraft(data)); setAccepted(true); setSubmitted(true); setEditingContact(false);
         setNotice("Contact details saved.");
       } else {
@@ -72,13 +85,13 @@ export default function GuardProfileWizard({ api, Image }) {
   if (loading) return <section className="panel" role="status">Loading your profile…</section>;
   if (!profile) return <section className="panel"><p className="error" role="alert">{error || "Your profile could not be loaded."}</p><button type="button" className="secondary-button" onClick={load}>Try again</button></section>;
   const percentage = profilePercentage(form, profile.profile_photo_url, accepted && profile.profile_declaration_accepted_at);
-  const review = <div className="profile-review-grid">{profile.profile_photo_url && <div className="profile-review-photo"><Image src={profile.profile_photo_url} alt="Your passport-size profile picture" /></div>}{profileReviewFields.map((field) => <div key={field}><dt>{profileFieldLabels[field]}</dt><dd>{form[field] || "Not provided"}</dd></div>)}</div>;
+  const review = <div className="profile-review-grid">{profile.profile_photo_url && <div className="profile-review-photo"><Image src={profile.profile_photo_url} alt="Your passport-size profile picture" /></div>}{profileFields.map((field) => <div key={field}><dt>{profileFieldLabels[field]}</dt><dd>{form[field] || "Not provided"}</dd></div>)}</div>;
   const openContactDetails = () => { setError(""); setNotice(""); setStep(2); setEditingContact(true); setSubmitted(false); };
   const cancelContactEdit = () => {
     setForm(profileDraft(profile)); setAccepted(true); setSubmitted(true); setEditingContact(false); setError(""); setNotice("");
   };
   return <>
-    <div className="page-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2 tabIndex={-1} ref={heading}>My profile</h2><p className="muted">{percentage === 100 ? "Your profile is complete. Keep your picture and contact details up to date." : "Please complete your profile to 100%. Start with your passport-size picture, then follow the steps below."}</p></div><span className="profile-progress-badge">{percentage}% complete</span></div>
+    <div className="page-heading"><div><p className="eyebrow">GUARD PORTAL</p><h2 tabIndex={-1} ref={heading}>My profile</h2><p className="muted">{percentage === 100 ? "Your profile is complete. Keep your picture and contact details up to date." : step === 2 && editingContact ? "Add your WhatsApp number to complete your profile." : "Complete the steps below to finish your profile."}</p></div><span className="profile-progress-badge">{percentage}% complete</span></div>
     <section className="panel profile-wizard-progress"><div><strong>{profile.name}</strong><span>{profile.employee_id} · {profile.position || "Guard"}</span></div><div className="profile-wizard-progress-row"><strong>Profile completion</strong><span>{percentage}%</span></div><div className="progress-track" role="progressbar" aria-label="Profile completion" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percentage}><span style={{ width: `${percentage}%` }} /></div><small>{percentage === 100 ? "Your details and confirmation are complete." : "Your percentage increases as you add your picture and complete your details."}</small></section>
     {submitted ? <section className="panel profile-wizard-success">
       <CheckCircle2 size={34} /><h3>Profile completed successfully</h3><p>Your profile is 100% complete and your declaration has been recorded.</p>
@@ -90,7 +103,7 @@ export default function GuardProfileWizard({ api, Image }) {
       </div>
     </section> : <section className="panel profile-wizard">
       <ol className="profile-wizard-steps" aria-label="Profile steps">{profileSteps.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} className={index === step ? "current" : index < step ? "done" : ""}><span>{index < step ? "✓" : index + 1}</span><strong>{label}</strong></li>)}</ol>
-      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3>{step > 0 && <p className="muted">{["", "Enter your personal details. Type to search for your nationality.", "Keep your phone, login email and address up to date. Add a WhatsApp number if you use it for rota messages.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]}</p>}</div>
+      <div className="profile-wizard-step-title"><span>Step {step + 1} of {profileSteps.length}</span><h3>{profileSteps[step]}</h3>{step > 0 && <p className="muted">{["", "Enter your personal details. Type to search for your nationality.", "Keep your contact details up to date so the office can send your rota.", "Tell us who to contact in an emergency.", "Check every detail below and confirm the declaration before submitting."][step]}</p>}</div>
       {error && <p className="error" role="alert">{error}</p>}{notice && <p className="success" role="status">{notice}</p>}
       {step === 0 && <ProfilePictureStep ref={picture} api={api} profile={profile} Image={Image} onReadyChange={setPhotoReady} onPhotoChange={() => setAccepted(false)} />}
       <form onSubmit={next} className="profile-wizard-form">
@@ -99,8 +112,8 @@ export default function GuardProfileWizard({ api, Image }) {
           {step === 2 && <div className="form-grid">
             <label>Email (login username)<input required type="email" autoComplete="email" value={form.email} onChange={(event) => update("email", event.target.value)} /></label>
             <label>Phone number<input required type="tel" maxLength={40} autoComplete="tel" value={form.phone} onChange={(event) => update("phone", event.target.value)} /></label>
-            <label className="full-width">WhatsApp number (optional)
-              <input type="tel" inputMode="tel" maxLength={40} value={form.whatsapp_number} placeholder="+44 7700 900123"
+            <label className="full-width">WhatsApp number (required)
+              <input required type="tel" inputMode="tel" maxLength={40} value={form.whatsapp_number} placeholder="+44 7700 900123"
                 onChange={(event) => update("whatsapp_number", event.target.value)} aria-describedby="profile-whatsapp-help" />
               <small id="profile-whatsapp-help" className="muted">Include the country code. The office uses this number for WhatsApp rota and announcements.</small>
             </label>
@@ -110,7 +123,7 @@ export default function GuardProfileWizard({ api, Image }) {
           {step === 4 && <>{review}<label className="profile-wizard-declaration"><input type="checkbox" required checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span>{profile.profile_declaration_text}</span></label><small className="muted">Your confirmation and submission time will be recorded.</small></>}
         </fieldset>
         <div className="profile-wizard-actions">
-          {editingContact ? <button type="button" className="secondary-button" disabled={saving} onClick={cancelContactEdit}>Cancel</button>
+          {editingContact ? hasValidWhatsAppNumber(profile.whatsapp_number) && <button type="button" className="secondary-button" disabled={saving} onClick={cancelContactEdit}>Cancel</button>
             : step > 0 && <><button type="button" className="secondary-button" disabled={saving} onClick={() => { setStep((current) => current - 1); setError(""); setNotice(""); }}><ChevronLeft size={16} />Back</button>
               <button type="button" className="secondary-button" disabled={saving} onClick={saveDraft}>Save draft</button></>}
           <button type="submit" className="primary-button" disabled={saving || (step === 0 && !photoReady) || (step === 4 && !accepted)}>

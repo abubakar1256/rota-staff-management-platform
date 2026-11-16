@@ -24,7 +24,7 @@ test("search accepts nationalities, country names and previous country codes", (
 
 test("saved country values remain valid and the profile displays the corresponding nationality", () => {
   for (const [oldValue, name] of [["United Kingdom", "British"], ["Pakistan", "Pakistani"], ["Sudan", "Sudanese"], ["South Sudan", "South Sudanese"]]) {
-    const details = Object.fromEntries(profileFields.map((field) => [field, field === "nationality" ? oldValue : "Provided"]));
+    const details = { ...Object.fromEntries(profileFields.map((field) => [field, "Provided"])), nationality: oldValue, whatsapp_number: "+447700900123" };
     const draft = profileDraft(details);
     assert.equal(draft.nationality, name);
     assert.equal(profileStepError(draft, 4), null);

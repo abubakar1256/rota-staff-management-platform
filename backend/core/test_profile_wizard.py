@@ -19,6 +19,7 @@ class GuardProfileWizardTests(APITestCase):
         self.employee = Employee.objects.create(employee_id="WIZ-1", name="Profile Wizard Guard", email=self.guard.email, user=self.guard)
         self.other_employee = Employee.objects.create(employee_id="WIZ-2", name="Other Wizard Guard", email="other-wizard@example.com", user=self.other)
         self.details = {"name": self.employee.name, "date_of_birth": "1990-02-03", "nationality": "United Kingdom", "phone": "+447700900123", "email": self.guard.email, "address": "Test address", "emergency_contact_name": "Emergency Contact", "emergency_contact_phone": "+447700900456", "emergency_contact_relationship": "Sibling"}
+        self.details["whatsapp_number"] = "+447700900012"
         self.client.force_authenticate(self.guard)
 
     def photo(self):
@@ -30,11 +31,11 @@ class GuardProfileWizardTests(APITestCase):
     def test_drafts_save_without_declaration_and_percentage_includes_picture(self):
         response = self.client.patch("/api/employees/me/", self.details, format="json")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["profile_completion"], 82)
+        self.assertEqual(response.data["profile_completion"], 83)
         self.assertIsNone(response.data["profile_declaration_accepted_at"])
         self.photo()
         response = self.client.get("/api/employees/me/")
-        self.assertEqual(response.data["profile_completion"], 91)
+        self.assertEqual(response.data["profile_completion"], 92)
         self.assertIsNone(response.data["joining_date"])
 
     def test_final_submit_requires_explicit_confirmation_and_actual_picture_record(self):
@@ -73,17 +74,46 @@ class GuardProfileWizardTests(APITestCase):
         self.assertEqual(audit.after_data["photo_document_id"], photo.pk)
         self.assertEqual(audit.after_data["profile"]["nationality"], "United Kingdom")
 
-    def test_optional_whatsapp_number_can_be_saved_without_resetting_profile(self):
+    def test_required_whatsapp_number_can_be_changed_without_resetting_profile(self):
         self.photo()
         submitted = self.submit(whatsapp_number="0044 7700 900012")
         self.assertEqual(submitted.status_code, 200, submitted.data)
         self.assertEqual(submitted.data["whatsapp_number"], "+447700900012")
-        for number in ("+447700900013", ""):
-            updated = self.client.patch("/api/employees/me/", {"whatsapp_number": number}, format="json")
-            self.assertEqual(updated.status_code, 200, updated.data)
-            self.assertEqual(updated.data["whatsapp_number"], number)
-            self.assertEqual(updated.data["profile_completion"], 100)
-            self.assertEqual(updated.data["profile_declaration_accepted_at"], submitted.data["profile_declaration_accepted_at"])
+        updated = self.client.patch("/api/employees/me/", {"whatsapp_number": "+447700900013"}, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["whatsapp_number"], "+447700900013")
+        self.assertEqual(updated.data["profile_completion"], 100)
+        self.assertEqual(updated.data["profile_declaration_accepted_at"], submitted.data["profile_declaration_accepted_at"])
+        for number in ("", "07700900013"):
+            rejected = self.client.patch("/api/employees/me/", {"whatsapp_number": number}, format="json")
+            self.assertEqual(rejected.status_code, 400)
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.whatsapp_number, "+447700900013")
+
+    def test_missing_whatsapp_allows_drafts_but_prevents_completion(self):
+        self.photo()
+        details = {key: value for key, value in self.details.items() if key != "whatsapp_number"}
+        draft = self.client.patch("/api/employees/me/", details, format="json")
+        self.assertEqual(draft.status_code, 200, draft.data)
+        self.assertEqual(draft.data["profile_completion"], 83)
+        submission = self.client.post("/api/employees/submit-profile/", {"declaration_accepted": True}, format="json")
+        self.assertEqual(submission.status_code, 400)
+        self.assertIn("WhatsApp number", submission.data["detail"])
+
+    def test_existing_declaration_can_be_completed_by_adding_whatsapp(self):
+        self.photo()
+        self.assertEqual(self.submit().status_code, 200)
+        declared = Employee.objects.get(pk=self.employee.pk).profile_declaration_accepted_at
+        for legacy_number in ("", "07700900012"):
+            with self.subTest(legacy_number=legacy_number):
+                Employee.objects.filter(pk=self.employee.pk).update(whatsapp_number=legacy_number)
+                current = self.client.get("/api/employees/me/")
+                self.assertEqual(current.data["profile_completion"], 92)
+                updated = self.client.patch("/api/employees/me/", {"whatsapp_number": "+447700900012"}, format="json")
+                self.assertEqual(updated.status_code, 200, updated.data)
+                self.assertEqual(updated.data["profile_completion"], 100)
+                self.employee.refresh_from_db()
+                self.assertEqual(self.employee.profile_declaration_accepted_at, declared)
 
     def test_guard_cannot_submit_another_guard_or_change_office_fields(self):
         self.photo()
@@ -102,7 +132,7 @@ class GuardProfileWizardTests(APITestCase):
         unchanged = self.client.patch("/api/employees/me/", {"phone": self.details["phone"]}, format="json")
         self.assertEqual(unchanged.data["profile_completion"], 100)
         changed = self.client.patch("/api/employees/me/", {"phone": "+447700900789"}, format="json")
-        self.assertEqual(changed.data["profile_completion"], 91)
+        self.assertEqual(changed.data["profile_completion"], 92)
         self.assertIsNone(changed.data["profile_declaration_accepted_at"])
         self.assertEqual(changed.data["profile_declaration_version"], "")
 
@@ -121,7 +151,7 @@ class GuardProfileWizardTests(APITestCase):
         photo.delete()
         self.employee.refresh_from_db()
         self.assertIsNone(self.employee.profile_declaration_accepted_at)
-        self.assertEqual(EmployeeSerializer(self.employee).data["profile_completion"], 82)
+        self.assertEqual(EmployeeSerializer(self.employee).data["profile_completion"], 83)
 
     def test_unrelated_document_uploads_do_not_reset_profile_confirmation(self):
         self.photo()

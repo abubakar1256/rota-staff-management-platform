@@ -1,3 +1,4 @@
+import csv
 from datetime import date, time
 
 from django.contrib.auth import get_user_model
@@ -65,3 +66,24 @@ class GuardSiteLocationTests(APITestCase):
             self.assertEqual(row["site_address"], "2 Example Road, London")
             self.assertEqual(row["site_latitude"], 51.507462)
             self.assertEqual(row["site_longitude"], -0.127816)
+
+    def test_induction_csv_uses_latest_saved_profile_phone(self):
+        url = f"/api/site-inductions/{self.induction.pk}/download-csv/"
+        self.employee.phone = "+447700900123"
+        self.employee.whatsapp_number = "+447700900345"
+        self.employee.save(update_fields=["phone", "whatsapp_number"])
+
+        def download_phone():
+            self.client.force_authenticate(self.admin)
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Cache-Control"], "private, no-store")
+            rows = csv.DictReader(response.content.decode("utf-8-sig").splitlines())
+            return next(row["Value"] for row in rows if row["Field"] == "Contact Number")
+
+        self.assertEqual(download_phone(), "+447700900123")
+        self.client.force_authenticate(self.guard)
+        update = self.client.patch("/api/employees/me/", {"phone": "+447700900456"}, format="json")
+        self.assertEqual(update.status_code, 200, update.data)
+        self.assertEqual(update.data["phone"], "+447700900456")
+        self.assertEqual(download_phone(), "+447700900456")
