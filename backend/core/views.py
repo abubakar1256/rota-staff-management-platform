@@ -26,6 +26,7 @@ from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Prefetch, Q, prefetch_related_objects
+from django.db.models.deletion import ProtectedError
 from django.http import FileResponse, HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -1146,6 +1147,15 @@ class SiteViewSet(viewsets.ModelViewSet):
         if role_of(self.request.user) == "MANAGER":
             raise PermissionDenied("Managers can use assigned sites but cannot delete site records.")
         instance.delete()
+
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"detail": "This site has linked rota, attendance or timesheet records. Set its status to Inactive to keep its history."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
 
 class ShiftTypeViewSet(viewsets.ModelViewSet):

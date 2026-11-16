@@ -58,6 +58,26 @@ class AttendanceFixture:
 
 
 class SiteAttendanceModeTests(AttendanceFixture, APITestCase):
+    def test_cannot_delete_a_site_with_attendance_history(self):
+        self.client.force_authenticate(self.admin)
+        self.client.raise_request_exception = False
+        evidence = self.book_on_record(self.basic)
+        url = f"/api/sites/{self.basic_site.pk}/"
+
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Inactive", response.data["detail"])
+        self.assertTrue(Site.objects.filter(pk=self.basic_site.pk).exists())
+        self.assertTrue(ShiftAttendanceEvent.objects.filter(pk=evidence.pk).exists())
+
+        retired = self.client.patch(url, {"is_active": False}, format="json")
+        self.assertEqual(retired.status_code, 200)
+        self.assertFalse(retired.data["is_active"])
+        self.assertTrue(ShiftAttendanceEvent.objects.filter(pk=evidence.pk).exists())
+
+        unused = Site.objects.create(site_id="UNUSED", name="Unused site")
+        self.assertEqual(self.client.delete(f"/api/sites/{unused.pk}/").status_code, 204)
+
     def test_existing_site_default_retains_hourly_workflow(self):
         self.assertEqual(self.full_site.attendance_mode, "WITH_HOURLY")
         self.assertEqual(DailyOperationSerializer(self.full).data["expected_hourly_checkins"], 11)
