@@ -1,11 +1,12 @@
 import { attendanceGeofenceIssue, readCurrentLocation } from "./attendanceGeofence.js";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Clock3, Copy, Download, ExternalLink, FileText, History, LayoutDashboard, LogOut, Megaphone, Menu, MessageCircle, Pencil, RefreshCw, Search, ShieldCheck, Trash2, Upload, Users, UserPlus, X } from "lucide-react";
+import { BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, Camera, CheckCircle2, ChevronDown, ChevronRight, ClipboardList, Clock3, Copy, Download, ExternalLink, FileText, History, LayoutDashboard, LogOut, MapPin, Megaphone, Menu, MessageCircle, Pencil, RefreshCw, Search, ShieldCheck, Trash2, Upload, Users, UserPlus, X } from "lucide-react";
 import { invalidateForPath, queryClient } from "./queryClient";
 import AdminSecurity, { AdminMFA, AdminSessionMonitor } from "./AdminSecurity";
 import DashboardClock from "./DashboardClock";
 import GuardLocationMonitor from "./GuardLocationMonitor";
+import { GuardAttendanceDetails, GuardAttendanceReason, GuardAttendanceSite } from "./GuardAttendanceDetails";
 import GuardSiteInductions from "./GuardSiteInductions";
 import { cortexActivationWarning, EmployeeCortexITimeFields, GuardCortexITime } from "./CortexITime";
 import { EmployeeTimeGateFields, GuardTimeGate } from "./TimeGate";
@@ -1692,17 +1693,194 @@ function EmployeeAttendancePage({ initialDate, initialOperationId } = {}) {
     } catch (err) { reportError(err.message, item.id); } finally { setReasonSaving(""); }
   };
   const saveBookOffReason = async (item, existingReason = "") => { const reason = (hourlyReasons[`book-off-${item.id}`] ?? existingReason).trim(); if (!reason) { reportError("Please enter a reason for the missed Book Off picture.", item.id); return; } setReasonSaving(`book-off-${item.id}`); reportError(""); setNotice(""); try { await api(`/operations/${item.id}/book-off-note/`, { method: "POST", body: JSON.stringify({ reason }), silentError: true }); setNotice("Reason saved for the missed Book Off picture."); await load(); } catch (err) { reportError(err.message, item.id); } finally { setReasonSaving(""); } };
-  const eventsFor = (item) => item.attendance_events || [];
-  const hasEvent = (item, type) => eventsFor(item).some((event) => event.event_type === type);
-  const hourlyCount = (item) => eventsFor(item).filter((event) => event.event_type === "HOURLY").length;
-  const eventTime = (item, type) => { const event = eventsFor(item).find((entry) => entry.event_type === type); return event ? formatUkAttendanceTime(event.captured_at) : "—"; };
-  const formatCapturedAt = (value) => value ? new Date(value).toLocaleString("en-GB", { timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short" }) : "—";
-  const locationLabel = (event) => event && event.latitude !== null && event.longitude !== null ? `${Number(event.latitude).toFixed(6)}, ${Number(event.longitude).toFixed(6)}` : "Not recorded";
+  const formatCapturedAt = (value) => value ? new Date(value).toLocaleString("en-GB", {
+    timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short",
+  }) : "—";
+  const locationLabel = (event) => event?.latitude != null && event?.longitude != null
+    ? `${Number(event.latitude).toFixed(6)}, ${Number(event.longitude).toFixed(6)}`
+    : "Not recorded";
   const formatWindow = formatUkAttendanceTime;
-  const renderPhotoLink = (url, label = "View picture") => url ? <ProtectedFilePreview value={url} label="Attendance picture" buttonLabel={label} /> : null;
-  const locationMapUrl = (location, item) => { if (!location) return ""; const lat = Number(location.latitude); const lon = Number(location.longitude); if (!Number.isFinite(lat) || !Number.isFinite(lon)) return ""; const siteLat = Number(item.site_latitude); const siteLon = Number(item.site_longitude); const points = [[lat, lon]]; if (Number.isFinite(siteLat) && Number.isFinite(siteLon)) points.push([siteLat, siteLon]); const lats = points.map(([pointLat]) => pointLat); const lons = points.map(([, pointLon]) => pointLon); const padding = Math.max(0.002, Math.max(Math.max(...lats) - Math.min(...lats), Math.max(...lons) - Math.min(...lons)) * 0.35); const bbox = [Math.min(...lons) - padding, Math.min(...lats) - padding, Math.max(...lons) + padding, Math.max(...lats) + padding].map((value) => value.toFixed(6)).join(","); return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${lat},${lon}`; };
+  const renderPhotoLink = (url, label = "View picture") => url
+    ? <ProtectedFilePreview value={url} label="Attendance picture" buttonLabel={label} />
+    : null;
 
-  return <><div className="page-heading"><div><p className="eyebrow">GUARD ATTENDANCE</p><h2>My attendance</h2><p className="muted">Follow the attendance steps selected for each site.</p></div><div className="report-filters"><input type="date" value={date} aria-label="Attendance date" onChange={(e) => { setItems([]); setDate(e.target.value); }} /><CheckUpdatesButton api={api} paths={`/operations/?operation_date=${date}`} currentData={items} onUpdate={setItems} setError={setError} disabled={!date || loading || Boolean(saving)} /></div></div>{error && <p className="error page-error">{error}</p>}{notice && <p className="success page-success">{notice}</p>}<section className="panel attendance-instructions"><div><strong>Attendance flow</strong><span>Book On at arrival → complete any hourly pictures required by your site → Book Off at shift end.</span></div><small>Each hourly picture has a full 1-hour window. A missed-picture reason becomes available after that hour expires. Times shown in Europe/London (GMT/BST).</small></section>{loading ? <div className="empty-view"><h2>Loading shifts...</h2></div> : items.length ? <section className="attendance-shift-list">{items.map((item) => { const on = hasEvent(item, "BOOK_ON"); const off = hasEvent(item, "BOOK_OFF"); const photo = photoFiles[item.id]; const location = locations[item.id]; const liveCapturedAt = photoCapturedAt[item.id]; const checkins = hourlyCheckinsFor(item); const nextHourly = checkins.find((checkin) => checkin.status === "AVAILABLE"); const bookOnEvent = eventsFor(item).find((event) => event.event_type === "BOOK_ON"); const lateBookOn = bookOnIsLate(item, clock) || (!on && lateBookOnRequired[item.id]); const bookOffEvent = eventsFor(item).find((event) => event.event_type === "BOOK_OFF"); const lastLocationEvent = [...eventsFor(item)].reverse().find((event) => event.latitude !== null && event.longitude !== null); const mapLocation = location || lastLocationEvent; const mapUrl = locationMapUrl(mapLocation, item); const bookOffStatus = off ? "COMPLETED" : item.book_off_status || (on ? "AVAILABLE" : "UPCOMING"); const bookOffNote = item.book_off_note; const steps = [{ key: "book-on", label: "1. Book On", detail: on ? `Completed at ${eventTime(item, "BOOK_ON")}` : "Take a live picture when you arrive", status: on ? "COMPLETED" : "AVAILABLE", photo_url: bookOnEvent?.photo_url, event: bookOnEvent }, ...checkins.map((checkin) => { const event = eventsFor(item).find((entry) => entry.event_type === "HOURLY" && entry.sequence === checkin.sequence); return { key: `hourly-${checkin.sequence}`, sequence: checkin.sequence, label: `${checkin.sequence + 1}. Hourly picture`, detail: checkin.status === "COMPLETED" ? `Completed at ${formatWindow(checkin.captured_at)}` : checkin.status === "EXPIRED" ? `Missed — window ended ${formatWindow(checkin.deadline_at)}` : `Available ${formatWindow(checkin.due_at)}–${formatWindow(checkin.deadline_at)}`, status: checkin.status, photo_url: checkin.photo_url, missed_reason: checkin.missed_reason, event }; }), { key: "book-off", label: `${checkins.length + 2}. Book Off`, detail: off ? `Completed at ${eventTime(item, "BOOK_OFF")}` : bookOffStatus === "UPCOMING" ? `Available ${formatWindow(item.book_off_due_at)}–${formatWindow(item.book_off_deadline_at)}` : bookOffStatus === "EXPIRED" ? "Missed — reason required" : "Take the final live picture when your shift ends", status: bookOffStatus, photo_url: bookOffEvent?.photo_url, missed_reason: bookOffNote?.reason, event: bookOffEvent }]; return <article className="panel attendance-shift-card" key={item.id} id={`guard-operation-${item.id}`}><div className="attendance-shift-header"><div><h3>{item.site_name}</h3><span className="attendance-mode-chip">{siteAttendanceLabel(item)}</span><small className="table-subtext">GPS required · Stay within {item.site_geofence_radius_m}m of this site.</small><p className="muted">{item.operation_date} · {item.shift_name} · {String(item.scheduled_start || "").slice(0, 5)}–{String(item.scheduled_end || "").slice(0, 5)}</p></div><span className={`status-pill ${off ? "active" : on ? "present" : "pending"}`}>{off ? "Booked off" : on ? "On duty" : "Not started"}</span></div><SiteLocationLinks item={item} />{attendanceIssue?.operationId === item.id && <p className="attendance-action-error" role="alert">{attendanceIssue.message}</p>}{off ? <><ShiftCompletionSummary summary={item.completion_summary} /><CompletedAttendanceHistory item={item} steps={steps} renderPhotoLink={renderPhotoLink} /></> : <div className="attendance-step-list">{steps.map((step, index) => <div className={`attendance-step ${step.status.toLowerCase()}`} key={step.key}><span className="attendance-step-number">{index + 1}</span><div><strong>{step.label}</strong><small>{step.detail}</small>{step.event && <small className="attendance-photo-meta">Captured {formatCapturedAt(step.event.captured_at)} · GPS {locationLabel(step.event)}</small>}{step.status === "EXPIRED" && step.key.startsWith("hourly-") && <div className="missed-hourly-note"><strong>Why was this hourly picture missed?</strong><textarea rows="2" value={hourlyReasons[`${item.id}-${step.sequence}`] ?? step.missed_reason ?? ""} onChange={(event) => setHourlyReasons((current) => ({ ...current, [`${item.id}-${step.sequence}`]: event.target.value }))} placeholder="Tell the office what happened (for example: site incident, emergency or camera issue)." /><button type="button" className="mini-button" disabled={reasonSaving === `${item.id}-${step.sequence}`} onClick={() => saveHourlyReason(item, step.sequence, step.missed_reason)}>{reasonSaving === `${item.id}-${step.sequence}` ? "Saving reason..." : step.missed_reason ? "Update reason" : "Save reason"}</button>{step.missed_reason && <small className="note-saved-label">Reason saved for office review.</small>}</div>}{step.status === "EXPIRED" && step.key === "book-off" && <div className="missed-hourly-note"><strong>Why was the Book Off picture missed?</strong><textarea rows="2" value={hourlyReasons[`book-off-${item.id}`] ?? step.missed_reason ?? ""} onChange={(event) => setHourlyReasons((current) => ({ ...current, [`book-off-${item.id}`]: event.target.value }))} placeholder="Tell the office why Book Off was late or missed." /><button type="button" className="mini-button" disabled={reasonSaving === `book-off-${item.id}`} onClick={() => saveBookOffReason(item, step.missed_reason)}>{reasonSaving === `book-off-${item.id}` ? "Saving reason..." : step.missed_reason ? "Update reason" : "Save reason"}</button>{step.missed_reason && <small className="note-saved-label">Reason saved for office review.</small>}</div>}{step.key === "book-on" && lateBookOn && <div className="missed-hourly-note late-book-on-note"><strong>Reason for late Book On</strong><p className="muted">Your shift started at {formatWindow(item.book_on_due_at)}. {on ? "The office can review your explanation below." : "Enter a brief reason. It will be saved with your Book On."}</p><textarea rows="2" maxLength={500} aria-label={`Reason for late Book On at ${item.site_name}`} value={bookOnReasons[item.id] ?? bookOnEvent?.late_reason ?? ""} onChange={(event) => setBookOnReasons((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="Explain why you arrived late (up to 500 characters)." />{on && <button type="button" className="mini-button" disabled={reasonSaving === `book-on-${item.id}`} onClick={() => saveBookOnReason(item, bookOnEvent?.late_reason || "")}>{reasonSaving === `book-on-${item.id}` ? "Saving reason…" : bookOnEvent?.late_reason ? "Update reason" : "Save reason"}</button>}{on && bookOnEvent?.late_reason && <small className="note-saved-label">Reason saved for office review.</small>}</div>}{step.key === "book-on" && !on && <div className="attendance-stage-controls"><div className="attendance-actions"><button type="button" className={location ? "secondary-button gps-ready" : "secondary-button"} onClick={() => saveLocation(item)}>{location ? "GPS saved · Set again" : "1. Set GPS location"}</button><small>{location ? `Accuracy ±${Math.round(location.accuracy || 0)}m` : "Required before Book On"}</small></div>{photo && <div className="attendance-photo-meta-card"><strong>Live picture ready</strong><span>Captured {formatCapturedAt(liveCapturedAt)}</span>{location && <span>Current location: {locationLabel(location)} · ±{Math.round(location.accuracy || 0)}m</span>}</div>}<button type="button" className="attendance-photo-input" onClick={() => openCamera(item.id)}><Camera size={16} /> <span>2. Take live picture</span><small>{photo ? `Photo ready: ${photo.name}` : "Camera only — gallery upload is disabled"}</small></button><button type="button" className="primary-button" disabled={saving === `${item.id}-BOOK_ON`} onClick={() => submitAttendance(item, "BOOK_ON")}>{saving === `${item.id}-BOOK_ON` ? "Submitting..." : "3. Submit Book On"}</button></div>}{step.key.startsWith("hourly-") && on && step.status === "AVAILABLE" && nextHourly?.sequence === step.sequence && <div className="attendance-stage-controls"><div className="attendance-actions"><button type="button" className={location ? "secondary-button gps-ready" : "secondary-button"} onClick={() => saveLocation(item)}>{location ? "GPS saved · Set again" : "Set GPS location"}</button><small>{location ? `Accuracy ±${Math.round(location.accuracy || 0)}m` : "Required before hourly picture"}</small></div>{photo && <div className="attendance-photo-meta-card"><strong>Live picture ready</strong><span>Captured {formatCapturedAt(liveCapturedAt)}</span></div>}<button type="button" className="attendance-photo-input" onClick={() => openCamera(item.id)}><Camera size={16} /> <span>Take hourly picture</span><small>{photo ? `Photo ready: ${photo.name}` : "Camera only — gallery upload is disabled"}</small></button><button type="button" className="secondary-button" disabled={saving === `${item.id}-HOURLY`} onClick={() => submitAttendance(item, "HOURLY", step.sequence)}>{saving === `${item.id}-HOURLY` ? "Submitting..." : `Submit hourly picture ${step.sequence}`}</button></div>}{step.key === "book-off" && on && !off && <div className="attendance-stage-controls"><div className="attendance-actions"><span className={`status-pill ${bookOffStatus.toLowerCase()}`}>{bookOffStatus === "AVAILABLE" ? "Book Off window open" : bookOffStatus === "EXPIRED" ? "Book Off window expired" : `Available ${formatWindow(item.book_off_due_at)}`}</span><small>{bookOffStatus === "AVAILABLE" ? `Submit before ${formatWindow(item.book_off_deadline_at)}` : "Book Off picture is only accepted at shift end."}</small></div>{bookOffStatus === "AVAILABLE" && <><button type="button" className={location ? "secondary-button gps-ready" : "secondary-button"} onClick={() => saveLocation(item)}>{location ? "GPS saved · Set again" : "Set GPS location"}</button><button type="button" className="attendance-photo-input" onClick={() => openCamera(item.id)}><Camera size={16} /> <span>Take Book Off picture</span><small>{photo ? `Photo ready: ${photo.name}` : "Camera only — gallery upload is disabled"}</small></button><button type="button" className="secondary-button attendance-off-button" disabled={saving === `${item.id}-BOOK_OFF`} onClick={() => submitAttendance(item, "BOOK_OFF")}>{saving === `${item.id}-BOOK_OFF` ? "Submitting..." : "Submit Book Off"}</button></>}</div>}</div><span className="attendance-step-status">{step.status === "COMPLETED" ? "Done" : step.status === "EXPIRED" ? "Missed" : step.status === "AVAILABLE" ? "Ready" : "Upcoming"}</span>{renderPhotoLink(step.photo_url)}</div>)}</div>}{!off && <div className="attendance-events">{eventsFor(item).map((event) => <span className={`attendance-event-chip ${event.location_status.toLowerCase()}`} key={event.id}><span>{event.event_label} · {event.location_status.replaceAll("_", " ")} · {formatCapturedAt(event.captured_at)}</span>{renderPhotoLink(event.photo_url)}</span>)}</div>}{mapUrl && <div className="attendance-location-map"><div className="attendance-location-map-header"><strong>{location ? "Current location" : "Recorded location"}</strong><span>{locationLabel(mapLocation)}{mapLocation.accuracy ? ` · ±${Math.round(mapLocation.accuracy)}m` : ""}</span></div><iframe title={`${location ? "Current" : "Recorded"} location at ${item.site_name}`} src={mapUrl} loading="lazy" referrerPolicy="no-referrer-when-downgrade" /></div>}</article>; })}</section> : <section className="panel empty-state"><ClipboardList size={30} /><strong>No assigned shifts</strong><span>Your published shifts for this date will appear here.</span></section>}{cameraOpen && <div className="modal-backdrop"><section className="modal-card camera-modal"><div className="modal-header"><div><p className="eyebrow">LIVE ATTENDANCE PHOTO</p><h3>Take live picture</h3><p className="muted">Use the camera now. Photos from the gallery are not accepted.</p></div><button type="button" className="icon-button" onClick={stopCamera}><X size={19} /></button></div><video ref={videoRef} autoPlay playsInline className="camera-preview" /><canvas ref={canvasRef} className="camera-canvas" /><div className="modal-actions"><button type="button" className="secondary-button" onClick={stopCamera}>Cancel</button><button type="button" className="secondary-button" onClick={switchCamera}>{cameraFacing === "environment" ? "Use front camera" : "Use back camera"}</button><button type="button" className="primary-button" onClick={() => capturePhoto(cameraOpen)}>Capture picture</button></div></section></div>}</>;
+  const renderShift = (item) => {
+    const events = item.attendance_events || [];
+    const bookOn = events.find((event) => event.event_type === "BOOK_ON");
+    const bookOff = events.find((event) => event.event_type === "BOOK_OFF");
+    const closed = Boolean(bookOff) || item.attendance_status === "BOOKED_OFF";
+    const lateBookOn = bookOnIsLate(item, clock) || (!bookOn && lateBookOnRequired[item.id]);
+    const photo = photoFiles[item.id];
+    const location = locations[item.id];
+    const recordedLocation = events.slice().reverse().find((event) => event.latitude != null && event.longitude != null);
+    const mapLocation = location || recordedLocation;
+    const bookOffStatus = bookOff ? "COMPLETED" : item.book_off_status || (bookOn ? "AVAILABLE" : "UPCOMING");
+    const steps = [
+      {
+        key: "book-on", type: "BOOK_ON", label: "Book On", event: bookOn, photo_url: bookOn?.photo_url,
+        status: bookOn ? "COMPLETED" : "AVAILABLE",
+        detail: bookOn ? formatWindow(bookOn.captured_at) : "Take a live picture when you arrive",
+      },
+      ...hourlyCheckinsFor(item).map((checkin) => {
+        const event = events.find((entry) => entry.event_type === "HOURLY" && entry.sequence === checkin.sequence);
+        return {
+          ...checkin, key: `hourly-${checkin.sequence}`, type: "HOURLY", label: "Hourly picture", event,
+          detail: checkin.status === "COMPLETED" ? formatWindow(checkin.captured_at)
+            : checkin.status === "EXPIRED" ? `Window ended ${formatWindow(checkin.deadline_at)}`
+              : `${formatWindow(checkin.due_at)} – ${formatWindow(checkin.deadline_at)}`,
+        };
+      }),
+      {
+        key: "book-off", type: "BOOK_OFF", label: "Book Off", event: bookOff, photo_url: bookOff?.photo_url,
+        status: bookOffStatus, missed_reason: item.book_off_note?.reason,
+        detail: bookOff ? formatWindow(bookOff.captured_at)
+          : bookOffStatus === "EXPIRED" ? "Book Off window ended"
+            : `${formatWindow(item.book_off_due_at)} – ${formatWindow(item.book_off_deadline_at)}`,
+      },
+    ];
+    const nextHourly = bookOn && steps.find((step) => step.type === "HOURLY" && step.status === "AVAILABLE");
+    const actions = closed ? [] : steps.filter((step) => step.status === "AVAILABLE" && (
+      step.type === "BOOK_ON" || step === nextHourly || (bookOn && step.type === "BOOK_OFF")
+    ));
+    const list = steps.filter((step) => !actions.includes(step));
+    const extraEvents = events.filter((event) => !steps.some((step) => step.event === event));
+    const shiftDate = new Date(`${item.operation_date}T12:00:00Z`).toLocaleDateString("en-GB", {
+      timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short",
+    });
+
+    const renderReason = (step) => {
+      if (step.type === "BOOK_ON" && lateBookOn) {
+        const existing = bookOn?.late_reason || "";
+        return <GuardAttendanceReason
+          label="Reason for late Book On"
+          hint={`Shift started at ${formatWindow(item.book_on_due_at)}.`}
+          value={bookOnReasons[item.id] ?? existing}
+          onChange={(value) => setBookOnReasons((current) => ({ ...current, [item.id]: value }))}
+          onSave={bookOn ? () => saveBookOnReason(item, existing) : undefined}
+          saved={Boolean(existing)}
+          saving={reasonSaving === `book-on-${item.id}`}
+          maxLength={500}
+          inline={!bookOn}
+        />;
+      }
+      if (step.status !== "EXPIRED") return null;
+      const isBookOff = step.type === "BOOK_OFF";
+      const key = isBookOff ? `book-off-${item.id}` : `${item.id}-${step.sequence}`;
+      return <GuardAttendanceReason
+        label={isBookOff ? "Why was Book Off missed?" : `Why was hourly picture ${step.sequence} missed?`}
+        value={hourlyReasons[key] ?? step.missed_reason ?? ""}
+        onChange={(value) => setHourlyReasons((current) => ({ ...current, [key]: value }))}
+        onSave={() => isBookOff ? saveBookOffReason(item, step.missed_reason) : saveHourlyReason(item, step.sequence, step.missed_reason)}
+        saved={Boolean(step.missed_reason)}
+        saving={reasonSaving === key}
+      />;
+    };
+
+    return <article className="panel guard-attendance-shift" key={item.id} id={`guard-operation-${item.id}`}>
+      <header className="guard-attendance-shift-heading">
+        <span className="guard-attendance-shift-icon"><Building2 size={20} aria-hidden="true" /></span>
+        <div>
+          <h3>{item.site_name}</h3>
+          <p>{item.shift_name} · {shiftDate} · <b>{item.scheduled_start?.slice(0, 5)}–{item.scheduled_end?.slice(0, 5)}</b></p>
+        </div>
+        <span className={`status-pill ${closed ? "active" : bookOn ? "present" : "pending"}`}>
+          {closed ? "Booked off" : bookOn ? "On duty" : "Not started"}
+        </span>
+      </header>
+      <p className="guard-attendance-mode">{siteAttendanceLabel(item)}</p>
+
+      {attendanceIssue?.operationId === item.id && <p className="attendance-action-error" role="alert">{attendanceIssue.message}</p>}
+      {actions.map((step) => {
+        const busy = saving === `${item.id}-${step.type}`;
+        return <section className="guard-attendance-action" key={step.key} aria-label={step.label}>
+          <div className="guard-attendance-action-heading">
+            <div><h4>{step.label}</h4><p>{step.detail}</p></div>
+            <span className="guard-attendance-status ready">Ready</span>
+          </div>
+          {renderReason(step)}
+          <div className="guard-attendance-action-buttons">
+            <button type="button" className="secondary-button" onClick={() => saveLocation(item)}><MapPin size={16} />
+              {location ? "GPS saved · Retake" : "Set GPS location"}
+            </button>
+            <button type="button" className="secondary-button" onClick={() => openCamera(item.id)}><Camera size={16} />
+              {photo ? "Retake picture" : "Take live picture"}
+            </button>
+            <button type="button" className="primary-button" disabled={Boolean(saving)} onClick={() => submitAttendance(item, step.type, step.sequence)}>
+              {busy ? "Submitting…" : `Submit ${step.type === "HOURLY" ? "hourly picture" : step.label}`}
+            </button>
+          </div>
+          {(location || photo) && <p className="guard-attendance-capture">
+            {location && `GPS accuracy ±${Math.round(location.accuracy || 0)} m`}
+            {location && photo && " · "}
+            {photo && `Picture ready at ${formatWindow(photoCapturedAt[item.id])}`}
+          </p>}
+        </section>;
+      })}
+
+      {closed && <ShiftCompletionSummary summary={item.completion_summary} />}
+      <GuardAttendanceSite
+        item={item} current={Boolean(location)} location={mapLocation}
+        locationLabel={locationLabel(mapLocation)}
+      />
+      {closed ? <GuardAttendanceDetails label="Attendance history" icon={History}>
+        <CompletedAttendanceHistory item={item} steps={steps} renderPhotoLink={renderPhotoLink} />
+      </GuardAttendanceDetails> : list.length > 0 && <section className="guard-attendance-timeline" aria-label="Shift schedule">
+        <h4>Shift schedule</h4>
+        <ul>
+          {list.map((step) => {
+            const status = step.status === "COMPLETED" ? "Done" : step.status === "EXPIRED" ? "Missed" : step.status === "AVAILABLE" ? "Ready" : "Upcoming";
+            return <li className={`guard-attendance-row ${status.toLowerCase()}`} key={step.key}>
+              <div className="guard-attendance-row-main">
+                <div className="guard-attendance-row-label"><strong>{step.label}</strong><span>{step.detail}</span></div>
+                <span className={`guard-attendance-status ${status.toLowerCase()}`}>{status}</span>
+                {renderPhotoLink(step.photo_url || step.event?.photo_url)}
+              </div>
+              {renderReason(step)}
+              {step.event && <GuardAttendanceDetails label="Capture details">
+                <span>{formatCapturedAt(step.event.captured_at)} · GPS {locationLabel(step.event)}</span>
+                {step.event.location_status && <span>{step.event.location_status.replaceAll("_", " ")}</span>}
+              </GuardAttendanceDetails>}
+            </li>;
+          })}
+        </ul>
+      </section>}
+      {!closed && extraEvents.length > 0 && <GuardAttendanceDetails label="Other recorded attendance" icon={History}>
+        <CompletedAttendanceHistory item={{ attendance_events: extraEvents }} steps={[]} renderPhotoLink={renderPhotoLink} />
+      </GuardAttendanceDetails>}
+    </article>;
+  };
+
+  return <div className="guard-attendance">
+    <div className="page-heading guard-attendance-heading">
+      <div><p className="eyebrow">GUARD ATTENDANCE</p><h2>My attendance</h2><p className="muted">Shift times are shown in UK time.</p></div>
+      <div className="report-filters guard-attendance-filters">
+        <label>Attendance date<input type="date" value={date} onChange={(event) => { setItems([]); setNotice(""); setDate(event.target.value); }} /></label>
+        <CheckUpdatesButton api={api} paths={`/operations/?operation_date=${date}`} currentData={items} onUpdate={setItems} setError={setError} disabled={!date || loading || Boolean(saving)} />
+      </div>
+    </div>
+    {error && error !== attendanceIssue?.message && <p className="error page-error" role="alert">{error}</p>}
+    {notice && <p className="success page-success" role="status">{notice}</p>}
+    {loading ? <div className="empty-view"><h2>Loading shifts…</h2></div>
+      : items.length ? <section className="guard-attendance-shifts" aria-label="Assigned shifts">{items.map(renderShift)}</section>
+        : <section className="panel empty-state"><ClipboardList size={30} /><strong>No assigned shifts</strong><span>Your published shifts for this date will appear here.</span></section>}
+    <GuardAttendanceDetails label="Attendance guide" icon={ClipboardList}>
+      <span>Book On when you arrive and Book Off at shift end. If your site requires hourly pictures, take one during each listed window.</span>
+      <span>Use the live camera for each picture. If you miss a window, add a reason for office review.</span>
+    </GuardAttendanceDetails>
+    {cameraOpen && <div className="modal-backdrop"><section className="modal-card camera-modal">
+      <div className="modal-header">
+        <div><h3>Take live picture</h3><p className="muted">Use your camera to take a picture now.</p></div>
+        <button type="button" className="icon-button" aria-label="Close camera" onClick={stopCamera}><X size={19} /></button>
+      </div>
+      <video ref={videoRef} autoPlay playsInline className="camera-preview" />
+      <canvas ref={canvasRef} className="camera-canvas" />
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={stopCamera}>Cancel</button>
+        <button type="button" className="secondary-button" onClick={switchCamera}>{cameraFacing === "environment" ? "Use front camera" : "Use back camera"}</button>
+        <button type="button" className="primary-button" onClick={() => capturePhoto(cameraOpen)}>Capture picture</button>
+      </div>
+    </section></div>}
+  </div>;
 }
 
 function GuardHomePage({ onNavigate, unreadNotifications }) {
@@ -2001,11 +2179,11 @@ function GuardPortal({ user, onSignOut, unreadNotifications, initialPage = "home
   useEffect(() => { const openNotifications = () => setPage("notifications"); window.addEventListener("rota:notifications-open", openNotifications); return () => window.removeEventListener("rota:notifications-open", openNotifications); }, []);
   const items = [{ id: "home", label: "Home", icon: LayoutDashboard }, { id: "rota", label: "My rota", icon: CalendarDays }, { id: "induction", label: "Induction", icon: ClipboardList }, { id: "attendance", label: "Book on / off", icon: CheckCircle2 }, { id: "leave", label: "Leave & replacement", icon: CalendarDays }, ...(complianceEnabled ? [{ id: "external-compliance", label: "Compliance registration", icon: ExternalLink, section: "Compliance", external: true, href: COMPLIANCE_REGISTRATION_URL }] : []), ...(cortexEnabled ? [{ id: "cortex-itime", label: "Cortex iTime", icon: Clock3, section: "Compliance" }] : []), ...(timeGateEnabled ? [{ id: "timegate", label: "TimeGate", icon: Clock3, section: "Compliance" }] : []), { id: "security-screening", label: "Security Screening", icon: ShieldCheck, section: "Compliance" }, { id: "diligent-registration", label: "Registration", icon: ShieldCheck, section: "Compliance" }, { id: "profile", label: "My profile", icon: Users, section: "Account" }, { id: "password", label: "Change password", icon: ShieldCheck, section: "Account" }, { id: "documents", label: "Documents", icon: FileText, section: "Account" }, { id: "notifications", label: "Notifications", icon: Bell }];
   const content = page === "timegate" ? <GuardTimeGate api={api} /> : page === "cortex-itime" ? <GuardCortexITime api={api} /> : page === "security-screening" ? <GuardScreening api={api} downloadFile={downloadFile} FilePreview={ProtectedFilePreview} /> : page === "home" ? <GuardHomePage onNavigate={setPage} unreadNotifications={unreadNotifications} /> : page === "rota" ? <GuardRotaPage key={notificationTarget.visit} initialDate={notificationTarget.page === "rota" ? notificationTarget.event_date : undefined} /> : page === "attendance" ? <EmployeeAttendancePage key={notificationTarget.visit} initialDate={notificationTarget.page === "attendance" ? notificationTarget.event_date : undefined} initialOperationId={notificationTarget.page === "attendance" ? notificationTarget.operation_id : undefined} /> : page === "induction" ? <GuardSiteInductions api={api} /> : page === "leave" ? <GuardLeavePage /> : page === "diligent-registration" ? <ComplianceRegistrationPage /> : page === "profile" ? <EmployeeProfilePage section="profile" /> : page === "password" ? <EmployeeProfilePage section="password" /> : page === "documents" ? <EmployeeProfilePage key={notificationTarget.visit} section="documents" onProfile={() => setPage("profile")} initialDocumentId={notificationTarget.page === "documents" ? notificationTarget.document_id : undefined} /> : <GuardNotifications api={api} onNavigate={openNotification} />;
-  return <><ToastHost /><div className="app-shell guard-portal-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{items.map((item, index) => { const Icon = item.icon; const showSection = item.section && (index === 0 || items[index - 1].section !== item.section); const navClass = page === item.id ? "nav-item active" : "nav-item"; return <div className="guard-nav-entry" key={item.id}>{showSection && <span className="sidebar-section-label">{item.section}</span>}{item.external ? <a className={navClass} href={item.href} target="_blank" rel="noreferrer" onClick={() => setMobileNav(false)}><Icon size={18} /><span>{item.label}</span><ExternalLink className="nav-external-icon" size={13} /></a> : <button className={navClass} onClick={() => { setNotificationTarget({}); setPage(item.id); setMobileNav(false); }}><Icon size={18} /><span>{item.label}</span>{item.id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}</button>}</div>; })}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{(user.first_name || user.username || "G").slice(0, 1).toUpperCase()}</div><div><strong>{user.first_name || user.username}</strong><span>Guard</span></div></div><button className="logout-button" onClick={onSignOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Guard portal <span>/</span> <strong>{items.find((item) => item.id === page)?.label}</strong></div><GuardNotificationBell unreadCount={unreadNotifications} onNavigate={openNotification} /></header><div className="page-content"><GuardLocationMonitor api={api} />{content}</div></main></div></>;
+  return <><ToastHost /><div className="app-shell guard-portal-shell"><aside className={mobileNav ? "sidebar open" : "sidebar"}><div className="sidebar-brand"><div className="brand-lockup"><img className="brand-logo" src="/branding/rotaops-logo.jpg" alt="RotaOps" /></div><button className="icon-button close-nav" onClick={() => setMobileNav(false)}><X size={20} /></button></div><nav>{items.map((item, index) => { const Icon = item.icon; const showSection = item.section && (index === 0 || items[index - 1].section !== item.section); const navClass = page === item.id ? "nav-item active" : "nav-item"; return <div className="guard-nav-entry" key={item.id}>{showSection && <span className="sidebar-section-label">{item.section}</span>}{item.external ? <a className={navClass} href={item.href} target="_blank" rel="noreferrer" onClick={() => setMobileNav(false)}><Icon size={18} /><span>{item.label}</span><ExternalLink className="nav-external-icon" size={13} /></a> : <button className={navClass} onClick={() => { setNotificationTarget({}); setPage(item.id); setMobileNav(false); }}><Icon size={18} /><span>{item.label}</span>{item.id === "notifications" && unreadNotifications > 0 && <b className="nav-notification-badge">{unreadNotifications > 99 ? "99+" : unreadNotifications}</b>}</button>}</div>; })}</nav><div className="sidebar-footer"><div className="user-badge"><div className="avatar">{(user.first_name || user.username || "G").slice(0, 1).toUpperCase()}</div><div><strong>{user.first_name || user.username}</strong><span>Guard</span></div></div><button className="logout-button" onClick={onSignOut}><LogOut size={17} /> Sign out</button></div></aside>{mobileNav && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}<main className="main-area"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb">Guard portal <span>/</span> <strong>{items.find((item) => item.id === page)?.label}</strong></div><GuardNotificationBell unreadCount={unreadNotifications} onNavigate={openNotification} /></header><div className="page-content"><GuardLocationMonitor api={api} compact={page === "attendance"} />{content}</div></main></div></>;
 }
 
 function GuardAttendanceOnly({ user, onSignOut }) {
-  return <div className="attendance-only-shell"><header className="attendance-only-header"><div><div className="attendance-only-brand"><div className="brand-mark"><ShieldCheck size={18} /></div><strong>ROTA</strong></div><span>Secure attendance</span></div><div className="attendance-only-user"><span>{user.first_name || user.username}</span><button className="secondary-button" onClick={onSignOut}>Sign out</button></div></header><main className="attendance-only-content"><GuardLocationMonitor api={api} /><EmployeeAttendancePage /></main></div>;
+  return <div className="attendance-only-shell"><header className="attendance-only-header"><div><div className="attendance-only-brand"><div className="brand-mark"><ShieldCheck size={18} /></div><strong>ROTA</strong></div><span>Secure attendance</span></div><div className="attendance-only-user"><span>{user.first_name || user.username}</span><button className="secondary-button" onClick={onSignOut}>Sign out</button></div></header><main className="attendance-only-content"><GuardLocationMonitor api={api} compact /><EmployeeAttendancePage /></main></div>;
 }
 
 function LegacyAttendanceReviewPage() {

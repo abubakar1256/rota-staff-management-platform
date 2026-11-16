@@ -1,10 +1,10 @@
 import GuardGeofenceWarning from "./GuardGeofenceWarning.jsx";
 import { useEffect, useRef, useState } from "react";
-import { MapPin, RefreshCw } from "lucide-react";
+import { ChevronDown, MapPin, RefreshCw } from "lucide-react";
 import { DutyLocationClient } from "./dutyLocationClient";
 import "./locationTracking.css";
 
-export default function GuardLocationMonitor({ api }) {
+export default function GuardLocationMonitor({ api, compact = false }) {
   const clientRef = useRef(null);
   const [state, setState] = useState({ items: [], busy: false, message: "" });
   useEffect(() => {
@@ -24,5 +24,26 @@ export default function GuardLocationMonitor({ api }) {
     return () => { disposed = true; client.stop(); window.clearInterval(timer); permission?.removeEventListener("change", changed); document.removeEventListener("visibilitychange", resume); window.removeEventListener("online", resume); window.removeEventListener("rota:data-changed", dataChanged); };
   }, [api]);
   const issue = state.message || state.items.some((item) => item.overdue || ["PERMISSION_DENIED", "UNAVAILABLE", "TIMEOUT"].includes(item.status));
-  return <><GuardGeofenceWarning api={api} sessions={state.geofences} serverTime={state.server_time} />{state.items.length > 0 && <section className={`guard-location-banner${issue ? " has-issue" : ""}`} aria-label="Duty location tracking"><MapPin size={21} aria-hidden="true" /><div><strong>Location tracking active</strong><p>{state.items.map((item) => item.site_name).join(", ")} · Every 30 minutes during duty.</p><small>{state.message || (issue ? "Location needs attention. Allow location access, enable GPS and retry." : "Keep this portal open. Updates may pause when your phone is locked or the browser is in the background.")}</small>{state.items.map((item) => <small key={item.operation_id}>{item.site_name}: {item.status_label}{item.last_location_at ? ` · Last update ${new Date(item.last_location_at).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}` : ""}</small>)}</div>{issue && <button className="secondary-button" disabled={state.busy} onClick={() => clientRef.current?.tick({ force: true })}><RefreshCw size={14} />{state.busy ? "Checking…" : "Retry location"}</button>}</section>}</>;
+  const sites = state.items.map((item) => item.site_name).join(", ");
+  const trackingInfo = <>
+    <small>{state.message || (issue ? "Location needs attention. Allow location access, enable GPS and retry." : "Keep this portal open. Updates may pause when your phone is locked or the browser is in the background.")}</small>
+    {state.items.map((item) => <small key={item.operation_id}>
+      {item.site_name}: {item.status_label}{item.last_location_at ? ` · Last update ${new Date(item.last_location_at).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", timeZoneName: "short" })}` : ""}
+    </small>)}
+  </>;
+  return <>
+    <GuardGeofenceWarning api={api} sessions={state.geofences} serverTime={state.server_time} />
+    {state.items.length > 0 && (compact && !issue
+      ? <details className="guard-location-banner tracking-compact">
+        <summary><MapPin size={16} aria-hidden="true" /><strong>Location tracking active</strong><ChevronDown size={15} aria-hidden="true" /></summary>
+        <div><p>{sites} · Every 30 minutes during duty.</p>{trackingInfo}</div>
+      </details>
+      : <section className={`guard-location-banner${issue ? " has-issue" : ""}`} aria-label="Duty location tracking">
+        <MapPin size={21} aria-hidden="true" />
+        <div><strong>Location tracking active</strong><p>{sites} · Every 30 minutes during duty.</p>{trackingInfo}</div>
+        {issue && <button className="secondary-button" disabled={state.busy} onClick={() => clientRef.current?.tick({ force: true })}>
+          <RefreshCw size={14} />{state.busy ? "Checking…" : "Retry location"}
+        </button>}
+      </section>)}
+  </>;
 }

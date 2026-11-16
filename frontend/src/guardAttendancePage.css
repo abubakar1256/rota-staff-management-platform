@@ -1,0 +1,303 @@
+.guard-attendance {
+  display: grid;
+  gap: 14px;
+}
+
+.guard-attendance .guard-attendance-heading {
+  align-items: end;
+  margin: 0 0 4px;
+}
+
+.guard-attendance .guard-attendance-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.guard-attendance-filters label {
+  display: grid;
+  gap: 4px;
+  color: #4b5b73;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.guard-attendance-filters input, .guard-attendance-filters button {
+  min-height: 40px;
+}
+
+.guard-attendance-filters .check-updates-button {
+  color: #345797;
+}
+
+.guard-attendance-shifts {
+  display: grid;
+  gap: 16px;
+}
+
+.guard-attendance .guard-attendance-shift {
+  display: grid;
+  gap: 12px;
+  scroll-margin-top: 82px;
+}
+
+.guard-attendance-shift-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.guard-attendance-shift-heading h3, .guard-attendance h4 {
+  margin: 0;
+  color: #1c2a42;
+  overflow-wrap: anywhere;
+}
+
+.guard-attendance-shift-heading p, .guard-attendance-action-heading p, .guard-attendance-mode, .guard-attendance-capture {
+  margin: 3px 0 0;
+  color: #4b5b73;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.guard-attendance-shift-heading b, .guard-attendance-row-label span {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.guard-attendance-shift-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: #345cad;
+  background: #eaf0ff;
+}
+
+.guard-attendance .guard-attendance-mode {
+  margin: 0;
+  padding: 0 0 9px;
+  border-bottom: 1px solid #e8edf5;
+}
+
+.guard-attendance .attendance-action-error {
+  margin: 0;
+}
+
+.guard-attendance-action {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d3dff6;
+  border-left: 3px solid #4570d5;
+  border-radius: 10px;
+  background: #f3f7ff;
+}
+
+.guard-attendance-action-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 8px;
+}
+
+.guard-attendance-action-heading h4 {
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.guard-attendance-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.guard-attendance-action-buttons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+}
+
+.guard-attendance-capture {
+  margin: 0;
+  color: #16614e;
+  font-weight: 600;
+}
+
+.guard-attendance-timeline h4 {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.guard-attendance-timeline ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.guard-attendance-row {
+  padding: 0 10px;
+  border: 1px solid #e4eaf3;
+  border-left: 3px solid #a0afc6;
+  border-radius: 8px;
+  background: #f7f9fc;
+}
+
+.guard-attendance-row.done {
+  border-left-color: #3c977d;
+  background: #f1f9f5;
+}
+
+.guard-attendance-row.missed {
+  border-left-color: #cc7381;
+  background: #fff6f7;
+}
+
+.guard-attendance-row-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-height: 44px;
+  padding: 6px 0;
+}
+
+.guard-attendance-row-label {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: #24344e;
+  font-size: 13px;
+}
+
+.guard-attendance-row-label span {
+  color: #4b5b73;
+  font-size: 12px;
+}
+
+.guard-attendance-status {
+  padding: 4px 8px;
+  border-radius: 99px;
+  background: #e9edf4;
+  color: #3d4e68;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.guard-attendance-status.ready { background: #dfebff; color: #224fa6; }
+.guard-attendance-status.done { background: #def2e9; color: #16614e; }
+.guard-attendance-status.missed { background: #f9e2e7; color: #943647; }
+
+.guard-attendance .file-link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  color: #2851a3;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.guard-attendance-details {
+  border: 1px solid #e0e7f2;
+  border-radius: 9px;
+  background: #f8faff;
+}
+
+.guard-attendance-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 6px 10px;
+  color: #345797;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.guard-attendance-details > summary::-webkit-details-marker { display: none; }
+.guard-attendance-details small { color: #4b5b73; font-size: 11px; font-weight: 500; }
+.guard-attendance-details svg { flex-shrink: 0; }
+.guard-attendance-chevron { margin-left: auto; }
+.guard-attendance-details[open] > summary .guard-attendance-chevron { transform: rotate(180deg); }
+
+.guard-attendance-details-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 10px 10px;
+  color: #4b5b73;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.guard-attendance-row > .guard-attendance-details {
+  border: 0;
+  background: transparent;
+}
+
+.guard-attendance-row > .guard-attendance-details > summary {
+  min-height: 30px;
+  padding: 3px 0 5px;
+}
+
+.guard-attendance-row > .guard-attendance-details > .guard-attendance-details-body {
+  padding-inline: 0;
+}
+
+.guard-attendance-reason-fields {
+  display: grid;
+  gap: 5px;
+  color: #4b3950;
+  font-size: 12px;
+}
+
+.guard-attendance-reason-fields label { font-weight: 700; }
+.guard-attendance-reason-fields small { color: #4b5b73; }
+
+.guard-attendance-reason-fields textarea {
+  width: 100%;
+  min-height: 58px;
+  padding: 8px;
+  border: 1px solid #cdd7e7;
+  border-radius: 7px;
+  background: #fff;
+  color: #1c2a42;
+  font: inherit;
+  resize: vertical;
+}
+
+.guard-attendance-reason-fields button { justify-self: start; }
+
+.guard-attendance-map { display: grid; gap: 4px; }
+.guard-attendance-map iframe { width: 100%; height: 190px; margin-top: 4px; border: 0; border-radius: 7px; }
+.guard-attendance-details .completed-attendance-history > h4 { display: none; }
+
+@media (max-width: 680px) {
+  .guard-attendance .guard-attendance-heading { align-items: stretch; }
+  .guard-attendance .guard-attendance-shift { padding: 12px; }
+  .guard-attendance .guard-attendance-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .guard-attendance-filters label, .guard-attendance-filters input { width: 100%; min-width: 0; }
+  .guard-attendance-filters .check-updates-button { min-width: 0; padding-inline: 10px; }
+  .guard-attendance-action-buttons > button { flex: 1 1 calc(50% - 4px); padding-inline: 6px; }
+  .guard-attendance-action-buttons > .primary-button { flex-basis: 100%; }
+  .guard-attendance-shift-heading p { font-size: 11px; }
+  .guard-attendance-row-label { font-size: 12px; }
+}

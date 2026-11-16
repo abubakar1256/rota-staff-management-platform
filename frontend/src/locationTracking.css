@@ -6,6 +6,13 @@
 .guard-location-banner > div { flex: 1; min-width: 0; }
 .guard-location-banner strong { font-size: 13px; }.guard-location-banner p { font-size: 12px; margin: 5px 0; }.guard-location-banner small { display: block; font-size: 11px; line-height: 1.5; color: #667f78; }
 .guard-location-banner.has-issue { background: #fffbf1; border-color: #efdfb7; color: #936b27; }.guard-location-banner.has-issue small { color: #8e794f; }
+.guard-location-banner.tracking-compact { display: block; padding: 0; margin-bottom: 14px; }
+.tracking-compact summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; list-style: none; }
+.tracking-compact summary::-webkit-details-marker { display: none; }
+.tracking-compact summary svg { flex-shrink: 0; }
+.tracking-compact summary svg:last-child { margin-left: auto; }
+.tracking-compact[open] summary svg:last-child { transform: rotate(180deg); }
+.tracking-compact > div { padding: 0 12px 10px 36px; }
 .tracking-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 0 0 22px; }.tracking-summary > span { padding: 17px; border: 1px solid #e1e8f4; border-radius: 12px; background: #fff; color: #74819a; font-size: 12px; }.tracking-summary strong { display: block; font-size: 25px; color: #263d62; margin-bottom: 6px; }
 .duty-tracker .attendance-filter-row > input { border: 1px solid #dfe5ee; border-radius: 8px; padding: 10px; min-width: 0; flex: 1; }
 .tracking-guard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.tracking-guard-card { min-width: 0; padding: 18px; border: 1px solid #e0e8f5; border-radius: 13px; background: #fbfcff; }.tracking-guard-card.has-issue { border-color: #eddbb6; background: #fffdf7; }
