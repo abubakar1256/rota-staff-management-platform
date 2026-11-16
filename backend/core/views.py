@@ -1262,6 +1262,45 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
         response.write("\ufeff")
         writer = csv.writer(response)
         writer.writerow(["Field", "Value"])
+        writer.writerows(self._export_rows(employee))
+        return response
+
+    @action(detail=True, methods=["get"], url_path="download-xlsx")
+    def download_xlsx(self, request, pk=None):
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        employee = self.get_object().employee
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Induction"
+        sheet.freeze_panes = "B2"
+        sheet.column_dimensions["A"].width = 38
+        sheet.column_dimensions["B"].width = 52
+        sheet.append(["Field", "Value"])
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(fill_type="solid", fgColor="23426B")
+        for row, (field, value) in enumerate(self._export_rows(employee), start=2):
+            sheet.cell(row=row, column=1, value=field)
+            cell = sheet.cell(row=row, column=2, value=str(value))
+            cell.data_type = "s"
+            cell.number_format = "@"
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
+        response = FileResponse(
+            buffer, as_attachment=True, filename=f"{name} - induction.xlsx",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    @staticmethod
+    def _export_rows(employee):
         name_parts = employee.name.strip().split()
         first_name = name_parts[0] if name_parts else ""
         surname = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
@@ -1282,7 +1321,7 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
 
         ppac = document_for("PPAC Code")
         emergency_contact = " / ".join(str(value) for value in (employee.emergency_contact_name or employee.emergency_contact, employee.emergency_contact_phone) if value)
-        induction_fields = [
+        return [
             ("Surname", surname),
             ("First Name", first_name),
             ("Date of Birth", employee.date_of_birth or ""),
@@ -1295,9 +1334,6 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
             ("CSCS Card Number & Expiry Date", card_details("CSCS Card (Front)", "CSCS Card (Front & Back)", "CSCS Card (Back)")),
             ("Compliant Code / PPAC Code", (ppac.notes or ppac.document_number) if ppac else ""),
         ]
-        for field, value in induction_fields:
-            writer.writerow([field, value])
-        return response
 
     def perform_destroy(self, instance):
         self._check_site(instance.site)

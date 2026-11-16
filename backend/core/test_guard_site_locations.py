@@ -1,10 +1,11 @@
 import csv
 from datetime import date, time
+from io import BytesIO
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import DailyOperation, Employee, RotaAssignment, RotaWeek, ShiftType, Site, SiteInduction, UserProfile
+from .models import DailyOperation, Employee, EmployeeDocument, RotaAssignment, RotaWeek, ShiftType, Site, SiteInduction, UserProfile
 
 
 class GuardSiteLocationTests(APITestCase):
@@ -87,6 +88,41 @@ class GuardSiteLocationTests(APITestCase):
         self.assertEqual(update.status_code, 200, update.data)
         self.assertEqual(update.data["phone"], "+447700900456")
         self.assertEqual(download_phone(), "+447700900456")
+
+    def test_induction_excel_preserves_phone_and_codes_as_text(self):
+        from openpyxl import load_workbook
+
+        excel_url = f"/api/site-inductions/{self.induction.pk}/download-xlsx/"
+        self.client.force_authenticate(self.guard)
+        self.assertEqual(self.client.get(excel_url).status_code, 403)
+        update = self.client.patch("/api/employees/me/", {
+            "phone": "+923111112255", "emergency_contact_phone": "03001234567", "address": "=1+2",
+        }, format="json")
+        self.assertEqual(update.status_code, 200, update.data)
+        EmployeeDocument.objects.create(employee=self.employee, document_type="PPAC Code", notes="0000525262", created_by=self.admin)
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(excel_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        self.assertEqual(response["Content-Type"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.assertIn('filename="Assigned guard - induction.xlsx"', response["Content-Disposition"])
+
+        workbook = load_workbook(BytesIO(b"".join(response.streaming_content)))
+        try:
+            sheet = workbook["Induction"]
+            cells = {key.value: value for key, value in sheet.iter_rows(min_row=2, max_col=2)}
+            for label, expected in {
+                "Contact Number": "+923111112255",
+                "Emergency Contact Name & Number": "03001234567",
+                "Compliant Code / PPAC Code": "0000525262",
+                "Address": "=1+2",
+            }.items():
+                with self.subTest(label=label):
+                    self.assertEqual(cells[label].value, expected)
+                    self.assertEqual(cells[label].data_type, "s")
+            self.assertEqual(cells["Contact Number"].number_format, "@")
+        finally:
+            workbook.close()
 
     def test_induction_status_updates_existing_guard_and_rota_eligibility(self):
         self.client.force_authenticate(self.admin)

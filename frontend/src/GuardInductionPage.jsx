@@ -192,11 +192,11 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
     }
   }
 
-  async function downloadInduction(record) {
+  async function downloadInduction(record, format) {
     setError(""); setNotice("");
     try {
       const name = (record.employee_name || "Guard").replace(/[^a-z0-9 ._-]/gi, "").trim() || "Guard";
-      await downloadFile(`/site-inductions/${record.id}/download-csv/`, `${name} - induction.csv`, { cache: "no-store" });
+      await downloadFile(`/site-inductions/${record.id}/download-${format}/`, `${name} - induction.${format}`, { cache: "no-store" });
       setNotice(`${record.employee_name} induction downloaded.`);
     } catch (err) {
       setError(err.message);
@@ -259,7 +259,8 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
                 <button type="button" className="mini-button" onClick={() => { setEditing(record); setError(""); setNotice(""); setActivationNotice(""); }}>
                   <Pencil size={13} /> Edit
                 </button>
-                <button type="button" className="mini-button" onClick={() => downloadInduction(record)}><Download size={13} /> CSV</button>
+                <button type="button" className="mini-button" onClick={() => downloadInduction(record, "xlsx")}><Download size={13} /> Excel</button>
+                <button type="button" className="mini-button" onClick={() => downloadInduction(record, "csv")}>CSV</button>
               </div></td>
             </tr>;
           })}</tbody>
