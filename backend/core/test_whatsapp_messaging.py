@@ -165,11 +165,11 @@ class WhatsAppMessagingTests(APITestCase):
 
         row = self.rota_queue(week)[self.guard.pk]
         expected = (
-            "Hi A Guard,\n\n"
             "*Rota for the Week*\n*Week Commencing: 9th November 2026*\n\n"
             "*Site:* Test Site\n*Shift Hour:* 0630-1830 Day Shift\n*Days:* Monday, Tuesday, Friday\n\n"
+            "Please *send us a rota confirmation message*. Thank you.\n\n"
             "Total Shifts: 3\nTotal Hours: 36\n\n"
-            "Please open the Guard Portal and select *Confirm rota*.\n"
+            "Please open the Guard Portal and select Confirm rota.\n"
             "https://rota.example.com/guard?page=rota&week_start=2026-11-09\n\n"
             "Thank you.\nControl Room"
         )
@@ -186,6 +186,40 @@ class WhatsAppMessagingTests(APITestCase):
         confirmation = self.client.post(f"/api/rota-weeks/{week.pk}/confirm/", {}, format="json")
         self.assertEqual(confirmation.data["status"], "CONFIRMED")
 
+    @patch.dict("os.environ", {"FRONTEND_URL": ""})
+    def test_rota_groups_address_and_exact_times_and_uses_the_guard_portal_link(self):
+        week = RotaWeek.objects.create(week_start=date(2026, 11, 16), created_by=self.admin)
+        arch = Site.objects.create(site_id="ARCH", name="Arch 114", address="Arch 114, Elephant Rd\n(Elephant & Castle Town Centre), London, SE17 1LB")
+        mace = Site.objects.create(site_id="MACE", name="Mace Euston", address="MACE EUSTON,112 Hampstead Rd NW1 2EA")
+        day = ShiftType.objects.get(name="Day Shift")
+        night = ShiftType.objects.get(name="Night Shift")
+        for site, shift, number in [(arch, night, 22), (mace, day, 17), (arch, day, 20), (arch, night, 21)]:
+            self.assign(week, shift, site, self.guard, date(2026, 11, number))
+        self.publish(week)
+        row = self.rota_queue(week)[self.guard.pk]
+        address = "Arch 114, Elephant Rd (Elephant & Castle Town Centre), London, SE17 1LB"
+        expected = (
+            "*Rota for the Week*\n*Week Commencing: 16th November 2026*\n\n"
+            f"*Site:* {address}\n*Shift Hour:* 0700-1900 Day Shift\n*Days:* Friday\n\n"
+            f"*Site:* {address}\n*Shift Hour:* 1900-0700 Night Shift\n*Days:* Saturday, Sunday\n\n"
+            "*Site:* MACE EUSTON,112 Hampstead Rd NW1 2EA\n*Shift Hour:* 0700-1900 Day Shift\n*Days:* Tuesday\n\n"
+            "Please *send us a rota confirmation message*. Thank you.\n\n"
+            "Total Shifts: 4\nTotal Hours: 48\n\n"
+            "Please open the Guard Portal and select Confirm rota.\n"
+            "https://brilliant-cooperation-production-c4d1.up.railway.app/guard?page=rota&week_start=2026-11-16\n\n"
+            "Thank you.\nControl Room"
+        )
+        self.assertEqual(row["message"], expected)
+        self.assertEqual(parse_qs(urlsplit(row["whatsapp_url"]).query), {"text": [expected]})
+        base = f"/api/whatsapp/rota-weeks/{week.pk}/"
+        self.mark(base, row)
+        arch.address = "New site address"
+        arch.save(update_fields=["address"])
+        self.mark(base, row, expected=409)
+        refreshed = self.rota_queue(week)[self.guard.pk]
+        self.assertEqual(refreshed["status"], "UPDATE_PENDING")
+        self.assertIn("*Site:* New site address", refreshed["message"])
+
     @patch.dict("os.environ", {"FRONTEND_URL": "https://rota.example.com"})
     def test_rota_changes_only_flag_affected_guards_and_cancelled_shifts(self):
         week, shift, site = self.make_week()
@@ -195,7 +229,7 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertEqual(self.rota_queue(week), {})
         self.publish(week)
         rows = self.rota_queue(week)
-        self.assertIn("*Shift Hour:* 2200-0600 Night shift (next day)\n*Days:* Monday", rows[self.guard.pk]["message"])
+        self.assertIn("*Shift Hour:* 2200-0600 Night shift\n*Days:* Monday", rows[self.guard.pk]["message"])
         self.assertNotIn("Tuesday", rows[self.guard.pk]["message"])
         base = f"/api/whatsapp/rota-weeks/{week.pk}/"
         for row in rows.values():
@@ -203,6 +237,7 @@ class WhatsAppMessagingTests(APITestCase):
         legacy_share = week.whatsapp_shares.get(employee=self.other_guard)
         for shift_record in legacy_share.shifts:
             shift_record.pop("shift_name")
+            shift_record.pop("site_address")
         legacy_share.version = message_version(
             week.pk, week.week_start.isoformat(), self.other_guard.pk, self.other_guard.name,
             self.other_guard.whatsapp_number,
@@ -221,7 +256,7 @@ class WhatsAppMessagingTests(APITestCase):
         self.assertEqual(updated["status"], "UPDATE_PENDING")
         self.assertIn("*Updated Rota for the Week*", updated["message"])
         self.assertIn("Changed: Mon 09 Nov | 22:00", updated["message"])
-        self.assertIn("*Shift Hour:* 2130-0600 Night shift (next day)\n*Days:* Monday", updated["message"])
+        self.assertIn("*Shift Hour:* 2130-0600 Night shift\n*Days:* Monday", updated["message"])
         self.assertIn("/guard?page=rota&week_start=2026-11-09", updated["message"])
         self.assertIn("Total Shifts: 1\nTotal Hours: 8.5", updated["message"])
         self.mark(base, rows[self.guard.pk], expected=409)

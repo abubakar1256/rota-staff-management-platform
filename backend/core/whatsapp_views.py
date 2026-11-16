@@ -204,19 +204,23 @@ def mark_announcement_sent(request, pk, employee_id):
 
 
 def rota_shifts(assignments):
-    return sorted(map(shift_snapshot, assignments), key=shift_key)
+    return sorted((
+        {**shift_snapshot(assignment), "site_address": " ".join(assignment.site.address.split())}
+        for assignment in assignments
+    ), key=shift_key)
 
 
 def rota_recipient(week, employee, shifts, previous):
     version_fields = (week.pk, week.week_start.isoformat(), employee.pk, employee.name, employee.whatsapp_number)
-    version = message_version(*version_fields, list(map(shift_key, shifts)))
+    version = message_version(*version_fields, [shift_key(shift, include_address=True) for shift in shifts])
     already_sent = previous is not None and previous.version == version
-    if previous and any("shift_name" not in shift for shift in previous.shifts):
-        legacy_keys = [shift_key(shift, include_name=False) for shift in shifts]
+    if previous and any("site_address" not in shift for shift in previous.shifts):
+        include_name = all("shift_name" in shift for shift in previous.shifts)
+        legacy_keys = [shift_key(shift, include_name=include_name) for shift in shifts]
         already_sent = previous.version == message_version(*version_fields, legacy_keys)
     state = "SENT" if already_sent else pending_status(employee, "UPDATE_PENDING" if previous else "PENDING")
     ready = state in {"PENDING", "UPDATE_PENDING"}
-    message = rota_message(week.week_start, employee.name, shifts, previous.shifts if previous else None) if ready else None
+    message = rota_message(week.week_start, shifts, previous.shifts if previous else None) if ready else None
     return {
         **guard_data(employee), "status": state,
         "sent_at": previous.sent_at if previous else None,
