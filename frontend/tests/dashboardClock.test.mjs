@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatDashboardClock, ukDate, formatUkAttendanceTime, formatUkDateTime, formatUkShortDateTime } from "../src/ukTime.js";
+import { dashboardClockTime, formatDashboardClock, ukDate, formatUkAttendanceTime, formatUkDateTime, formatUkShortDateTime } from "../src/ukTime.js";
+
+test("dashboard clock includes time since the server response before the clock mounts or resumes", () => {
+  const serverTime = "2026-11-16T13:29:40Z";
+  const receivedAt = Date.parse("2026-11-16T13:17:40Z");
+  assert.equal(dashboardClockTime(serverTime, receivedAt, receivedAt + 600_000).toISOString(), "2026-11-16T13:39:40.000Z");
+  assert.equal(dashboardClockTime(serverTime, receivedAt, receivedAt + 601_000).toISOString(), "2026-11-16T13:39:41.000Z");
+});
+
+test("dashboard clock waits for a valid sample and starts at the server timestamp", () => {
+  const serverTime = "2026-11-16T13:29:40Z";
+  assert.equal(dashboardClockTime(undefined, 1000, 1000), null);
+  assert.equal(dashboardClockTime(serverTime, undefined, 1000), null);
+  assert.equal(dashboardClockTime(serverTime, 1001, 1000).toISOString(), serverTime.replace("Z", ".000Z"));
+});
 
 test("London winter time uses GMT and summer time uses BST", () => {
   assert.deepEqual(formatDashboardClock("2026-11-04T08:24:01Z"), { time: "08:24:01 am", date: "Wednesday, 4 November 2026", abbreviation: "GMT" });

@@ -23,6 +23,12 @@ export function formatUkShortDateTime(value) {
   return value ? shortUkDateTime.format(new Date(value)) : "—";
 }
 
+export function dashboardClockTime(serverTime, receivedAt, now = Date.now()) {
+  const serverMilliseconds = Date.parse(serverTime);
+  if (!Number.isFinite(serverMilliseconds) || !Number.isFinite(receivedAt)) return null;
+  return new Date(serverMilliseconds + Math.max(0, now - receivedAt));
+}
+
 export function formatDashboardClock(value, timeZone = UK_TIME_ZONE) {
   if (!formatters.has(timeZone)) {
     formatters.set(timeZone, {
