@@ -46,6 +46,22 @@ class RotaPlanningTests(APITestCase):
             employee=employee, work_date=day, created_by=self.admin,
         )
 
+    def test_week_summary_includes_effective_times_for_a_guards_shifts_across_sites(self):
+        first = self.add_shift(self.guard, self.monday)
+        self.night.is_active = False
+        self.night.save(update_fields=["is_active"])
+        second = self.add_shift(self.guard, self.monday + timedelta(days=1), site=self.other_site, shift=self.night)
+        second.scheduled_start = time(20, 15)
+        second.save(update_fields=["scheduled_start"])
+
+        response = self.client.get(f"/api/rota-weeks/{self.week.pk}/summary/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["id"]: row for row in response.data["assignments"]}
+        self.assertEqual({row["site"] for row in rows.values()}, {self.site.pk, self.other_site.pk})
+        self.assertEqual((rows[first.pk]["effective_start"], rows[first.pk]["effective_end"]), ("07:00:00", "19:00:00"))
+        self.assertEqual((rows[second.pk]["effective_start"], rows[second.pk]["effective_end"]), ("20:15:00", "08:00:00"))
+
     def test_multi_day_preview_saves_only_eligible_dates_and_checks_overnight(self):
         tuesday = self.monday + timedelta(days=1)
         wednesday = tuesday + timedelta(days=1)

@@ -1,0 +1,64 @@
+.guard-weekly-rota { margin-bottom: 18px; }
+.guard-weekly-rota-heading, .guard-weekly-rota-summary, .guard-weekly-rota-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.guard-weekly-rota h3, .guard-weekly-rota h4, .guard-weekly-rota h5, .guard-weekly-rota p { margin: 0; }
+.guard-weekly-rota-heading p, .guard-weekly-rota-summary p { margin-top: 4px; }
+.guard-weekly-rota-search { width: min(100%, 330px); }
+.guard-weekly-rota-search .search-box { width: 100%; min-width: 0; }
+.guard-weekly-rota-matches, .guard-weekly-rota-days, .guard-weekly-rota-shifts { list-style: none; margin: 0; padding: 0; }
+.guard-weekly-rota-matches { margin-top: 6px; border: 1px solid #dce5f3; border-radius: 9px; overflow: hidden; }
+.guard-weekly-rota-matches button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #e5ebf5;
+  padding: 9px 10px;
+  background: #fff;
+  color: #203653;
+  text-align: left;
+}
+.guard-weekly-rota-matches button:hover, .guard-weekly-rota-matches button:focus-visible { background: #edf3ff; }
+.guard-weekly-rota-matches small, .guard-weekly-rota-matches > .muted { color: #536785; }
+.guard-weekly-rota-matches > .muted { padding: 8px 10px; }
+.guard-weekly-rota-result { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #e2e9f4; }
+.guard-weekly-rota-status { align-items: center; gap: 6px; }
+.guard-weekly-rota-count { display: flex; align-items: center; gap: 6px; color: #32538d; font-size: 13px; font-weight: 650; }
+.guard-weekly-rota-days { display: grid; gap: 6px; }
+.guard-weekly-rota-day {
+  display: grid;
+  grid-template-columns: minmax(0, 102px) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 6px 9px;
+  border: 1px solid #e2eaf6;
+  border-radius: 8px;
+  background: #f8faff;
+}
+.guard-weekly-rota-day h5 { font-size: 13px; color: #2f4e80; }
+.guard-weekly-rota-day > p { font-size: 12px; }
+.guard-weekly-rota-shifts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 225px), 1fr)); gap: 6px; }
+.guard-weekly-rota-shifts > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 3px 8px;
+  padding: 7px 8px;
+  border-inline-start: 3px solid #7393de;
+  border-radius: 6px;
+  background: #eef3ff;
+  color: #253b60;
+  font-size: 12px;
+}
+.guard-weekly-rota-shifts strong { display: flex; align-items: center; gap: 4px; grid-column: 1 / -1; font-size: 13px; overflow-wrap: anywhere; }
+.guard-weekly-rota-shifts svg { flex-shrink: 0; }
+.guard-weekly-rota-shifts b { text-align: right; }
+@media (max-width: 540px) {
+  .guard-weekly-rota-day { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+}

@@ -535,6 +535,8 @@ class ShiftTypeSerializer(serializers.ModelSerializer):
 
 
 class RotaAssignmentSerializer(serializers.ModelSerializer):
+    effective_start = serializers.SerializerMethodField()
+    effective_end = serializers.SerializerMethodField()
     employee_name = serializers.CharField(source="employee.name", read_only=True)
     employee_code = serializers.CharField(source="employee.employee_id", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
@@ -548,9 +550,15 @@ class RotaAssignmentSerializer(serializers.ModelSerializer):
         fields = [
             "id", "rota_week", "work_date", "shift_type", "shift_name", "employee", "employee_name", "employee_code",
             "site", "site_name", "site_address", "site_latitude", "site_longitude", "scheduled_start", "scheduled_end",
-            "notes", "replaced_assignment", "split_cover", "created_at", "updated_at",
+            "effective_start", "effective_end", "notes", "replaced_assignment", "split_cover", "created_at", "updated_at",
         ]
         read_only_fields = ["split_cover", "created_at", "updated_at"]
+
+    def get_effective_start(self, assignment):
+        return (assignment.scheduled_start or assignment.shift_type.start_time).isoformat()
+
+    def get_effective_end(self, assignment):
+        return (assignment.scheduled_end or assignment.shift_type.end_time).isoformat()
 
     def validate(self, attrs):
         rota_week = attrs.get("rota_week", getattr(self.instance, "rota_week", None))

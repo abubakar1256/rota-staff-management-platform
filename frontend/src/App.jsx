@@ -19,6 +19,7 @@ import ReachedReport from "./ReachedReport";
 import DailyOperationsPage from "./DailyOperationsPage";
 import { ControlPortal, ControlTeamAdmin } from "./ControlTeam";
 import SiteWeeklyPlanner from "./SiteWeeklyPlanner";
+import GuardWeeklyRota from "./GuardWeeklyRota";
 import { siteWeekSlots, staffedPositions } from "./rotaStaffing.js";
 import { BulkAssignmentDialog, FindReplacementDialog, NeedsCover, PublishRotaDialog, RotaBatchDialog, RotaWeekNavigation } from "./RotaPlanning";
 import { addDays, toMonday, ukDate, formatUkAttendanceTime, formatUkDateTime } from "./ukTime.js";
@@ -882,6 +883,8 @@ function Rota({ target = {}, canShareWhatsApp = false }) {
       disabled={saving || Boolean(bulkOpen || editingAssignment || batch || replacement || publishReview)}
       onSelect={selectWeek} onPickDate={(date) => selectWeek(toMonday(date))} />
     {error && <p className="error page-error">{error}</p>}{shiftLoadError && <p className="error page-error">Shift list could not be loaded: {shiftLoadError}</p>}{!shiftLoadError && !shiftTypes.length && !loading && <p className="error page-error">No active shifts are configured. Ask an Admin to run the latest deployment/migrations.</p>}{notice && <p className="success page-success">{notice}</p>}
+    <GuardWeeklyRota week={rota?.week_start === weekStart ? rota : null} days={days} loading={loading}
+      employees={employees} assignments={rota?.week_start === weekStart ? assignments : []} />
     {rota?.week_start === weekStart && <>
     {availability.error && <p className="rota-availability-warning" role="status">Availability could not be loaded. The server checks availability when you save or publish.</p>}
     {availabilityConflicts.length > 0 && <div className="rota-availability-warning" role="status">
