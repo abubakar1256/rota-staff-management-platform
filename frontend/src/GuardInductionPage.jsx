@@ -260,7 +260,7 @@ export default function GuardInductionPage({ api, downloadFile, canManageCortex 
                   <Pencil size={13} /> Edit
                 </button>
                 <button type="button" className="mini-button" onClick={() => downloadInduction(record, "xlsx")}><Download size={13} /> Excel</button>
-                <button type="button" className="mini-button" onClick={() => downloadInduction(record, "csv")}>CSV</button>
+                <button type="button" className="mini-button" onClick={() => downloadInduction(record, "txt")}><Download size={13} /> Text</button>
               </div></td>
             </tr>;
           })}</tbody>

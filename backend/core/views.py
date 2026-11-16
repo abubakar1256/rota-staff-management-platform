@@ -1251,18 +1251,18 @@ class SiteInductionViewSet(viewsets.ModelViewSet):
         self._check_site(serializer.validated_data.get("site", serializer.instance.site))
         serializer.save()
 
-    @action(detail=True, methods=["get"], url_path="download-csv")
-    def download_csv(self, request, pk=None):
-        induction = self.get_object()
-        employee = induction.employee
-        response = HttpResponse(content_type="text/csv; charset=utf-8")
+    @action(detail=True, methods=["get"], url_path="download-txt")
+    def download_txt(self, request, pk=None):
+        employee = self.get_object().employee
+        name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
+        lines = ["DETAILS FOR INDUCTION:", ""]
+        for field, value in self._export_rows(employee):
+            formatted = " ".join(str(value).splitlines()).strip()
+            lines.append(f"• {field}: {formatted}".rstrip())
+
+        response = HttpResponse("\r\n".join(lines) + "\r\n", content_type="text/plain; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{name} - induction.txt"'
         response["Cache-Control"] = "private, no-store"
-        safe_name = re.sub(r"[^A-Za-z0-9 ._-]", "", employee.name).strip() or "Guard"
-        response["Content-Disposition"] = f'attachment; filename="{safe_name} - induction.csv"'
-        response.write("\ufeff")
-        writer = csv.writer(response)
-        writer.writerow(["Field", "Value"])
-        writer.writerows(self._export_rows(employee))
         return response
 
     @action(detail=True, methods=["get"], url_path="download-xlsx")

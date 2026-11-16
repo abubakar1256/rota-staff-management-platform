@@ -1,4 +1,3 @@
-import csv
 from datetime import date, time
 from io import BytesIO
 
@@ -68,26 +67,50 @@ class GuardSiteLocationTests(APITestCase):
             self.assertEqual(row["site_latitude"], 51.507462)
             self.assertEqual(row["site_longitude"], -0.127816)
 
-    def test_induction_csv_uses_latest_saved_profile_phone(self):
-        url = f"/api/site-inductions/{self.induction.pk}/download-csv/"
+    def test_induction_text_uses_requested_format_and_latest_saved_profile(self):
+        url = f"/api/site-inductions/{self.induction.pk}/download-txt/"
         self.employee.phone = "+447700900123"
         self.employee.whatsapp_number = "+447700900345"
         self.employee.save(update_fields=["phone", "whatsapp_number"])
+        EmployeeDocument.objects.create(
+            employee=self.employee, document_type="SIA Card (Front)", document_number="001234",
+            expiry_date=date(2027, 10, 1), created_by=self.admin,
+        )
+        EmployeeDocument.objects.create(employee=self.employee, document_type="PPAC Code", notes="00042", created_by=self.admin)
 
-        def download_phone():
+        def download_text():
             self.client.force_authenticate(self.admin)
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response["Cache-Control"], "private, no-store")
-            rows = csv.DictReader(response.content.decode("utf-8-sig").splitlines())
-            return next(row["Value"] for row in rows if row["Field"] == "Contact Number")
+            self.assertEqual(response["Content-Type"], "text/plain; charset=utf-8")
+            self.assertEqual(response["Content-Disposition"], 'attachment; filename="Assigned guard - induction.txt"')
+            return response.content.decode("utf-8")
 
-        self.assertEqual(download_phone(), "+447700900123")
+        self.assertIn("• Contact Number: +447700900123", download_text().splitlines())
         self.client.force_authenticate(self.guard)
-        update = self.client.patch("/api/employees/me/", {"phone": "+447700900456"}, format="json")
+        self.assertEqual(self.client.get(url).status_code, 403)
+        update = self.client.patch("/api/employees/me/", {
+            "phone": "+447700900456", "date_of_birth": "1990-04-03",
+            "address": "12 Example Road\nLondon", "emergency_contact_phone": "07700900457",
+        }, format="json")
         self.assertEqual(update.status_code, 200, update.data)
-        self.assertEqual(update.data["phone"], "+447700900456")
-        self.assertEqual(download_phone(), "+447700900456")
+        self.assertEqual(download_text().splitlines(), [
+            "DETAILS FOR INDUCTION:",
+            "",
+            "• Surname: guard",
+            "• First Name: Assigned",
+            "• Date of Birth: 1990-04-03",
+            "• Address: 12 Example Road London",
+            "• Nationality:",
+            "• Contact Number: +447700900456",
+            "• Email:",
+            "• Emergency Contact Name & Number: 07700900457",
+            "• SIA Card Number & Expiry Date: 001234 / 2027-10-01",
+            "• CSCS Card Number & Expiry Date:",
+            "• Compliant Code / PPAC Code: 00042",
+        ])
+        self.assertEqual(self.client.get(f"/api/site-inductions/{self.induction.pk}/download-csv/").status_code, 404)
 
     def test_induction_excel_preserves_phone_and_codes_as_text(self):
         from openpyxl import load_workbook
