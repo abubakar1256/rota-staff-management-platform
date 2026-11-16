@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import NationalitySelect from "./NationalitySelect";
 import ProfilePictureStep from "./ProfilePictureStep";
 import { findNationality } from "./nationalities";
+import { shiftPreferenceLabels } from "./shiftPreferences";
 import { hasValidWhatsAppNumber, profileDraft, profileFields, profileFieldLabels, profilePercentage, profileStepError, profileSteps, stepFields } from "./profileWizard";
 import "./profileWizard.css";
 
@@ -32,17 +33,21 @@ export default function GuardProfileWizard({ api, Image }) {
   useEffect(() => { if (previousStep.current !== step) { previousStep.current = step; heading.current?.focus({ preventScroll: true }); heading.current?.scrollIntoView({ behavior: "smooth", block: "start" }); } }, [step]);
   const update = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
-    if (field !== "whatsapp_number") setAccepted(false);
+    if (field !== "whatsapp_number" && field !== "shift_preference") setAccepted(false);
     setError(""); setNotice("");
   };
-  const withoutUnchangedWhatsApp = ({ whatsapp_number, ...payload }) =>
-    whatsapp_number === undefined || whatsapp_number === (profile.whatsapp_number || "")
-      ? payload : { ...payload, whatsapp_number };
+  const changedDetails = (payload) => {
+    const changes = { ...payload };
+    for (const field of ["whatsapp_number", "shift_preference"]) {
+      if (changes[field] === (profile[field] || "")) delete changes[field];
+    }
+    return changes;
+  };
   const saveDraft = async () => {
     setSaving(true); setError(""); setNotice("");
     try {
-      const data = await api("/employees/me/", { method: "PATCH", body: JSON.stringify(withoutUnchangedWhatsApp(form)), silentToast: true });
-      setProfile(data); setForm((current) => ({ ...current, whatsapp_number: data.whatsapp_number || "" }));
+      const data = await api("/employees/me/", { method: "PATCH", body: JSON.stringify(changedDetails(form)), silentToast: true });
+      setProfile(data); setForm((current) => ({ ...current, whatsapp_number: data.whatsapp_number || "", shift_preference: data.shift_preference || "" }));
       setNotice("Progress saved. You can return and continue later.");
     } catch (err) { setError(err.message); } finally { setSaving(false); }
   };
@@ -69,15 +74,16 @@ export default function GuardProfileWizard({ api, Image }) {
     }
     setSaving(true);
     try {
-      const payload = step === 4 ? { ...form, nationality: findNationality(form.nationality).name, declaration_accepted: accepted } : Object.fromEntries(stepFields[step].map((field) => [field, field === "nationality" ? findNationality(form[field]).name : form[field]]));
-      const data = await api(step === 4 ? "/employees/submit-profile/" : "/employees/me/", { method: step === 4 ? "POST" : "PATCH", body: JSON.stringify(withoutUnchangedWhatsApp(payload)), silentToast: step !== 4 });
+      const fields = step === 2 ? [...stepFields[2], "shift_preference"] : stepFields[step];
+      const payload = step === 4 ? { ...form, nationality: findNationality(form.nationality).name, declaration_accepted: accepted } : Object.fromEntries(fields.map((field) => [field, field === "nationality" ? findNationality(form[field]).name : form[field]]));
+      const data = await api(step === 4 ? "/employees/submit-profile/" : "/employees/me/", { method: step === 4 ? "POST" : "PATCH", body: JSON.stringify(changedDetails(payload)), silentToast: step !== 4 });
       setProfile(data);
       if (step === 4) { setForm(profileDraft(data)); setSubmitted(true); setAccepted(true); }
       else if (editingContact && profilePercentage(profileDraft(data), data.profile_photo_url, data.profile_declaration_accepted_at) === 100) {
         setForm(profileDraft(data)); setAccepted(true); setSubmitted(true); setEditingContact(false);
         setNotice("Contact details saved.");
       } else {
-        setForm((current) => ({ ...current, ...Object.fromEntries(stepFields[step].map((field) => [field, data[field] || ""])) }));
+        setForm((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field, data[field] || ""])) }));
         setEditingContact(false); setNotice("Progress saved."); setStep((current) => current + 1);
       }
     } catch (err) { setError(err.message); } finally { setSaving(false); }
@@ -85,7 +91,7 @@ export default function GuardProfileWizard({ api, Image }) {
   if (loading) return <section className="panel" role="status">Loading your profile…</section>;
   if (!profile) return <section className="panel"><p className="error" role="alert">{error || "Your profile could not be loaded."}</p><button type="button" className="secondary-button" onClick={load}>Try again</button></section>;
   const percentage = profilePercentage(form, profile.profile_photo_url, accepted && profile.profile_declaration_accepted_at);
-  const review = <div className="profile-review-grid">{profile.profile_photo_url && <div className="profile-review-photo"><Image src={profile.profile_photo_url} alt="Your passport-size profile picture" /></div>}{profileFields.map((field) => <div key={field}><dt>{profileFieldLabels[field]}</dt><dd>{form[field] || "Not provided"}</dd></div>)}</div>;
+  const review = <div className="profile-review-grid">{profile.profile_photo_url && <div className="profile-review-photo"><Image src={profile.profile_photo_url} alt="Your passport-size profile picture" /></div>}{profileFields.map((field) => <div key={field}><dt>{profileFieldLabels[field]}</dt><dd>{form[field] || "Not provided"}</dd></div>)}<div><dt>Shift preference</dt><dd>{shiftPreferenceLabels[form.shift_preference] || "Not set"}</dd></div></div>;
   const openContactDetails = () => { setError(""); setNotice(""); setStep(2); setEditingContact(true); setSubmitted(false); };
   const cancelContactEdit = () => {
     setForm(profileDraft(profile)); setAccepted(true); setSubmitted(true); setEditingContact(false); setError(""); setNotice("");
@@ -118,6 +124,13 @@ export default function GuardProfileWizard({ api, Image }) {
               <small id="profile-whatsapp-help" className="muted">Include the country code. The office uses this number for WhatsApp rota and announcements.</small>
             </label>
             <label className="full-width">Address<textarea required rows={3} autoComplete="street-address" value={form.address} onChange={(event) => update("address", event.target.value)} /></label>
+            <label className="full-width">Shift preference
+              <select value={form.shift_preference} onChange={(event) => update("shift_preference", event.target.value)} aria-describedby="profile-shift-preference-help">
+                <option value="">Not set</option>
+                {Object.entries(shiftPreferenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <small id="profile-shift-preference-help" className="muted">Choose Customize if your preferred shift pattern varies by day. The office uses this when planning your rota.</small>
+            </label>
           </div>}
           {step === 3 && <div className="form-grid"><label>Emergency contact name<input required maxLength={160} value={form.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} /></label><label>Emergency contact phone<input required type="tel" maxLength={40} value={form.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} /></label><label className="full-width">Relationship<input required maxLength={80} value={form.emergency_contact_relationship} onChange={(event) => update("emergency_contact_relationship", event.target.value)} placeholder="For example: spouse, parent, sibling or friend" /></label></div>}
           {step === 4 && <>{review}<label className="profile-wizard-declaration"><input type="checkbox" required checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span>{profile.profile_declaration_text}</span></label><small className="muted">Your confirmation and submission time will be recorded.</small></>}

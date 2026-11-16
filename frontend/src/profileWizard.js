@@ -5,7 +5,7 @@ export const stepFields = { 1: ["name", "date_of_birth", "nationality"], 2: ["em
 export const profileFields = Object.values(stepFields).flat();
 export const profileFieldLabels = { name: "Full name", date_of_birth: "Date of birth", nationality: "Nationality", phone: "Phone number", whatsapp_number: "WhatsApp number", email: "Email (login username)", address: "Address", emergency_contact_name: "Emergency contact name", emergency_contact_phone: "Emergency contact phone", emergency_contact_relationship: "Relationship" };
 export function profileDraft(profile) {
-  return Object.fromEntries(profileFields.map((field) => [field, field === "nationality" ? findNationality(profile?.[field])?.name || profile?.[field] || "" : profile?.[field] || ""]));
+  return Object.fromEntries([...profileFields, "shift_preference"].map((field) => [field, field === "nationality" ? findNationality(profile?.[field])?.name || profile?.[field] || "" : profile?.[field] || ""]));
 }
 export function hasValidWhatsAppNumber(value) {
   const number = String(value || "").replace(/[\s()-]/g, "").replace(/^00/, "+");

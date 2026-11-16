@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronLeft, ChevronRight, Copy, Search, Users, X } from "lucide-react";
+import { matchesShiftPreference, shiftPeriod, shiftPreferenceLabels } from "./shiftPreferences";
 import "./rotaPlanning.css";
 
 const dayFormat = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
@@ -379,6 +380,7 @@ function PreviewRows({ result }) {
 export function RotaBatchDialog({ mode, api, rota, days, sites, shifts, initial, onClose, onSaved }) {
   const copy = mode === "copy";
   const cover = mode === "cover";
+  const multiDay = !copy && !cover;
   const [form, setForm] = useState(initial);
   const [guards, setGuards] = useState(null);
   const [result, setResult] = useState(null);
@@ -387,6 +389,26 @@ export function RotaBatchDialog({ mode, api, rota, days, sites, shifts, initial,
   const requestPath = `/rota-weeks/${rota.id}`;
   const coverDate = cover ? form.dates[0] : null;
   const coverShift = cover ? form.shift_type : null;
+  const preference = form.shift_preference || "";
+  const shiftOptions = multiDay && (preference === "DAY" || preference === "NIGHT")
+    ? shifts.filter((shift) => shiftPeriod(shift) === preference) : shifts;
+  const defaultShift = multiDay
+    ? shiftOptions.find((shift) => String(shift.id) === form.shift_type) || shiftOptions[0] : null;
+  const usesSavedDefault = defaultShift && String(defaultShift.id) === form.shift_type;
+  const defaultStart = usesSavedDefault ? form.scheduled_start : time(defaultShift?.start_time);
+  const defaultEnd = usesSavedDefault ? form.scheduled_end : time(defaultShift?.end_time);
+  const shownGuards = multiDay ? guards?.filter((guard) => matchesShiftPreference(guard.shift_preference, preference)) : guards;
+  const slots = multiDay ? days.filter((day) => form.dates.includes(day)).map((day) => {
+    const saved = form.daily?.[day];
+    const shift = shiftOptions.find((item) => String(item.id) === saved?.shift_type);
+    const override = saved?.shift_type && !shift ? undefined : saved;
+    return {
+      work_date: day,
+      shift_type: shift?.id || defaultShift?.id || "",
+      scheduled_start: override?.scheduled_start ?? (shift ? time(shift.start_time) : defaultStart),
+      scheduled_end: override?.scheduled_end ?? (shift ? time(shift.end_time) : defaultEnd),
+    };
+  }) : [];
 
   useEffect(() => {
     if (copy || !form.site) return;
@@ -406,13 +428,22 @@ export function RotaBatchDialog({ mode, api, rota, days, sites, shifts, initial,
     setForm((current) => ({ ...current, ...values }));
   }
 
+  function changeDefault(shiftId, times) {
+    const shift = shiftOptions.find((item) => String(item.id) === shiftId);
+    change({ shift_type: shiftId, scheduled_start: time(shift?.start_time), scheduled_end: time(shift?.end_time), ...times });
+  }
+
+  function changeDay(day, values) {
+    change({ daily: { ...form.daily, [day]: values } });
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (busy) return;
     const payload = copy ? {
       week_start: form.week_start,
       ...(form.scope === "selected" ? { site_ids: form.site_ids } : {}),
-    } : {
+    } : multiDay ? { site: form.site, employee: form.employee, slots } : {
       site: form.site, shift_type: form.shift_type, employee: form.employee,
       cover_only: cover,
       dates: form.dates, scheduled_start: form.scheduled_start || null, scheduled_end: form.scheduled_end || null,
@@ -427,15 +458,17 @@ export function RotaBatchDialog({ mode, api, rota, days, sites, shifts, initial,
       if (result) onSaved(response);
       else setResult(response);
     } catch (err) {
-      if (err.status === 409 && err.payload.rows) setResult(err.payload);
+      if (err.status === 409 && err.payload?.rows) setResult(err.payload);
       setError(err.message);
     } finally {
       setBusy(false);
     }
   }
 
+  const hasGuard = shownGuards?.some((guard) => String(guard.id) === form.employee);
   const canPreview = copy ? form.week_start && (form.scope === "all" || form.site_ids.length)
-    : form.site && form.shift_type && guards?.some((guard) => String(guard.id) === form.employee) && form.dates.length;
+    : form.site && hasGuard && (cover ? form.shift_type && form.dates.length
+      : slots.length && slots.every((slot) => slot.shift_type && slot.scheduled_start && slot.scheduled_end));
   return <PlanningDialog title={copy ? "Copy week" : cover ? "Find cover" : "Assign multiple days"} onClose={onClose} busy={busy}>
     <form className="rota-planning-form" onSubmit={submit}>
       {!result && copy && <>
@@ -460,25 +493,72 @@ export function RotaBatchDialog({ mode, api, rota, days, sites, shifts, initial,
             <label>Site<select required value={form.site} onChange={(event) => { setGuards(null); change({ site: event.target.value, employee: "" }); }}>
               <option value="">Select site</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
             </select></label>
-            <label>Shift<select required value={form.shift_type} onChange={(event) => {
-              const shift = shifts.find((item) => String(item.id) === event.target.value);
-              change({ shift_type: event.target.value, scheduled_start: time(shift?.start_time), scheduled_end: time(shift?.end_time) });
+            <label>Shift<select value={preference} onChange={(event) => {
+              const selection = event.target.value;
+              const selectedGuard = guards?.find((guard) => String(guard.id) === form.employee);
+              change({
+                shift_preference: selection,
+                employee: matchesShiftPreference(selectedGuard?.shift_preference, selection) ? form.employee : "",
+              });
             }}>
-              <option value="">Select shift</option>{shifts.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
+              <option value="">Show all</option>
+              {Object.entries(shiftPreferenceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select></label>
           </>}
-          <label className="full-width">{cover ? "Eligible guards" : "Guard"}<select required value={form.employee} disabled={!guards?.length} onChange={(event) => change({ employee: event.target.value })}>
-            <option value="">{!form.site ? "Choose a site first" : !guards ? "Loading guards…" : guards.length ? "Select guard" : "No guards available"}</option>
-            {guards?.map((guard) => <option key={guard.id} value={guard.id}>{guard.name} · {guard.employee_id}</option>)}
+          <label className="full-width">{cover ? "Eligible guards" : "Guard"}<select required value={form.employee} disabled={!shownGuards?.length} onChange={(event) => change({ employee: event.target.value })}>
+            <option value="">{!form.site ? "Choose a site first" : !guards ? "Loading guards…" : shownGuards.length ? "Select guard" : "No matching inducted guards"}</option>
+            {shownGuards?.map((guard) => <option key={guard.id} value={guard.id}>
+              {guard.name} · {guard.employee_id}{multiDay ? ` · ${shiftPreferenceLabels[guard.shift_preference] || "No preference set"}` : ""}
+            </option>)}
           </select></label>
-          {!cover && <>
-            <label>Start time<input type="time" value={form.scheduled_start} onChange={(event) => change({ scheduled_start: event.target.value })} /></label>
-            <label>End time<input type="time" value={form.scheduled_end} onChange={(event) => change({ scheduled_end: event.target.value })} /></label>
-          </>}
         </div>
+        {multiDay && preference && guards?.length > 0 && !shownGuards.length &&
+          <p className="muted">Select Show all to see everyone with a completed induction at this site.</p>}
+        {multiDay && <fieldset className="rota-planning-timings">
+          <legend>Default shift and timings</legend>
+          <div className="form-grid rota-timing-fields">
+            <label>Default shift<select value={defaultShift?.id || ""} disabled={!defaultShift}
+              onChange={(event) => changeDefault(event.target.value)}>
+              {!defaultShift && <option value="">No shifts available</option>}
+              {shiftOptions.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
+            </select></label>
+            <label>Start time<input type="time" value={defaultStart} disabled={!defaultShift}
+              onChange={(event) => changeDefault(String(defaultShift.id), { scheduled_start: event.target.value, scheduled_end: defaultEnd })} /></label>
+            <label>End time<input type="time" value={defaultEnd} disabled={!defaultShift}
+              onChange={(event) => changeDefault(String(defaultShift.id), { scheduled_start: defaultStart, scheduled_end: event.target.value })} /></label>
+          </div>
+        </fieldset>}
         {!cover && <fieldset className="rota-planning-days"><legend>Working days</legend>
           {days.map((day) => <button type="button" className="secondary-button" key={day} aria-pressed={form.dates.includes(day)}
             onClick={() => change({ dates: form.dates.includes(day) ? form.dates.filter((date) => date !== day) : [...form.dates, day] })}>{dateLabel(day)}</button>)}
+        </fieldset>}
+        {multiDay && slots.length > 0 && defaultShift && <fieldset className="rota-planning-timings rota-daily-timings">
+          <legend>Daily shifts</legend>
+          <p className="muted">Each day starts with the default timings. Edit any day to give it a different shift or time.</p>
+          {slots.map((slot) => {
+            const day = slot.work_date;
+            const saved = form.daily?.[day];
+            const selectedShift = shiftOptions.find((shift) => String(shift.id) === saved?.shift_type);
+            const override = saved?.shift_type && !selectedShift ? {} : saved || {};
+            return <div className="rota-daily-timing" key={day} role="group" aria-label={dateLabel(day)}>
+              <div className="rota-daily-timing-heading">
+                <strong>{dateLabel(day)}</strong>
+                {(selectedShift || override.scheduled_start !== undefined || override.scheduled_end !== undefined) &&
+                  <button type="button" className="text-button" onClick={() => changeDay(day, undefined)}>Use defaults</button>}
+              </div>
+              <div className="form-grid rota-timing-fields">
+                <label>Shift<select value={selectedShift?.id || ""} onChange={(event) =>
+                  changeDay(day, event.target.value ? { shift_type: event.target.value } : undefined)}>
+                  <option value="">Default · {defaultShift.name}</option>
+                  {shiftOptions.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}
+                </select></label>
+                <label>Start time<input type="time" required value={slot.scheduled_start}
+                  onChange={(event) => changeDay(day, { ...override, scheduled_start: event.target.value })} /></label>
+                <label>End time<input type="time" required value={slot.scheduled_end}
+                  onChange={(event) => changeDay(day, { ...override, scheduled_end: event.target.value })} /></label>
+              </div>
+            </div>;
+          })}
         </fieldset>}
         {cover && guards?.length === 0 && !error && <p className="muted">No eligible guards are available for this shift.</p>}
       </>}

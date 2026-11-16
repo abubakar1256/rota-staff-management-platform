@@ -33,13 +33,39 @@ class EligibleGuardsInput(AssignmentSlotInput):
     include_blocked = serializers.BooleanField(default=False)
 
 
+class PlannedDayInput(serializers.Serializer):
+    work_date = serializers.DateField()
+    shift_type = serializers.IntegerField(min_value=1)
+    scheduled_start = serializers.TimeField()
+    scheduled_end = serializers.TimeField()
+
+
 class MultiDayInput(AssignmentSlotInput):
+    shift_type = serializers.IntegerField(min_value=1, required=False)
     employee = serializers.IntegerField(min_value=1)
-    dates = serializers.ListField(child=serializers.DateField(), allow_empty=False, max_length=7)
+    dates = serializers.ListField(child=serializers.DateField(), allow_empty=False, max_length=7, required=False)
+    slots = PlannedDayInput(many=True, allow_empty=False, max_length=7, required=False)
     notes = serializers.CharField(max_length=250, allow_blank=True, default="")
     cover_only = serializers.BooleanField(default=False)
     preview = serializers.BooleanField(default=False)
     preview_key = serializers.CharField(required=False, max_length=64)
+
+    def validate(self, attrs):
+        if "slots" in attrs:
+            if attrs["cover_only"] or {"dates", "shift_type", "scheduled_start", "scheduled_end"}.intersection(attrs):
+                raise serializers.ValidationError("Use either daily shifts or a single shift with dates.")
+            slots = attrs["slots"]
+            if len({slot["work_date"] for slot in slots}) != len(slots):
+                raise serializers.ValidationError({"slots": "Choose one shift per day."})
+        else:
+            if "dates" not in attrs or "shift_type" not in attrs:
+                raise serializers.ValidationError("Choose a shift and working dates.")
+            slots = [{
+                "work_date": day, "shift_type": attrs["shift_type"],
+                "scheduled_start": attrs.get("scheduled_start"), "scheduled_end": attrs.get("scheduled_end"),
+            } for day in set(attrs["dates"])]
+        attrs["slots"] = sorted(slots, key=lambda slot: slot["work_date"])
+        return attrs
 
 
 def planning_preview(rows):
@@ -52,11 +78,13 @@ def planning_preview(rows):
     }
 
 
-def plan_multi_day(week, data, employee, site, shift):
-    days = sorted(set(data["dates"]))
+def plan_multi_day(week, data, employee, site, shifts):
+    slots = data["slots"]
+    days = [slot["work_date"] for slot in slots]
     checks = RotaAssignmentChecks([employee.pk], [site.pk], days[0], days[-1])
     coverage = {}
     if data["cover_only"]:
+        shift = shifts[data["shift_type"]]
         required = dict(SiteShiftRequirement.objects.filter(site=site, shift_type=shift)
                         .values_list("weekday", "required_guards"))
         assigned = defaultdict(list)
@@ -64,10 +92,12 @@ def plan_multi_day(week, data, employee, site, shift):
             assigned[row.work_date].append(row)
         coverage = {day: required.get(day.weekday(), site.required_guards) - staffed_positions(assigned[day]) for day in days}
     rows, ready = [], []
-    for day in days:
+    for slot in slots:
+        day = slot["work_date"]
+        shift = shifts[slot["shift_type"]]
         assignment = RotaAssignment(
             rota_week=week, employee=employee, site=site, shift_type=shift, work_date=day,
-            scheduled_start=data.get("scheduled_start"), scheduled_end=data.get("scheduled_end"), notes=data["notes"],
+            scheduled_start=slot["scheduled_start"], scheduled_end=slot["scheduled_end"], notes=data["notes"],
         )
         reason = "This shift is already covered." if day in coverage and coverage[day] <= 0 else ""
         if not reason and (problem := checks.problem(assignment, employee_compliance_issues)):

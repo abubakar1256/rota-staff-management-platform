@@ -16,6 +16,15 @@
 .rota-planning-slot { display: flex; align-items: center; gap: 8px; color: #284fae; font-weight: 650; }
 .rota-planning-days, .rota-planning-site-picker { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 10px; border: 1px solid #dce5f4; border-radius: 10px; }
 .rota-planning-days legend, .rota-planning-site-picker legend { padding: 0 5px; font-size: 13px; font-weight: 650; }
+.rota-planning-timings { min-width: 0; margin: 0; padding: 10px; border: 1px solid #dce5f4; border-radius: 10px; }
+.rota-planning-timings legend { padding: 0 5px; font-size: 13px; font-weight: 650; }
+.form-grid.rota-timing-fields { grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr)); gap: 8px; }
+.rota-timing-fields label, .rota-timing-fields input, .rota-timing-fields select { min-width: 0; }
+.rota-timing-fields input, .rota-timing-fields select { width: 100%; }
+.rota-daily-timings { display: grid; gap: 8px; }
+.rota-daily-timing { display: grid; gap: 8px; padding: 10px; background: #f5f8ff; border: 1px solid #e1e8f3; border-radius: 8px; }
+.rota-daily-timing-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rota-daily-timing-heading strong { color: #284fae; font-size: 13px; }
 .rota-planning-site-picker { max-height: 200px; overflow-y: auto; }
 .rota-planning-site-picker label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 7px; background: #f3f6fb; font-size: 13px; }
 .rota-planning-site-picker input { accent-color: #496fd1; }
@@ -77,5 +86,7 @@
 .rota-replacement-change small { color: #50617a; }
 @media (max-width: 550px) {
   .rota-planning-dialog .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .rota-planning-dialog .rota-timing-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rota-timing-fields label:first-child { grid-column: 1 / -1; }
   .rota-cover-queue .rota-planning-row { flex-wrap: wrap; }
 }

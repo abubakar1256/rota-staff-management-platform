@@ -83,6 +83,27 @@ class RotaPlanningTests(APITestCase):
         self.assertEqual(retry.status_code, 409)
         self.assertEqual(target.assignments.count(), 2)
 
+    def test_multi_day_slots_keep_individual_times_and_check_overlaps_between_days(self):
+        tuesday = self.monday + timedelta(days=1)
+        wednesday = tuesday + timedelta(days=1)
+        slots = [
+            {"work_date": str(self.monday), "shift_type": self.night.pk, "scheduled_start": "20:30", "scheduled_end": "08:30"},
+            {"work_date": str(tuesday), "shift_type": self.day.pk, "scheduled_start": "08:00", "scheduled_end": "17:00"},
+            {"work_date": str(wednesday), "shift_type": self.day.pk, "scheduled_start": "09:15", "scheduled_end": "17:45"},
+        ]
+        request = {"site": self.site.pk, "employee": self.guard.pk, "slots": slots}
+        preview = self.post("assign_days", **request, preview=True)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual([row["status"] for row in preview.data["rows"]], ["ready", "skipped", "ready"])
+        saved = self.post("assign_days", **request, preview_key=preview.data["preview_key"])
+        self.assertEqual(saved.data["created"], 2)
+        self.assertEqual(list(self.week.assignments.order_by("work_date").values_list(
+            "work_date", "shift_type_id", "scheduled_start", "scheduled_end",
+        )), [
+            (self.monday, self.night.pk, time(20, 30), time(8, 30)),
+            (wednesday, self.day.pk, time(9, 15), time(17, 45)),
+        ])
+
     def test_copy_preview_does_not_create_a_week_and_commit_creates_draft(self):
         self.add_shift(self.guard, self.monday)
         next_week = str(self.monday + timedelta(days=7))
@@ -126,10 +147,13 @@ class RotaPlanningTests(APITestCase):
         LeaveRecord.objects.create(employee=leave, status=LeaveRecord.Status.APPROVED,
                                    start_date=self.monday, end_date=self.monday, created_by=self.admin)
         self.add_shift(overlap, self.monday, site=self.other_site)
+        self.cover.shift_preference = Employee.ShiftPreference.BOTH
+        self.cover.save(update_fields=["shift_preference"])
 
         inducted = self.post("inducted_guards", site=self.site.pk)
         self.assertEqual(inducted.status_code, 200, inducted.data)
         self.assertEqual({row["id"] for row in inducted.data}, {self.guard.pk, self.cover.pk, leave.pk, overlap.pk})
+        self.assertEqual({row["id"]: row["shift_preference"] for row in inducted.data}[self.cover.pk], "BOTH")
         result = self.post("eligible_guards", site=self.site.pk, shift_type=self.day.pk,
                            work_date=str(self.monday), include_blocked=True)
         self.assertEqual(result.status_code, 200, result.data)

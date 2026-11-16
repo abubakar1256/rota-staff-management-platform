@@ -1049,7 +1049,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not employee:
             return Response({"detail": "No employee profile is linked to this account."}, status=status.HTTP_404_NOT_FOUND)
         if request.method == "PATCH":
-            blocked = set(request.data) - {"name", "date_of_birth", "nationality", "phone", "whatsapp_number", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship"}
+            blocked = set(request.data) - {"name", "date_of_birth", "nationality", "phone", "whatsapp_number", "shift_preference", "email", "address", "emergency_contact", "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship"}
             if blocked:
                 return Response({"detail": f"These fields cannot be changed from your profile: {', '.join(sorted(blocked))}."}, status=status.HTTP_400_BAD_REQUEST)
             serializer = self.get_serializer(employee, data=request.data, partial=True)
@@ -1071,7 +1071,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return Response({"detail": "No employee profile is linked to this account."}, status=404)
         if request.data.get("declaration_accepted") is not True:
             return Response({"detail": "Please confirm that your information is true and correct before submitting."}, status=400)
-        editable_fields = set(REQUIRED_PROFILE_FIELDS)
+        editable_fields = {*REQUIRED_PROFILE_FIELDS, "shift_preference"}
         blocked = set(request.data) - editable_fields - {"declaration_accepted"}
         if blocked:
             return Response({"detail": "Only your personal and emergency details can be submitted here."}, status=400)
@@ -1465,7 +1465,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         inputs = SiteInput(data=request.data)
         inputs.is_valid(raise_exception=True)
         site = get_object_or_404(self.planning_sites(), pk=inputs.validated_data["site"], is_active=True)
-        return Response(list(self.active_inducted_guards(site).values("id", "name", "employee_id")))
+        return Response(list(self.active_inducted_guards(site).values("id", "name", "employee_id", "shift_preference")))
 
     @action(detail=True, methods=["get"], permission_classes=[IsAdminOrSuperAdmin])
     def leave_cover(self, request, pk=None):
@@ -1606,10 +1606,13 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
         inputs = MultiDayInput(data=request.data)
         inputs.is_valid(raise_exception=True)
         data = inputs.validated_data
-        if not all(week.week_start <= day <= week.week_start + timedelta(days=6) for day in data["dates"]):
+        if not all(week.week_start <= slot["work_date"] <= week.week_start + timedelta(days=6) for slot in data["slots"]):
             raise ValidationError({"detail": "All dates must be within the selected week."})
         site = get_object_or_404(self.planning_sites(), pk=data["site"], is_active=True)
-        shift = get_object_or_404(ShiftType, pk=data["shift_type"], is_active=True)
+        shift_ids = {slot["shift_type"] for slot in data["slots"]}
+        shifts = ShiftType.objects.filter(is_active=True).in_bulk(shift_ids)
+        if shift_ids - shifts.keys():
+            raise ValidationError({"detail": "Choose an active shift for each selected day."})
         with transaction.atomic():
             if not data["preview"]:
                 week = RotaWeek.objects.select_for_update().get(pk=week.pk)
@@ -1619,7 +1622,7 @@ class RotaWeekViewSet(viewsets.ModelViewSet):
             if not data["preview"]:
                 guards = guards.select_for_update()
             employee = get_object_or_404(guards, pk=data["employee"])
-            result, ready = plan_multi_day(week, data, employee, site, shift)
+            result, ready = plan_multi_day(week, data, employee, site, shifts)
             if data["preview"]:
                 return Response(result)
             if changed := self.check_preview(data, result):

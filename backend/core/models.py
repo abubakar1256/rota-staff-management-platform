@@ -177,6 +177,12 @@ class Employee(models.Model):
         INACTIVE = "INACTIVE", "Inactive"
         ON_HOLD = "ON_HOLD", "On hold"
 
+    class ShiftPreference(models.TextChoices):
+        DAY = "DAY", "Day"
+        NIGHT = "NIGHT", "Night"
+        BOTH = "BOTH", "Day + Night"
+        CUSTOM = "CUSTOM", "Customize"
+
     employee_id = models.CharField(max_length=40, unique=True)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="employee_record", null=True, blank=True)
     name = models.CharField(max_length=160)
@@ -186,6 +192,7 @@ class Employee(models.Model):
     roles = models.JSONField(default=list, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     whatsapp_number = models.CharField(max_length=16, blank=True)
+    shift_preference = models.CharField(max_length=6, choices=ShiftPreference.choices, blank=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
     emergency_contact = models.CharField(max_length=160, blank=True)

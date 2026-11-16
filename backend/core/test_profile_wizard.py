@@ -74,6 +74,22 @@ class GuardProfileWizardTests(APITestCase):
         self.assertEqual(audit.after_data["photo_document_id"], photo.pk)
         self.assertEqual(audit.after_data["profile"]["nationality"], "United Kingdom")
 
+    def test_guard_can_save_shift_preference_without_resetting_profile(self):
+        self.photo()
+        submitted = self.submit(shift_preference="DAY")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data["shift_preference"], "DAY")
+
+        updated = self.client.patch("/api/employees/me/", {"shift_preference": "BOTH"}, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["shift_preference"], "BOTH")
+        self.assertEqual(updated.data["profile_completion"], 100)
+        self.assertEqual(updated.data["profile_declaration_accepted_at"], submitted.data["profile_declaration_accepted_at"])
+        invalid = self.client.patch("/api/employees/me/", {"shift_preference": "INVALID"}, format="json")
+        self.assertEqual(invalid.status_code, 400)
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.shift_preference, "BOTH")
+
     def test_required_whatsapp_number_can_be_changed_without_resetting_profile(self):
         self.photo()
         submitted = self.submit(whatsapp_number="0044 7700 900012")
