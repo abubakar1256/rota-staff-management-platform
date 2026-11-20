@@ -231,7 +231,7 @@ class WhatsAppMessagingTests(APITestCase):
             "Please *send us a rota confirmation message*. Thank you.\n\n"
             "Total Shifts: 4\nTotal Hours: 48\n\n"
             "Please open the Guard Portal and select Confirm rota.\n"
-            "https://brilliant-cooperation-production-c4d1.up.railway.app/guard?page=rota&week_start=2026-11-16\n\n"
+            "https://rotaops.up.railway.app/guard?page=rota&week_start=2026-11-16\n\n"
             "Thank you.\nControl Room"
         )
         self.assertEqual(row["message"], expected)

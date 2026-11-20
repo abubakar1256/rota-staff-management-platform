@@ -7,7 +7,7 @@ from datetime import date, time
 from urllib.parse import quote, urlencode
 
 
-DEFAULT_GUARD_PORTAL_ORIGIN = "https://brilliant-cooperation-production-c4d1.up.railway.app"
+DEFAULT_GUARD_PORTAL_ORIGIN = "https://rotaops.up.railway.app"
 
 
 def normalise_whatsapp_number(value):
